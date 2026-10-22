@@ -49,6 +49,9 @@ comma, colon, parentheses or a new sentence.
   binaries, the multi-arch `scratch` image from the Linux binaries
   (`ghcr.io/franzramadhan/homie`), and a GitHub release with the tarballs and
   `SHA256SUMS`. Merges to `main` publish nothing.
+- Dev image for an end-to-end test: `gh workflow run build.yml --ref <branch>`
+  builds only the Linux binaries and pushes `ghcr.io/franzramadhan/homie:dev-<short sha>`,
+  no release.
 - Versioning: `v0.MINOR.PATCH` only. 0.x is alpha (said in the README); no
   v1 until the user decides. No `-rc` suffixes for now. Releases are not
   marked pre-release: mise's `github:` backend and `releases/latest` skip
