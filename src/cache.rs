@@ -140,9 +140,18 @@ impl Cache {
             let bytes =
                 serde_json::to_vec(&*self.entries.lock().unwrap()).expect("JSON values serialize");
             let tmp = path.with_extension("json.tmp");
-            let written = tokio::fs::write(&tmp, bytes)
-                .await
-                .and(tokio::fs::rename(&tmp, path).await);
+            // 0600: the snapshot lists the lab's hosts, guests and alerts
+            let written = async {
+                tokio::fs::write(&tmp, bytes).await?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
+                        .await?;
+                }
+                tokio::fs::rename(&tmp, path).await
+            }
+            .await;
             if let Err(e) = written {
                 tracing::warn!(msg = "snapshot write failed", path = %path.display(), error = %e);
             }

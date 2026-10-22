@@ -11,7 +11,7 @@ use axum::{
 use serde_json::json;
 
 use super::Shared;
-use crate::{auth::COOKIE, integrations::Caller};
+use crate::integrations::Caller;
 
 fn deny(status: StatusCode, msg: &str) -> Response {
     (status, Json(json!({ "error": msg }))).into_response()
@@ -79,45 +79,51 @@ pub fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
         .find_map(|kv| kv.trim().strip_prefix(name)?.strip_prefix('='))
 }
 
-/// Writes need the custom header (a cross-site form cannot set it) and an
-/// Origin from this site. Reads and writes need a session when login is on.
-pub async fn session(State(state): State<Shared>, mut req: Request, next: Next) -> Response {
-    if req.method() != Method::GET && req.method() != Method::HEAD {
-        if req.headers().get("x-homie").and_then(|v| v.to_str().ok()) != Some("1") {
-            return deny(StatusCode::FORBIDDEN, "missing X-Homie header");
-        }
-        if let Some(origin) = req
-            .headers()
-            .get(header::ORIGIN)
-            .and_then(|o| o.to_str().ok())
-        {
-            let ok = match &state.auth {
-                Some(a) => origin == a.public_url.origin().ascii_serialization(),
-                None => url::Url::parse(origin).is_ok_and(|u| {
-                    let host = match u.port() {
-                        Some(p) => format!("{}:{p}", u.host_str().unwrap_or_default()),
-                        None => u.host_str().unwrap_or_default().to_string(),
-                    };
-                    host_allowed(&state, &host)
-                }),
-            };
-            if !ok {
-                return deny(StatusCode::FORBIDDEN, "cross-origin request");
-            }
+/// A write needs the custom header (a cross-site form cannot set it) and,
+/// when the browser sends one, an Origin from this site.
+/// `Some(response)` when the write must be refused.
+pub fn write_denied(state: &Shared, headers: &HeaderMap) -> Option<Response> {
+    if headers.get("x-homie").and_then(|v| v.to_str().ok()) != Some("1") {
+        return Some(deny(StatusCode::FORBIDDEN, "missing X-Homie header"));
+    }
+    if let Some(origin) = headers.get(header::ORIGIN).and_then(|o| o.to_str().ok()) {
+        let ok = match &state.auth {
+            Some(a) => origin == a.public_url.origin().ascii_serialization(),
+            None => url::Url::parse(origin).is_ok_and(|u| {
+                let host = match u.port() {
+                    Some(p) => format!("{}:{p}", u.host_str().unwrap_or_default()),
+                    None => u.host_str().unwrap_or_default().to_string(),
+                };
+                host_allowed(state, &host)
+            }),
+        };
+        if !ok {
+            return Some(deny(StatusCode::FORBIDDEN, "cross-origin request"));
         }
     }
+    None
+}
 
+/// Writes pass `write_denied`. Reads and writes need a session when a login
+/// method is configured.
+pub async fn session(State(state): State<Shared>, mut req: Request, next: Next) -> Response {
+    if req.method() != Method::GET
+        && req.method() != Method::HEAD
+        && let Some(denied) = write_denied(&state, req.headers())
+    {
+        return denied;
+    }
     let caller = match &state.auth {
         None => Caller::default(),
         Some(auth) => {
-            let user = match cookie(req.headers(), COOKIE) {
+            let user = match cookie(req.headers(), auth.cookie_name()) {
                 Some(sid) => auth.user(sid).await,
                 None => None,
             };
             match user {
                 Some(u) => Caller {
-                    email: Some(u.email),
-                    id_token: Some(u.id_token),
+                    email: Some(u.name),
+                    id_token: u.id_token,
                 },
                 None => return deny(StatusCode::UNAUTHORIZED, "login required"),
             }
@@ -143,7 +149,7 @@ mod tests {
             header::COOKIE,
             HeaderValue::from_static("a=1; __Host-homie=abc; b=2"),
         );
-        assert_eq!(cookie(&h, COOKIE), Some("abc"));
+        assert_eq!(cookie(&h, "__Host-homie"), Some("abc"));
         assert_eq!(cookie(&h, "missing"), None);
     }
 }

@@ -95,7 +95,10 @@ key reference is in [RFC 0001](rfc/0001-homie-foundation.md#configuration).
 - Proxmox tokens: a dedicated user with `PVEAuditor` is read-only; add
   `VM.PowerMgmt` for the power buttons. Tag guests listed in
   `protected_tags` to require typing their name before an action.
-- Without `[auth]`, Homie only listens on loopback unless you set
+- Login: `[local_login]` (username `homie`, a password you set with
+  `homie hash-password`, or a random one generated into `state_dir` at the
+  first start), `[auth]` for any OIDC provider, or both on one login page.
+  Without either, Homie only listens on loopback unless you set
   `allow_unauthenticated = true`.
 
 ## Develop

@@ -15,11 +15,12 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const USAGE: &str = "usage: homie [serve|check|version] [--config <path>]
+const USAGE: &str = "usage: homie [serve|check|hash-password|version] [--config <path>]
 
-  serve     run the server (default)
-  check     validate the config and test every integration
-  version   print the version
+  serve          run the server (default)
+  check          validate the config and test every integration
+  hash-password  read a password from stdin, print its hash for local_login.password_hash
+  version        print the version
 
 Config: --config, then $HOMIE_CONFIG, then ~/.config/homie/config.toml,
 then /etc/homie/config.toml. HOMIE__<SECTION>__<KEY> variables override it.";
@@ -59,6 +60,7 @@ async fn main() -> ExitCode {
             println!("homie {VERSION}");
             return ExitCode::SUCCESS;
         }
+        "hash-password" => auth::local::hash_password_cli(),
         "serve" => match config::load(config_path) {
             Ok(cfg) => server::run(cfg).await,
             Err(e) => Err(e),

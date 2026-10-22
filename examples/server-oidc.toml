@@ -4,6 +4,11 @@
 listen = "0.0.0.0:8080"
 public_url = "https://homie.example.com"
 
+# Password login next to OIDC (one login page). Hash: printf %s 'pw' | homie hash-password
+# [local_login]
+# username = "homie"
+# password_hash = { env = "HOMIE_PASSWORD_HASH" }
+
 [auth]
 issuer = "https://auth.example.com/application/o/homie/"
 client_id = "homie"

@@ -7,6 +7,7 @@ description = "One page for the whole homelab"
 repository = "https://github.com/franzramadhan/homie"
 
 [dependencies]
+argon2 = { version = "0.6.0", features = ["getrandom"] }
 axum = "0.8.9"
 base64 = "0.23.1"
 figment = { version = "0.10.19", features = ["toml", "env"] }

@@ -29,7 +29,9 @@ pub async fn target(url: &str, tls: &Tls) -> Result<Target> {
     let mut builder = Client::builder()
         .user_agent(concat!("homie/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(15));
+        .timeout(Duration::from_secs(15))
+        // a backend cannot bounce Homie (and its token) to another address
+        .redirect(reqwest::redirect::Policy::none());
 
     // Built-in Mozilla roots, so a scratch image without /etc/ssl works.
     let mut roots = webpki_root_certs::TLS_SERVER_ROOT_CERTS

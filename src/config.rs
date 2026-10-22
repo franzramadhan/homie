@@ -29,6 +29,7 @@ pub struct Config {
     pub allow_unauthenticated: bool,
     pub quiet_hours: Option<QuietHours>,
     pub auth: Option<Auth>,
+    pub local_login: Option<LocalLogin>,
     pub proxmox: BTreeMap<String, Proxmox>,
     pub kubernetes: BTreeMap<String, Kubernetes>,
     pub grafana: BTreeMap<String, Grafana>,
@@ -47,6 +48,7 @@ impl Default for Config {
             allow_unauthenticated: false,
             quiet_hours: None,
             auth: None,
+            local_login: None,
             proxmox: BTreeMap::new(),
             kubernetes: BTreeMap::new(),
             grafana: BTreeMap::new(),
@@ -80,6 +82,22 @@ pub struct Auth {
     pub allowed_emails: Vec<String>,
     #[serde(default)]
     pub allowed_groups: Vec<String>,
+}
+
+/// Built-in username and password login. Without `password_hash`, a random
+/// password is generated at the first start and kept in `state_dir`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalLogin {
+    #[serde(default = "default_username")]
+    pub username: String,
+    /// argon2 PHC string from `homie hash-password`
+    #[serde(default)]
+    pub password_hash: Option<Secret>,
+}
+
+fn default_username() -> String {
+    "homie".into()
 }
 
 fn default_scopes() -> Vec<String> {
@@ -408,31 +426,41 @@ pub fn validate(cfg: &Config) -> Result<()> {
         crate::quiet::Quiet::new(&q.window, q.timezone.as_deref())?;
     }
 
-    match &cfg.auth {
-        None if !listen.ip().is_loopback() && !cfg.allow_unauthenticated => {
-            return Err(format!(
-                "listen {listen} is not loopback and [auth] is not configured: anyone who can reach it \
-                 could use your tokens. Configure [auth], listen on 127.0.0.1, or set \
-                 allow_unauthenticated = true behind an auth proxy or a loopback-only port mapping"
-            )
-            .into());
+    let login = cfg.auth.is_some() || cfg.local_login.is_some();
+    if !login && !listen.ip().is_loopback() && !cfg.allow_unauthenticated {
+        return Err(format!(
+            "listen {listen} is not loopback and no login is configured: anyone who can reach it \
+             could use your tokens. Configure [local_login] or [auth], listen on 127.0.0.1, or set \
+             allow_unauthenticated = true behind an auth proxy or a loopback-only port mapping"
+        )
+        .into());
+    }
+    if login {
+        let u = check_url("public_url", &cfg.public_url)?;
+        let localhost = matches!(u.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+        if u.scheme() != "https" && !localhost && cfg.auth.is_some() {
+            return Err("public_url must be https:// when [auth] is configured".into());
         }
-        None => {}
-        Some(a) => {
-            let u = check_url("public_url", &cfg.public_url)?;
-            let local = matches!(u.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
-            if u.scheme() != "https" && !local {
-                return Err("public_url must be https:// when [auth] is configured".into());
-            }
-            check_url("auth.issuer", &a.issuer)?;
-            if a.allowed_emails.is_empty() && a.allowed_groups.is_empty() {
-                return Err(
-                    "auth: set allowed_emails or allowed_groups, or nobody can log in".into(),
-                );
-            }
-            if !a.allowed_groups.is_empty() && a.groups_claim.is_none() {
-                return Err("auth.allowed_groups needs auth.groups_claim".into());
-            }
+    }
+    if let Some(l) = &cfg.local_login {
+        if l.username.trim().is_empty() {
+            return Err("local_login.username is empty".into());
+        }
+        if l.password_hash.is_none() && cfg.state_dir.is_none() {
+            return Err(
+                "local_login: set password_hash (from `homie hash-password`), or state_dir so a \
+                 generated password can be kept there"
+                    .into(),
+            );
+        }
+    }
+    if let Some(a) = &cfg.auth {
+        check_url("auth.issuer", &a.issuer)?;
+        if a.allowed_emails.is_empty() && a.allowed_groups.is_empty() {
+            return Err("auth: set allowed_emails or allowed_groups, or nobody can log in".into());
+        }
+        if !a.allowed_groups.is_empty() && a.groups_claim.is_none() {
+            return Err("auth.allowed_groups needs auth.groups_claim".into());
         }
     }
 
@@ -443,8 +471,14 @@ pub fn validate(cfg: &Config) -> Result<()> {
         for (url, _) in p.targets() {
             check_url(&format!("proxmox.{name}.endpoints"), &url)?;
         }
+        if let Some(u) = &p.ui_url {
+            check_url(&format!("proxmox.{name}.ui_url"), u)?;
+        }
     }
     for (name, k) in &cfg.kubernetes {
+        if let Some(u) = &k.headlamp_url {
+            check_url(&format!("kubernetes.{name}.headlamp_url"), u)?;
+        }
         if k.auth_mode() == KubeAuth::ForwardToken && cfg.auth.is_none() {
             return Err(format!("kubernetes.{name}: auth = \"forward_token\" needs [auth]").into());
         }
@@ -572,5 +606,27 @@ mod tests {
         assert!(validate(&cfg).is_ok());
         cfg.public_url = "http://homie.example".into();
         assert!(validate(&cfg).is_err(), "plain http public_url with auth");
+
+        // password login alone may listen anywhere and use plain http on a LAN
+        let mut cfg = Config {
+            listen: "0.0.0.0:7777".into(),
+            ..Config::default()
+        };
+        cfg.public_url = "http://192.168.1.5:7777".into();
+        cfg.local_login = Some(LocalLogin {
+            username: "homie".into(),
+            password_hash: None,
+        });
+        assert!(validate(&cfg).is_err(), "no hash and no state_dir");
+        cfg.state_dir = Some("/tmp/homie".into());
+        assert!(validate(&cfg).is_ok());
+
+        // link targets must be http(s): they become href attributes in the UI
+        let k: Kubernetes = serde_json::from_value(serde_json::json!({
+            "auth": "kubeconfig", "headlamp_url": "javascript:alert(1)"
+        }))
+        .unwrap();
+        cfg.kubernetes.insert("x".into(), k);
+        assert!(validate(&cfg).is_err());
     }
 }
