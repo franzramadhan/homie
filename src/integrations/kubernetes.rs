@@ -27,6 +27,7 @@ pub struct Kube {
     pub mode: KubeAuth,
     pub headlamp_url: Option<String>,
     pub links: super::links::Links,
+    pub metrics: Option<config::NodeMetrics>,
     base: Config,
     shared: Option<Client>,
 }
@@ -129,6 +130,7 @@ impl Kube {
                 .headlamp_url
                 .as_ref()
                 .map(|u| u.trim_end_matches('/').to_string()),
+            metrics: cfg.metrics.clone(),
             links: super::links::Links::new(
                 &cfg.links,
                 cfg.headlamp_url.as_deref(),

@@ -1,10 +1,11 @@
 // Kubernetes: nodes, unhealthy pods, workloads, warning events, Helm releases.
 
-import { useMeta, useQ, type HelmRelease, type K8sOverview } from "../api";
-import { Badge, Bar, DataTable, Ext, Source, ago, bytes } from "../ui";
+import { useMeta, useQ, type HelmRelease, type K8sOverview, type Sparks } from "../api";
+import { Badge, Bar, DataTable, Ext, Source, Spark, ago, bytes } from "../ui";
 
-function Cluster({ name }: { name: string }) {
+function Cluster({ name, metrics }: { name: string; metrics: boolean }) {
   const q = useQ<K8sOverview>("k8s", name);
+  const sparks = useQ<Sparks>("spark-k8s", name, metrics).data?.data;
   const helm = useQ<HelmRelease[]>("helm", name);
   return (
     <div className="space-y-4">
@@ -31,6 +32,18 @@ function Cluster({ name }: { name: string }) {
                 { accessorKey: "version", header: "Kubelet" },
                 { id: "cpu", accessorFn: (n) => n.cpu_requested / (n.cpu_allocatable || 1), header: "CPU requested", cell: ({ row }) => <Bar value={row.original.cpu_requested} max={row.original.cpu_allocatable} label={`${row.original.cpu_requested.toFixed(2)} / ${row.original.cpu_allocatable} cores`} /> },
                 { id: "mem", accessorFn: (n) => n.mem_requested / (n.mem_allocatable || 1), header: "Memory requested", cell: ({ row }) => <Bar value={row.original.mem_requested} max={row.original.mem_allocatable} label={`${bytes(row.original.mem_requested)} / ${bytes(row.original.mem_allocatable)}`} /> },
+                {
+                  id: "usage",
+                  header: metrics ? "Usage, 1 h" : "",
+                  enableSorting: false,
+                  cell: ({ row }) =>
+                    metrics ? (
+                      <span className="flex items-center gap-2 text-xs text-ink-subtle">
+                        CPU <Spark values={sparks?.nodes[row.original.name]?.cpu} label="CPU" />
+                        Mem <Spark values={sparks?.nodes[row.original.name]?.mem} label="Memory" />
+                      </span>
+                    ) : null,
+                },
               ]}
             />
             <div>
@@ -114,7 +127,7 @@ export function Workloads() {
   return (
     <div className="space-y-6">
       {m.kubernetes.map((k) => (
-        <Cluster key={k.name} name={k.name} />
+        <Cluster key={k.name} name={k.name} metrics={k.metrics} />
       ))}
     </div>
   );

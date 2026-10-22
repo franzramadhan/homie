@@ -19,6 +19,14 @@ auth = "forward_token"
 headlamp_url = "https://headlamp.<tailnet>.ts.net"
 quiet = true
 
+# sparklines for nodes (OpenTelemetry kubeletstats metrics in VictoriaMetrics)
+[kubernetes.homelab.metrics]
+grafana = "lab"
+datasource = "vm"
+cpu = "sum by (k8s_node_name) (k8s_node_cpu_usage)"
+memory = "sum by (k8s_node_name) (k8s_node_memory_working_set_bytes)"
+node_label = "k8s_node_name"
+
 # Pods are not on the tailnet: connect to the LAN IPs, verify the tailnet
 # certificate each node serves on :8006.
 [proxmox.lab]

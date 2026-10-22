@@ -73,6 +73,32 @@ export function Bar({ value, max, label }: { value: number; max: number; label?:
   );
 }
 
+/**
+ * Sparkline: the last hour as an SVG polyline. With `max` (ratios, max 1)
+ * the line takes the meter colors; without it the series scales to its own
+ * range in a neutral color.
+ */
+export function Spark({ values, max, label }: { values: number[] | undefined; max?: number; label: string }) {
+  if (!values || values.length < 2) return <span className="inline-block w-16" />;
+  const top = max ?? Math.max(...values);
+  const bottom = max === undefined ? Math.min(...values) : 0;
+  const span = top - bottom || 1;
+  const w = 64;
+  const h = 16;
+  const points = values.map((v, i) => `${((i / (values.length - 1)) * w).toFixed(1)},${(h - 1 - ((v - bottom) / span) * (h - 2)).toFixed(1)}`).join(" ");
+  const last = values[values.length - 1];
+  const color = max === undefined ? "text-ink-subtle" : last / max > 0.9 ? "text-bad" : last / max > 0.8 ? "text-warn" : "text-ok";
+  const fmt = (v: number) => (max === 1 ? `${Math.round(v * 100)}%` : v.toPrecision(3));
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className={`shrink-0 ${color}`} role="img" aria-label={`${label}, last hour: min ${fmt(lo)}, max ${fmt(hi)}, now ${fmt(last)}`}>
+      <title>{`${label}, last hour: min ${fmt(lo)}, max ${fmt(hi)}, now ${fmt(last)}`}</title>
+      <polyline points={points} fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 /** The state of one query: fresh, stale, scheduled off, or failing. */
 export function sourceTone(env: Envelope<unknown> | undefined): { tone: Tone; label: string } {
   if (!env) return { tone: "muted", label: "loading" };

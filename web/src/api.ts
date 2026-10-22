@@ -18,7 +18,7 @@ export type Meta = {
   refresh_seconds: number;
   quiet: { window: string; timezone: string; active: boolean } | null;
   proxmox: { name: string; quiet: boolean; ui_url: string; insecure: string | null }[];
-  kubernetes: { name: string; quiet: boolean; headlamp_url: string | null; forward_token: boolean }[];
+  kubernetes: { name: string; quiet: boolean; headlamp_url: string | null; forward_token: boolean; metrics: boolean }[];
   grafana: { name: string; quiet: boolean; url: string; insecure: string | null }[];
   security: string[];
   tailscale: boolean;
@@ -138,6 +138,9 @@ export type Device = {
 };
 export type Check = { name: string; status: string; last_ping: string | null; next_ping: string | null };
 
+export type Series = { cpu: number[]; mem: number[] };
+export type Sparks = { nodes: Record<string, Series>; guests?: Record<string, Series> };
+
 export class ApiError extends Error {}
 
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
@@ -156,12 +159,13 @@ export function useMeta() {
 }
 
 /** A named query, polled every refresh_seconds while the tab is visible. */
-export function useQ<T>(kind: string, name: string): UseQueryResult<Envelope<T>> {
+export function useQ<T>(kind: string, name: string, enabled = true): UseQueryResult<Envelope<T>> {
   const meta = useMeta();
   return useQuery({
     queryKey: ["q", kind, name],
     queryFn: () => http<Envelope<T>>(`/api/q/${kind}/${encodeURIComponent(name)}`),
     refetchInterval: (meta.data?.refresh_seconds ?? 15) * 1000,
+    enabled,
   });
 }
 
