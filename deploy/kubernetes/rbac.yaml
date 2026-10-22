@@ -69,3 +69,33 @@ subjects:
   - kind: ServiceAccount
     name: homie
     namespace: homie
+---
+# The workflow picker saves its watch list in one ConfigMap (RFC 0015).
+# RBAC cannot limit create to a name; get and update are limited to it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: homie-github-watch
+  namespace: homie
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [homie-github-watch]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: homie-github-watch
+  namespace: homie
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: homie-github-watch
+subjects:
+  - kind: ServiceAccount
+    name: homie
+    namespace: homie

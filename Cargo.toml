@@ -1,6 +1,6 @@
 [package]
 name = "homie"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 license = "MIT"
 description = "One page for the whole homelab"
@@ -37,6 +37,13 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# dev images for end-to-end tests: same code, thin LTO and parallel codegen
+# build in about half the time of a release (build.yml, workflow_dispatch)
+[profile.dev-image]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
 
 [dev-dependencies]
 figment = { version = "0.10.19", features = ["test"] }

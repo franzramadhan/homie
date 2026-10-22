@@ -1,7 +1,8 @@
 //! The GitHub picker helper (RFC 0014): sign in with the GitHub App's user
 //! authorization, list repositories and workflows, copy `[[github.watch]]`
-//! lines. Runs are read with the app's installation token, never with these
-//! user tokens. Tokens stay on the server, keyed by the Homie user.
+//! lines, or save them (RFC 0015). Runs are read with the app's installation
+//! token, never with these user tokens. Tokens stay on the server, keyed by
+//! the Homie user.
 
 use std::time::{Duration, Instant};
 
@@ -14,8 +15,8 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
-use super::Shared;
-use crate::integrations::Caller;
+use super::{Shared, api::log_action};
+use crate::integrations::{Caller, github::valid_repo};
 
 const STATE_TTL: Duration = Duration::from_secs(600);
 
@@ -115,7 +116,7 @@ pub async fn repos(State(state): State<Shared>, Extension(caller): Extension<Cal
         return error(StatusCode::NOT_FOUND, "github is not configured");
     };
     let Some(token) = user_token(&state, &caller) else {
-        return error(StatusCode::UNAUTHORIZED, "connect GitHub first");
+        return error(StatusCode::PRECONDITION_REQUIRED, "connect GitHub first");
     };
     match gh.user_repos(&token).await {
         Ok(r) => Json(r).into_response(),
@@ -137,10 +138,65 @@ pub async fn workflows(
         return error(StatusCode::NOT_FOUND, "github is not configured");
     };
     let Some(token) = user_token(&state, &caller) else {
-        return error(StatusCode::UNAUTHORIZED, "connect GitHub first");
+        return error(StatusCode::PRECONDITION_REQUIRED, "connect GitHub first");
     };
     match gh.user_workflows(&token, &q.repo).await {
         Ok(w) => Json(w).into_response(),
         Err(e) => error(StatusCode::BAD_REQUEST, e),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct SaveWatch {
+    repo: String,
+    workflows: Vec<String>,
+}
+
+/// Saves the picked workflows of one repository (RFC 0015). The caller's
+/// GitHub sign-in must see each workflow, so nobody adds a repository they
+/// cannot read themselves through the app's shared token.
+pub async fn save_watch(
+    State(state): State<Shared>,
+    Extension(caller): Extension<Caller>,
+    Json(body): Json<SaveWatch>,
+) -> Response {
+    let Some(gh) = state.lab.github.as_ref() else {
+        return error(StatusCode::NOT_FOUND, "github is not configured");
+    };
+    if gh.store.name().is_none() {
+        return error(StatusCode::CONFLICT, "saving watches is turned off");
+    }
+    if !valid_repo(&body.repo) {
+        return error(StatusCode::BAD_REQUEST, "repository must be owner/name");
+    }
+    let Some(token) = user_token(&state, &caller) else {
+        return error(StatusCode::PRECONDITION_REQUIRED, "connect GitHub first");
+    };
+    let available = match gh.user_workflows(&token, &body.repo).await {
+        Ok(w) => w,
+        Err(e) => return error(StatusCode::FORBIDDEN, e),
+    };
+    if let Some(f) = body
+        .workflows
+        .iter()
+        .find(|f| !available.iter().any(|w| w["file"] == f.as_str()))
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            format!("no workflow {f:?} in {}", body.repo),
+        );
+    }
+    let result = gh.save_repo(&body.repo, &body.workflows).await;
+    let logged = result
+        .as_ref()
+        .map(|(a, r)| format!("added {a:?} removed {r:?}"))
+        .map_err(|e| e.to_string().into());
+    log_action("github.watch", &caller, &body.repo, &logged);
+    match result {
+        Ok(_) => {
+            state.cache.invalidate("github:");
+            Json(json!({ "watch": gh.watch().len() })).into_response()
+        }
+        Err(e) => error(StatusCode::BAD_GATEWAY, e),
     }
 }

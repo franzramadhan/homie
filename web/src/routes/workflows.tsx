@@ -1,8 +1,10 @@
 // GitHub Actions workflows from the shared watch list (RFC 0014), and the
-// picker that turns a GitHub sign-in into `[[github.watch]]` config lines.
+// picker: it saves the watch list (RFC 0015), or prints `[[github.watch]]`
+// config lines when saving is off.
 
-import { useState } from "react";
-import { get, useMeta, useQ, workflowHealth, type GhRun, type GhWorkflow } from "../api";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { act, get, useMeta, useQ, workflowHealth, type GhRun, type GhWorkflow } from "../api";
 import { Badge, DataTable, Ext, Section, Source, ago, type Tone } from "../ui";
 
 function runTone(r: GhRun): Tone {
@@ -17,27 +19,55 @@ function duration(s: number | null) {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-function Picker() {
+function Picker({ store, watched }: { store: string | null; watched: GhWorkflow[] }) {
+  const qc = useQueryClient();
+  const [saved, setSaved] = useState("");
   const [repos, setRepos] = useState<string[] | null>(null);
   const [repo, setRepo] = useState("");
   const [flows, setFlows] = useState<{ name: string; file: string; state: string }[]>([]);
   const [picked, setPicked] = useState<string[]>([]);
   const [error, setError] = useState("");
-  const connected = new URLSearchParams(window.location.search).has("picker");
 
-  async function loadRepos() {
+  // without a GitHub sign-in (or after it expired) the server answers 428: sign in again
+  async function open() {
     setError("");
     try {
       setRepos(await get<string[]>("/api/github/repos"));
     } catch (e) {
+      if ((e as Error).message === "connect GitHub first") window.location.href = "/github/login";
+      else setError((e as Error).message);
+    }
+  }
+  // back from the GitHub sign-in (/github/callback redirects here with ?picker)
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has("picker")) return;
+    window.history.replaceState(null, "", window.location.pathname);
+    open();
+  }, []);
+  function close() {
+    setRepos(null);
+    setRepo("");
+    setFlows([]);
+    setPicked([]);
+  }
+  const fromConfig = (f: string) => watched.some((w) => w.repo === repo && w.workflow === f && w.source === "config");
+  async function pickRepo(r: string) {
+    setRepo(r);
+    // start from what is watched now
+    setPicked(watched.filter((w) => w.repo === r).map((w) => w.workflow));
+    try {
+      setFlows(await get<{ name: string; file: string; state: string }[]>(`/api/github/workflows?repo=${encodeURIComponent(r)}`));
+    } catch (e) {
       setError((e as Error).message);
     }
   }
-  async function pickRepo(r: string) {
-    setRepo(r);
-    setPicked([]);
+  async function save() {
+    setError("");
     try {
-      setFlows(await get<{ name: string; file: string; state: string }[]>(`/api/github/workflows?repo=${encodeURIComponent(r)}`));
+      await act("/api/github/watch", { repo, workflows: picked });
+      await qc.invalidateQueries({ queryKey: ["q", "github", "_"] });
+      setSaved(`Saved: ${picked.length} watched in ${repo}.`);
+      close();
     } catch (e) {
       setError((e as Error).message);
     }
@@ -48,20 +78,27 @@ function Picker() {
   return (
     <Section title="Add workflows">
       <p className="mb-3 text-sm text-ink-subtle">
-        Sign in with GitHub to browse the repositories the Homie GitHub App can read, pick workflows, and copy the lines into the
-        <code className="mx-1 font-mono">[github]</code>section of the config. The watch list is shared and lives in the config.
+        {store ? (
+          <>
+            Sign in with GitHub to browse the repositories the Homie GitHub App can read and pick the workflows to watch. The list is
+            shared by everyone using Homie; workflows set in the config stay as they are.
+          </>
+        ) : (
+          <>
+            Sign in with GitHub to browse the repositories the Homie GitHub App can read, pick workflows, and copy the lines into the
+            <code className="mx-1 font-mono">[github]</code>section of the config. The watch list is shared and lives in the config.
+          </>
+        )}
       </p>
-      {!connected && !repos ? (
-        <a className="inline-block rounded-control bg-accent px-3 py-1 text-sm text-on-accent hover:bg-accent-hover" href="/github/login">
-          Connect GitHub
-        </a>
+      {!repos ? (
+        <div className="flex items-center gap-3">
+          <button className="rounded-control bg-accent px-3 py-1 text-sm text-on-accent hover:bg-accent-hover" onClick={open}>
+            {store ? "Change watched workflows" : "Pick workflows"}
+          </button>
+          {saved && <span className="text-sm text-ink-subtle">{saved}</span>}
+        </div>
       ) : (
         <div className="space-y-3">
-          {!repos && (
-            <button className="rounded-control bg-accent px-3 py-1 text-sm text-on-accent hover:bg-accent-hover" onClick={loadRepos}>
-              List repositories
-            </button>
-          )}
           {repos && (
             <select aria-label="Repository" className={control} value={repo} onChange={(e) => pickRepo(e.target.value)}>
               <option value="">choose a repository</option>
@@ -77,15 +114,27 @@ function Picker() {
                   <input
                     type="checkbox"
                     checked={picked.includes(f.file)}
+                    disabled={!!store && fromConfig(f.file)}
                     onChange={(e) => setPicked(e.target.checked ? [...picked, f.file] : picked.filter((x) => x !== f.file))}
                   />
                   {f.name} <code className="text-xs text-ink-subtle">{f.file}</code>
+                  {store && fromConfig(f.file) && <Badge tone="muted">config</Badge>}
                   {f.state !== "active" && <Badge tone="muted">{f.state}</Badge>}
                 </label>
               ))}
             </fieldset>
           )}
-          {toml && (
+          {store && repo && (
+            <div className="flex items-center gap-3">
+              <button className="rounded-control bg-accent px-3 py-1 text-sm text-on-accent hover:bg-accent-hover" onClick={save}>
+                Save
+              </button>
+              <button className="rounded-control border border-hairline-strong px-3 py-1 text-sm" onClick={close}>
+                Cancel
+              </button>
+            </div>
+          )}
+          {!store && toml && (
             <div>
               <textarea readOnly aria-label="Config lines" className={`${control} h-32 w-full max-w-xl font-mono text-xs`} value={toml} />
               <button className="mt-1 rounded-control border border-hairline-strong px-2 py-0.5 text-xs" onClick={() => navigator.clipboard.writeText(toml)}>
@@ -109,7 +158,9 @@ export function Workflows() {
       <Source title="GitHub Actions" query={q}>
         {(flows) =>
           flows.length === 0 ? (
-            <p className="text-sm text-ink-subtle">No workflows are watched yet: add `[[github.watch]]` entries.</p>
+            <p className="text-sm text-ink-subtle">
+              No workflows are watched yet: {m.github?.helper && m.github?.store ? "pick some below." : "add `[[github.watch]]` entries to the config."}
+            </p>
           ) : (
             <div className="space-y-6">
               {flows.map((w) => {
@@ -119,6 +170,7 @@ export function Workflows() {
                     <h3 className="mb-1 flex flex-wrap items-center gap-2 text-sm font-semibold">
                       <Ext href={w.link}>{w.name}</Ext>
                       <span className="text-xs font-normal text-ink-subtle">{w.repo}</span>
+                      {m.github?.store && w.source === "config" && <Badge tone="muted">config</Badge>}
                       <Badge tone={h === "ok" ? "ok" : h === "failed" ? "bad" : h === "stuck" ? "warn" : "muted"}>
                         {h === "ok" ? "last run succeeded" : h === "failed" ? "last run failed" : h === "stuck" ? "queued over 10 min" : "no completed run"}
                       </Badge>
@@ -152,7 +204,7 @@ export function Workflows() {
           )
         }
       </Source>
-      {m.github.helper && <Picker />}
+      {m.github.helper && <Picker store={m.github.store} watched={q.data?.data ?? []} />}
     </div>
   );
 }

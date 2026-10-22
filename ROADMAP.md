@@ -19,4 +19,5 @@ the RFCs it implements. Versions stay 0.x (alpha) until a 1.0 is decided.
 | [0012](rfc/0012-sparklines.md) | Sparklines | implemented | v0.2.0 |
 | [0013](rfc/0013-packaging.md) | Helm chart and Homebrew tap | implemented | v0.2.0 |
 | [0014](rfc/0014-github-actions.md) | GitHub Actions workflow monitoring | implemented | v0.2.0 |
+| [0015](rfc/0015-github-watch-store.md) | Save picked workflows without a restart | implemented | v0.5.0 |
 | - | Console, per-user Proxmox tickets, notifications | not written | later |
