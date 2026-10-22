@@ -3,7 +3,7 @@
 // config lines when saving is off.
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { act, get, useMeta, useQ, workflowHealth, type GhRun, type GhWorkflow } from "../api";
 import { Badge, DataTable, Ext, Section, Source, ago, type Tone } from "../ui";
 
@@ -27,20 +27,32 @@ function Picker({ store, watched }: { store: string | null; watched: GhWorkflow[
   const [flows, setFlows] = useState<{ name: string; file: string; state: string }[]>([]);
   const [picked, setPicked] = useState<string[]>([]);
   const [error, setError] = useState("");
-  const connected = new URLSearchParams(window.location.search).has("picker");
 
-  async function loadRepos() {
+  // without a GitHub sign-in (or after it expired) the server answers 428: sign in again
+  async function open() {
     setError("");
     try {
       setRepos(await get<string[]>("/api/github/repos"));
     } catch (e) {
-      setError((e as Error).message);
+      if ((e as Error).message === "connect GitHub first") window.location.href = "/github/login";
+      else setError((e as Error).message);
     }
+  }
+  // back from the GitHub sign-in (/github/callback redirects here with ?picker)
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has("picker")) return;
+    window.history.replaceState(null, "", window.location.pathname);
+    open();
+  }, []);
+  function close() {
+    setRepos(null);
+    setRepo("");
+    setFlows([]);
+    setPicked([]);
   }
   const fromConfig = (f: string) => watched.some((w) => w.repo === repo && w.workflow === f && w.source === "config");
   async function pickRepo(r: string) {
     setRepo(r);
-    setSaved("");
     // start from what is watched now
     setPicked(watched.filter((w) => w.repo === r).map((w) => w.workflow));
     try {
@@ -54,7 +66,8 @@ function Picker({ store, watched }: { store: string | null; watched: GhWorkflow[
     try {
       await act("/api/github/watch", { repo, workflows: picked });
       await qc.invalidateQueries({ queryKey: ["q", "github", "_"] });
-      setSaved(`Saved: ${picked.length} watched in ${repo}`);
+      setSaved(`Saved: ${picked.length} watched in ${repo}.`);
+      close();
     } catch (e) {
       setError((e as Error).message);
     }
@@ -77,17 +90,15 @@ function Picker({ store, watched }: { store: string | null; watched: GhWorkflow[
           </>
         )}
       </p>
-      {!connected && !repos ? (
-        <a className="inline-block rounded-control bg-accent px-3 py-1 text-sm text-on-accent hover:bg-accent-hover" href="/github/login">
-          Connect GitHub
-        </a>
+      {!repos ? (
+        <div className="flex items-center gap-3">
+          <button className="rounded-control bg-accent px-3 py-1 text-sm text-on-accent hover:bg-accent-hover" onClick={open}>
+            {store ? "Change watched workflows" : "Pick workflows"}
+          </button>
+          {saved && <span className="text-sm text-ink-subtle">{saved}</span>}
+        </div>
       ) : (
         <div className="space-y-3">
-          {!repos && (
-            <button className="rounded-control bg-accent px-3 py-1 text-sm text-on-accent hover:bg-accent-hover" onClick={loadRepos}>
-              List repositories
-            </button>
-          )}
           {repos && (
             <select aria-label="Repository" className={control} value={repo} onChange={(e) => pickRepo(e.target.value)}>
               <option value="">choose a repository</option>
@@ -118,7 +129,9 @@ function Picker({ store, watched }: { store: string | null; watched: GhWorkflow[
               <button className="rounded-control bg-accent px-3 py-1 text-sm text-on-accent hover:bg-accent-hover" onClick={save}>
                 Save
               </button>
-              {saved && <span className="text-sm text-ink-subtle">{saved}</span>}
+              <button className="rounded-control border border-hairline-strong px-3 py-1 text-sm" onClick={close}>
+                Cancel
+              </button>
             </div>
           )}
           {!store && toml && (

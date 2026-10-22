@@ -116,7 +116,7 @@ pub async fn repos(State(state): State<Shared>, Extension(caller): Extension<Cal
         return error(StatusCode::NOT_FOUND, "github is not configured");
     };
     let Some(token) = user_token(&state, &caller) else {
-        return error(StatusCode::UNAUTHORIZED, "connect GitHub first");
+        return error(StatusCode::PRECONDITION_REQUIRED, "connect GitHub first");
     };
     match gh.user_repos(&token).await {
         Ok(r) => Json(r).into_response(),
@@ -138,7 +138,7 @@ pub async fn workflows(
         return error(StatusCode::NOT_FOUND, "github is not configured");
     };
     let Some(token) = user_token(&state, &caller) else {
-        return error(StatusCode::UNAUTHORIZED, "connect GitHub first");
+        return error(StatusCode::PRECONDITION_REQUIRED, "connect GitHub first");
     };
     match gh.user_workflows(&token, &q.repo).await {
         Ok(w) => Json(w).into_response(),
@@ -170,7 +170,7 @@ pub async fn save_watch(
         return error(StatusCode::BAD_REQUEST, "repository must be owner/name");
     }
     let Some(token) = user_token(&state, &caller) else {
-        return error(StatusCode::UNAUTHORIZED, "connect GitHub first");
+        return error(StatusCode::PRECONDITION_REQUIRED, "connect GitHub first");
     };
     let available = match gh.user_workflows(&token, &body.repo).await {
         Ok(w) => w,
