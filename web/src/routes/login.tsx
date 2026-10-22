@@ -5,7 +5,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 
-type Options = { oidc: boolean; local: boolean };
+type Options = { oidc: boolean; local: boolean; demo: boolean };
 
 export function Login() {
   const [options, setOptions] = useState<Options | null>(null);
@@ -18,12 +18,24 @@ export function Login() {
     fetch("/auth/options")
       .then((r) => r.json() as Promise<Options>)
       .then((o) => {
-        if (!o.local && o.oidc) window.location.href = "/auth/login";
+        if (!o.local && !o.demo && o.oidc) window.location.href = "/auth/login";
         else if (!o.local && !o.oidc) window.location.href = "/";
         else setOptions(o);
       })
       .catch(() => setError("Cannot reach Homie"));
   }, []);
+
+  // the read-only demo (RFC 0016): no password, a session with the demo role
+  async function demo() {
+    setError("");
+    const r = await fetch("/auth/demo", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "X-Homie": "1" },
+    }).catch(() => null);
+    if (r?.ok) window.location.href = "/";
+    else setError("The demo is not available right now");
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -88,6 +100,18 @@ export function Login() {
           >
             Sign in with SSO
           </a>
+        )}
+        {options?.demo && (
+          <>
+            {(options.local || options.oidc) && <p className="my-4 text-center text-xs text-ink-subtle">or</p>}
+            <button
+              onClick={demo}
+              className="block w-full rounded-control bg-accent py-1.5 text-center text-sm text-on-accent hover:bg-accent-hover"
+            >
+              Try the demo
+            </button>
+            <p className="mt-2 text-center text-xs text-ink-subtle">Read-only, a few namespaces and guests, one hour.</p>
+          </>
         )}
         {error && (
           <p className="mt-3 text-sm text-bad" role="alert">

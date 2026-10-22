@@ -279,6 +279,8 @@ function HealthchecksCard() {
 export function Overview() {
   const m = useMeta().data;
   if (!m) return null;
+  // a role (RFC 0016) gets the cards of its pages only
+  const page = (p: string) => !m.pages || m.pages.includes(p);
   const nothing = !m.proxmox.length && !m.kubernetes.length && !m.grafana.length && !m.tailscale && !m.healthchecks;
   if (nothing) {
     return <p className="text-sm text-ink-subtle">Nothing is configured yet. Add a [proxmox.*], [kubernetes.*] or [grafana.*] section and restart, then run `homie check`.</p>;
@@ -288,24 +290,16 @@ export function Overview() {
       {m.proxmox.map((p) => (
         <PveCard key={p.name} name={p.name} />
       ))}
-      {m.kubernetes.map((k) => (
-        <K8sCard key={k.name} name={k.name} />
-      ))}
-      {m.kubernetes.map((k) => (
-        <FluxCard key={k.name} name={k.name} />
-      ))}
-      {m.kubernetes.map((k) => (
-        <ArgoCard key={`argo-${k.name}`} name={k.name} />
-      ))}
+      {page("workloads") && m.kubernetes.map((k) => <K8sCard key={k.name} name={k.name} />)}
+      {page("gitops") && m.kubernetes.map((k) => <FluxCard key={k.name} name={k.name} />)}
+      {page("gitops") && m.kubernetes.map((k) => <ArgoCard key={`argo-${k.name}`} name={k.name} />)}
       {m.grafana.map((g) => (
         <AlertsCard key={g.name} name={g.name} />
       ))}
       {m.openbao.map((b) => (
         <OpenBaoCard key={b.name} name={b.name} />
       ))}
-      {m.kubernetes.map((k) => (
-        <CnpgCard key={`pg-${k.name}`} name={k.name} />
-      ))}
+      {page("services") && m.kubernetes.map((k) => <CnpgCard key={`pg-${k.name}`} name={k.name} />)}
       {m.security.map((s) => (
         <SecurityCard key={s} preset={s} />
       ))}

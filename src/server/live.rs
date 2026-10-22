@@ -104,7 +104,8 @@ async fn run(
                 None => return,
             }
         }
-        if watch_token.as_ref() != Some(&caller.id_token) {
+        // roles (public demos) never add apiserver watches: refresh tick only
+        if caller.role.is_none() && watch_token.as_ref() != Some(&caller.id_token) {
             _watches = watch(&state, &caller, &keys);
             watch_token = Some(caller.id_token.clone());
         }

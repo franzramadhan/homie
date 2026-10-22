@@ -20,11 +20,12 @@ function Layout() {
   const meta = useMeta();
   useLiveStream();
   const m = meta.data;
+  const page = (p: string) => !m?.pages || m.pages.includes(p);
   const nav: [string, string, boolean][] = [
     ["/", "Overview", true],
     ["/infra", "Infrastructure", !!m?.proxmox.length],
-    ["/workloads", "Workloads", !!m?.kubernetes.length],
-    ["/gitops", "GitOps", !!m?.kubernetes.length],
+    ["/workloads", "Workloads", !!m?.kubernetes.length && page("workloads")],
+    ["/gitops", "GitOps", !!m?.kubernetes.length && page("gitops")],
     ["/workflows", "Workflows", !!m?.github],
     ["/observability", "Alerts", !!m?.grafana.length],
     ["/logs", "Logs", !!m?.logs.length],
