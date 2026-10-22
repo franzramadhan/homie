@@ -282,7 +282,12 @@ impl Lab {
             "flux" => {
                 let k = self.kube(name)?;
                 serde_json::to_value(
-                    flux::list_linked(self.kube_client(k, caller)?, &k.links).await?,
+                    flux::list_linked(
+                        self.kube_client(k, caller)?,
+                        &k.links,
+                        caller.role.is_some(),
+                    )
+                    .await?,
                 )?
             }
             "alerts" => serde_json::to_value(self.grafana(name)?.alerts().await?)?,
