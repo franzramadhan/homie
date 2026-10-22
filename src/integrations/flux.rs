@@ -41,6 +41,9 @@ pub struct Item {
     suspended: bool,
     since: String,
     link: Option<String>,
+    /// where it deploys (RFC 0016 role filtering): a Kustomization's
+    /// inventory, a HelmRelease's target; empty for sources
+    namespaces: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -54,16 +57,26 @@ pub struct ReconcileRequest {
 
 /// Every Flux object. Kinds whose CRD is not installed are skipped.
 /// Every Flux object, with deep links from `links`.
-pub async fn list_linked(client: Client, links: &super::links::Links) -> Result<Vec<Item>> {
-    let mut items = list(client).await?;
+/// `deploying_only`: Kustomizations and HelmReleases only, for a role
+/// (RFC 0016): sources are never shown to one, and its ServiceAccount
+/// need not read them.
+pub async fn list_linked(
+    client: Client,
+    links: &super::links::Links,
+    deploying_only: bool,
+) -> Result<Vec<Item>> {
+    let mut items = list(client, deploying_only).await?;
     for i in &mut items {
         i.link = links.flux(&i.kind, &i.namespace, &i.name);
     }
     Ok(items)
 }
 
-pub async fn list(client: Client) -> Result<Vec<Item>> {
-    let lists = join_all(KINDS.iter().map(|(_, _, kind)| {
+async fn list(client: Client, deploying_only: bool) -> Result<Vec<Item>> {
+    let kinds = KINDS
+        .iter()
+        .filter(|k| !deploying_only || matches!(k.2, "Kustomization" | "HelmRelease"));
+    let lists = join_all(kinds.map(|(_, _, kind)| {
         let client = client.clone();
         async move {
             let api: Api<DynamicObject> = Api::all_with(client, &resource(kind).unwrap());
@@ -109,7 +122,34 @@ fn item(kind: &str, o: DynamicObject) -> Item {
         suspended: o.data["spec"]["suspend"].as_bool().unwrap_or(false),
         since: text(&ready["lastTransitionTime"]),
         link: None,
+        namespaces: deploys_into(kind, &o),
     }
+}
+
+/// Namespaces an object deploys into. Inventory ids are
+/// `namespace_name_group_kind`; cluster-scoped entries have no namespace.
+fn deploys_into(kind: &str, o: &DynamicObject) -> Vec<String> {
+    let own = o.metadata.namespace.clone().unwrap_or_default();
+    let mut ns: Vec<String> = match kind {
+        "Kustomization" => o.data["status"]["inventory"]["entries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e["id"].as_str()?.split('_').next())
+            .filter(|n| !n.is_empty())
+            .map(String::from)
+            .collect(),
+        "HelmRelease" => vec![
+            o.data["spec"]["targetNamespace"]
+                .as_str()
+                .map(String::from)
+                .unwrap_or(own),
+        ],
+        _ => Vec::new(),
+    };
+    ns.sort();
+    ns.dedup();
+    ns
 }
 
 /// DNS-1123 names only: these go into API paths.

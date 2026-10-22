@@ -51,6 +51,7 @@ pub fn router(state: Shared) -> Router {
         .merge(api)
         .route("/auth/options", get(login::options))
         .route("/auth/local", post(login::local))
+        .route("/auth/demo", post(login::demo))
         .route("/auth/login", get(login::login))
         .route("/auth/callback", get(login::callback))
         .route("/healthz", get(|| async { "ok" }))

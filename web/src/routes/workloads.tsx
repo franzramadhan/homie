@@ -15,7 +15,8 @@ function Cluster({ name, metrics }: { name: string; metrics: boolean }) {
   const meta = useMeta().data;
   const q = useQ<K8sOverview>("k8s", name);
   const sparks = useQ<Sparks>("spark-k8s", name, metrics).data?.data;
-  const helm = useQ<HelmRelease[]>("helm", name);
+  // Helm releases come from Secrets: never for a role (RFC 0016)
+  const helm = useQ<HelmRelease[]>("helm", name, !meta?.role);
   return (
     <div className="space-y-4">
       <Source title={`Kubernetes ${name}`} query={q}>
@@ -127,23 +128,25 @@ function Cluster({ name, metrics }: { name: string; metrics: boolean }) {
           </div>
         )}
       </Source>
-      <Source title={`Helm releases ${name}`} query={helm}>
-        {(d) => (
-          <DataTable
-            data={d}
-            columns={[
-              { accessorKey: "namespace", header: "Namespace" },
-              { accessorKey: "name", header: "Release" },
-              { accessorKey: "chart", header: "Chart" },
-              { accessorKey: "chart_version", header: "Version" },
-              { accessorKey: "app_version", header: "App" },
-              { accessorKey: "revision", header: "Rev" },
-              { accessorKey: "status", header: "Status", cell: ({ row }) => <Badge tone={row.original.status === "deployed" ? "ok" : "warn"}>{row.original.status}</Badge> },
-              { id: "updated", accessorFn: (r) => r.updated, header: "Updated", cell: ({ row }) => ago(row.original.updated) },
-            ]}
-          />
-        )}
-      </Source>
+      {!meta?.role && (
+        <Source title={`Helm releases ${name}`} query={helm}>
+          {(d) => (
+            <DataTable
+              data={d}
+              columns={[
+                { accessorKey: "namespace", header: "Namespace" },
+                { accessorKey: "name", header: "Release" },
+                { accessorKey: "chart", header: "Chart" },
+                { accessorKey: "chart_version", header: "Version" },
+                { accessorKey: "app_version", header: "App" },
+                { accessorKey: "revision", header: "Rev" },
+                { accessorKey: "status", header: "Status", cell: ({ row }) => <Badge tone={row.original.status === "deployed" ? "ok" : "warn"}>{row.original.status}</Badge> },
+                { id: "updated", accessorFn: (r) => r.updated, header: "Updated", cell: ({ row }) => ago(row.original.updated) },
+              ]}
+            />
+          )}
+        </Source>
+      )}
     </div>
   );
 }

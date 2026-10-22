@@ -19,6 +19,11 @@ fn error(status: StatusCode, msg: impl ToString) -> Response {
 
 pub async fn meta(State(state): State<Shared>, Extension(caller): Extension<Caller>) -> Response {
     let lab = &state.lab;
+    // a role (RFC 0016) sees only its pages, and no links to other UIs
+    let role = caller.role.as_ref().map(|r| &r.role);
+    let page = |p: &str| role.is_none_or(|r| r.pages.iter().any(|x| x == p));
+    let full = role.is_none();
+    let some = |on: bool| move |v: Vec<serde_json::Value>| if on { v } else { Vec::new() };
     let quiet = lab
         .quiet
         .as_ref()
@@ -27,28 +32,34 @@ pub async fn meta(State(state): State<Shared>, Extension(caller): Extension<Call
         "version": crate::VERSION,
         "auth": state.auth.is_some(),
         "user": caller.email,
+        "role": caller.role.as_ref().map(|r| &r.name),
+        "pages": role.map(|r| &r.pages),
         "refresh_seconds": state.cfg.refresh_seconds,
         "live_updates": state.cfg.live_updates,
         "quiet": quiet,
-        "proxmox": lab.proxmox.values().map(|p| json!({
-            "name": p.name, "quiet": p.quiet, "ui_url": p.ui_url, "insecure": p.insecure,
-        })).collect::<Vec<_>>(),
-        "kubernetes": lab.kubernetes.values().map(|k| json!({
-            "name": k.name, "quiet": k.quiet, "headlamp_url": k.headlamp_url, "forward_token": k.forwards_token(), "metrics": k.metrics.is_some(), "argocd_url": k.argocd_url,
-        })).collect::<Vec<_>>(),
-        "grafana": lab.grafana.values().map(|g| json!({
+        "proxmox": some(page("infra"))(lab.proxmox.values().map(|p| json!({
+            "name": p.name, "quiet": p.quiet, "ui_url": full.then_some(&p.ui_url), "insecure": p.insecure,
+        })).collect()),
+        "kubernetes": some(page("workloads") || page("gitops"))(lab.kubernetes.values().map(|k| json!({
+            "name": k.name, "quiet": k.quiet, "headlamp_url": if full { k.headlamp_url.as_deref() } else { None },
+            "forward_token": full && k.forwards_token(), "metrics": k.metrics.is_some(),
+            "argocd_url": if full { k.argocd_url.as_deref() } else { None },
+        })).collect()),
+        "grafana": some(page("alerts"))(lab.grafana.values().map(|g| json!({
             "name": g.name, "quiet": g.quiet, "url": g.url, "insecure": g.insecure,
-        })).collect::<Vec<_>>(),
-        "openbao": lab.openbao.values().map(|b| json!({
+        })).collect()),
+        "openbao": some(page("services"))(lab.openbao.values().map(|b| json!({
             "name": b.name, "quiet": b.quiet, "url": b.url, "insecure": b.insecure,
-        })).collect::<Vec<_>>(),
-        "logs": lab.logs.datasources.iter().map(|s| json!({
+        })).collect()),
+        "logs": some(page("logs"))(lab.logs.datasources.iter().map(|s| json!({
             "label": s.label, "type": s.kind, "pod_query": s.pod_query, "node_query": s.node_query,
-        })).collect::<Vec<_>>(),
-        "security": lab.presets(),
-        "tailscale": lab.tailscale.is_some(),
-        "github": lab.github.as_ref().map(|g| json!({ "watch": g.watch().len(), "helper": g.helper, "store": g.store.name() })),
-        "healthchecks": lab.healthchecks.as_ref().map(|h| json!({ "url": h.url })),
+        })).collect()),
+        "security": if page("security") { lab.presets() } else { Vec::new() },
+        "tailscale": page("tailscale") && lab.tailscale.is_some(),
+        "github": lab.github.as_ref().filter(|_| page("workflows")).map(|g| json!({
+            "watch": g.watch().len(), "helper": full && g.helper, "store": g.store.name(),
+        })),
+        "healthchecks": lab.healthchecks.as_ref().filter(|_| page("outage")).map(|h| json!({ "url": h.url })),
     }))
     .into_response()
 }
@@ -58,6 +69,11 @@ pub async fn query(
     Extension(caller): Extension<Caller>,
     Path((kind, name)): Path<(String, String)>,
 ) -> Response {
+    if let Some(r) = &caller.role
+        && !crate::roles::allows(&r.role, &kind)
+    {
+        return error(StatusCode::FORBIDDEN, "not available in this view");
+    }
     match state.lab.query(&state.cache, &kind, &name, &caller).await {
         Some(envelope) => Json(envelope).into_response(),
         None => error(StatusCode::NOT_FOUND, format!("no query {kind}/{name}")),

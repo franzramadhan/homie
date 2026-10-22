@@ -16,6 +16,9 @@ export type Meta = {
   version: string;
   auth: boolean;
   user: string | null;
+  /** a read-only role (RFC 0016) and its pages; null for full access */
+  role: string | null;
+  pages: string[] | null;
   refresh_seconds: number;
   live_updates: boolean;
   quiet: { window: string; timezone: string; active: boolean } | null;

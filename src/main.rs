@@ -5,6 +5,7 @@ mod config;
 mod http;
 mod integrations;
 mod quiet;
+mod roles;
 mod secret;
 mod server;
 

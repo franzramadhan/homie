@@ -16,11 +16,32 @@ const SESSION_SECS: u64 = 12 * 3600;
 
 /// Public: the login page asks which methods to offer.
 pub async fn options(State(state): State<Shared>) -> Response {
-    let (oidc, local) = match &state.auth {
-        Some(a) => (a.oidc.is_some(), a.local.is_some()),
-        None => (false, false),
+    let (oidc, local, demo) = match &state.auth {
+        Some(a) => (a.oidc.is_some(), a.local.is_some(), a.demo.is_some()),
+        None => (false, false, false),
     };
-    Json(json!({ "oidc": oidc, "local": local })).into_response()
+    Json(json!({ "oidc": oidc, "local": local, "demo": demo })).into_response()
+}
+
+/// The passwordless demo session (RFC 0016). Same write checks as the API.
+pub async fn demo(State(state): State<Shared>, headers: HeaderMap) -> Response {
+    if let Some(denied) = super::guard::write_denied(&state, &headers) {
+        return denied;
+    }
+    let Some(auth) = &state.auth else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match auth.demo_login() {
+        Ok(sid) => (
+            StatusCode::NO_CONTENT,
+            [(
+                header::SET_COOKIE,
+                auth.cookie(&sid, crate::auth::DEMO_TTL.as_secs()),
+            )],
+        )
+            .into_response(),
+        Err(e) => (StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))).into_response(),
+    }
 }
 
 /// Starts the OIDC flow, or shows the login page when OIDC is not configured.

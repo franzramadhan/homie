@@ -88,6 +88,31 @@ struct EventRow {
     last: String,
 }
 
+/// Namespaced objects of every namespace, or of the given ones only.
+async fn list_in<K>(
+    client: &Client,
+    namespaces: Option<&[String]>,
+    lp: &ListParams,
+) -> std::result::Result<Vec<K>, kube::Error>
+where
+    K: kube::Resource<Scope = k8s_openapi::NamespaceResourceScope, DynamicType = ()>
+        + Clone
+        + serde::de::DeserializeOwned
+        + std::fmt::Debug,
+{
+    match namespaces {
+        None => Ok(Api::<K>::all(client.clone()).list(lp).await?.items),
+        Some(ns) => {
+            let lists =
+                futures::future::try_join_all(ns.iter().map(|n| async move {
+                    Api::<K>::namespaced(client.clone(), n).list(lp).await
+                }))
+                .await?;
+            Ok(lists.into_iter().flat_map(|l| l.items).collect())
+        }
+    }
+}
+
 impl Kube {
     pub async fn new(name: &str, cfg: &config::Kubernetes) -> Result<Self> {
         let mode = cfg.auth_mode();
@@ -166,26 +191,43 @@ impl Kube {
         Ok(Client::try_from(cfg)?)
     }
 
-    pub async fn overview(&self, client: Client) -> Result<Overview> {
+    /// A client acting as `namespace/name` (RFC 0016 roles): Homie's own
+    /// identity impersonates that ServiceAccount, so Kubernetes RBAC limits
+    /// what the role reads.
+    pub fn impersonating(&self, service_account: &str) -> Result<Client> {
+        let (ns, name) = service_account
+            .split_once('/')
+            .ok_or("kubernetes_service_account must be namespace/name")?;
+        let mut cfg = self.base.clone();
+        cfg.auth_info.impersonate = Some(format!("system:serviceaccount:{ns}:{name}"));
+        Ok(Client::try_from(cfg)?)
+    }
+
+    /// `namespaces`: list only there (a role); `None`: the whole cluster.
+    pub async fn overview(
+        &self,
+        client: Client,
+        namespaces: Option<&[String]>,
+    ) -> Result<Overview> {
         let lp = ListParams::default();
         let warnings = ListParams::default().fields("type=Warning");
-        let (nodes, pods, deploys, sets, daemons, events, namespaces) = (
-            Api::<Node>::all(client.clone()),
-            Api::<Pod>::all(client.clone()),
-            Api::<Deployment>::all(client.clone()),
-            Api::<StatefulSet>::all(client.clone()),
-            Api::<DaemonSet>::all(client.clone()),
-            Api::<Event>::all(client.clone()),
-            Api::<Namespace>::all(client),
-        );
-        let (nodes, pods, deploys, sets, daemons, events, namespaces) = tokio::try_join!(
-            nodes.list(&lp),
-            pods.list(&lp),
-            deploys.list(&lp),
-            sets.list(&lp),
-            daemons.list(&lp),
-            events.list(&warnings),
-            namespaces.list_metadata(&lp),
+        let (nodes, pods, deploys, sets, daemons, events, namespace_count) = tokio::try_join!(
+            async { Ok::<_, kube::Error>(Api::<Node>::all(client.clone()).list(&lp).await?.items) },
+            list_in::<Pod>(&client, namespaces, &lp),
+            list_in::<Deployment>(&client, namespaces, &lp),
+            list_in::<StatefulSet>(&client, namespaces, &lp),
+            list_in::<DaemonSet>(&client, namespaces, &lp),
+            list_in::<Event>(&client, namespaces, &warnings),
+            async {
+                Ok(match namespaces {
+                    Some(n) => n.len(),
+                    None => Api::<Namespace>::all(client.clone())
+                        .list_metadata(&lp)
+                        .await?
+                        .items
+                        .len(),
+                })
+            },
         )?;
 
         let now = jiff::Timestamp::now();
@@ -375,7 +417,7 @@ impl Kube {
 
         Ok(Overview {
             nodes: node_rows,
-            namespaces: namespaces.items.len(),
+            namespaces: namespace_count,
             workloads,
             unhealthy_pods,
             events: events.into_iter().map(|(_, e)| e).collect(),

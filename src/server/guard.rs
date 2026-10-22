@@ -11,7 +11,25 @@ use axum::{
 use serde_json::json;
 
 use super::Shared;
-use crate::integrations::Caller;
+use crate::{
+    config::Role,
+    integrations::{Caller, RoleRef},
+};
+
+/// Routes a role may use: reads only (RFC 0016). Whether a query's page is
+/// allowed is checked per query.
+fn role_route(role: &Role, method: &Method, path: &str) -> bool {
+    match *method {
+        Method::GET | Method::HEAD => {
+            path == "/api/meta" || path == "/api/stream" || path.starts_with("/api/q/")
+        }
+        Method::POST => {
+            path == "/auth/logout"
+                || (path == "/api/logs" && role.pages.iter().any(|p| p == "logs"))
+        }
+        _ => false,
+    }
+}
 
 fn deny(status: StatusCode, msg: &str) -> Response {
     (status, Json(json!({ "error": msg }))).into_response()
@@ -121,14 +139,34 @@ pub async fn session(State(state): State<Shared>, mut req: Request, next: Next) 
                 None => None,
             };
             match user {
-                Some(u) => Caller {
-                    email: Some(u.name),
-                    id_token: u.id_token,
-                },
+                Some(u) => {
+                    let role = match u.role {
+                        // a role that left the config: fail closed, never full access
+                        Some(name) => match state.lab.roles.get(&name) {
+                            Some(r) => Some(RoleRef {
+                                name,
+                                role: r.clone(),
+                            }),
+                            None => return deny(StatusCode::FORBIDDEN, "unknown role"),
+                        },
+                        None => None,
+                    };
+                    Caller {
+                        email: Some(u.name),
+                        id_token: u.id_token,
+                        role,
+                    }
+                }
                 None => return deny(StatusCode::UNAUTHORIZED, "login required"),
             }
         }
     };
+    if let Some(r) = &caller.role
+        && !role_route(&r.role, req.method(), req.uri().path())
+    {
+        tracing::info!(msg = "denied", role = %r.name, route = %req.uri().path());
+        return deny(StatusCode::FORBIDDEN, "not available in this view");
+    }
     req.extensions_mut().insert(caller);
     next.run(req).await
 }
@@ -136,6 +174,29 @@ pub async fn session(State(state): State<Shared>, mut req: Request, next: Next) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn role_routes() {
+        let r = Role {
+            pages: vec!["workloads".into()],
+            namespaces: vec!["apps".into()],
+            proxmox_tags: vec![],
+            kubernetes_service_account: None,
+        };
+        assert!(role_route(&r, &Method::GET, "/api/q/k8s/main"));
+        assert!(role_route(&r, &Method::GET, "/api/stream"));
+        assert!(role_route(&r, &Method::POST, "/auth/logout"));
+        for (m, p) in [
+            (Method::POST, "/api/act/pve/lab/power"),
+            (Method::GET, "/api/act/pve/lab/task"),
+            (Method::POST, "/api/logs"),
+            (Method::POST, "/api/github/watch"),
+            (Method::GET, "/api/github/repos"),
+            (Method::GET, "/github/login"),
+        ] {
+            assert!(!role_route(&r, &m, p), "{m} {p}");
+        }
+    }
 
     #[test]
     fn hosts_and_cookies() {

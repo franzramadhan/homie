@@ -17,12 +17,17 @@ use crate::{Result, config::Config};
 
 // ponytail: fixed session lifetime; make it configurable if anyone asks
 const SESSION_TTL: Duration = Duration::from_secs(12 * 3600);
+pub const DEMO_TTL: Duration = Duration::from_secs(3600);
 const REFRESH_MARGIN_SECS: i64 = 60;
 
 pub struct Auth {
     pub oidc: Option<oidc::Oidc>,
     pub local: Option<local::Local>,
     pub public_url: Url,
+    /// OIDC email to role (RFC 0016)
+    roles: std::collections::BTreeMap<String, String>,
+    pub demo: Option<crate::config::Demo>,
+    local_role: Option<String>,
     // ponytail: sessions live in memory; one replica, a restart means one re-login
     sessions: Mutex<HashMap<String, Session>>,
 }
@@ -35,11 +40,14 @@ struct Session {
     id_exp: i64,
     refresh: Option<String>,
     created: Instant,
+    role: Option<String>,
+    demo: bool,
 }
 
 pub struct User {
     pub name: String,
     pub id_token: Option<String>,
+    pub role: Option<String>,
 }
 
 impl Auth {
@@ -61,6 +69,13 @@ impl Auth {
             oidc,
             local,
             public_url,
+            roles: cfg
+                .auth
+                .as_ref()
+                .map(|a| a.roles.clone())
+                .unwrap_or_default(),
+            demo: cfg.demo.clone(),
+            local_role: cfg.local_login.as_ref().and_then(|l| l.role.clone()),
             sessions: Mutex::new(HashMap::new()),
         }))
     }
@@ -100,13 +115,16 @@ impl Auth {
     pub async fn oidc_callback(&self, code: &str, state: &str) -> Result<String> {
         let oidc = self.oidc.as_ref().ok_or("OIDC login is not configured")?;
         let t = oidc.callback(code, state).await?;
-        tracing::info!(msg = "login", method = "oidc", user = %t.email, result = "ok");
+        let role = self.roles.get(&t.email).cloned();
+        tracing::info!(msg = "login", method = "oidc", user = %t.email, role = role.as_deref().unwrap_or(""), result = "ok");
         Ok(self.create(Session {
             user: t.email,
             id_token: Some(t.id_token),
             id_exp: t.id_exp,
             refresh: t.refresh,
             created: Instant::now(),
+            role,
+            demo: false,
         }))
     }
 
@@ -126,6 +144,38 @@ impl Auth {
             id_exp: i64::MAX,
             refresh: None,
             created: Instant::now(),
+            role: self.local_role.clone(),
+            demo: false,
+        }))
+    }
+
+    /// A passwordless session with the demo role (RFC 0016). At most
+    /// `max_sessions` demo sessions exist; the oldest goes first.
+    pub fn demo_login(&self) -> Result<String> {
+        let demo = self.demo.as_ref().ok_or("the demo is not configured")?;
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            let mut demos: Vec<(String, Instant)> = sessions
+                .iter()
+                .filter(|(_, s)| s.demo)
+                .map(|(k, s)| (k.clone(), s.created))
+                .collect();
+            if demos.len() >= demo.max_sessions {
+                demos.sort_by_key(|d| d.1);
+                for (sid, _) in demos.iter().take(demos.len() + 1 - demo.max_sessions) {
+                    sessions.remove(sid);
+                }
+            }
+        }
+        tracing::info!(msg = "login", method = "demo", role = %demo.role, result = "ok");
+        Ok(self.create(Session {
+            user: "demo".into(),
+            id_token: None,
+            id_exp: i64::MAX,
+            refresh: None,
+            created: Instant::now(),
+            role: Some(demo.role.clone()),
+            demo: true,
         }))
     }
 
@@ -134,7 +184,8 @@ impl Auth {
     /// longer produce a valid ID token.
     pub async fn user(&self, sid: &str) -> Option<User> {
         let s = self.sessions.lock().unwrap().get(sid).cloned()?;
-        if s.created.elapsed() > SESSION_TTL {
+        let ttl = if s.demo { DEMO_TTL } else { SESSION_TTL };
+        if s.created.elapsed() > ttl {
             self.logout(sid);
             return None;
         }
@@ -143,12 +194,14 @@ impl Auth {
             return Some(User {
                 name: s.user,
                 id_token: s.id_token,
+                role: s.role,
             });
         };
         if s.id_exp - now > REFRESH_MARGIN_SECS {
             return Some(User {
                 name: s.user,
                 id_token: s.id_token,
+                role: s.role,
             });
         }
         match oidc.refresh(&s.user, s.refresh.as_deref()).await {
@@ -156,6 +209,7 @@ impl Auth {
                 let user = User {
                     name: s.user.clone(),
                     id_token: Some(t.id_token.clone()),
+                    role: s.role.clone(),
                 };
                 let fresh = Session {
                     id_token: Some(t.id_token),
@@ -171,6 +225,7 @@ impl Auth {
                 Some(User {
                     name: s.user,
                     id_token: s.id_token,
+                    role: s.role,
                 })
             }
             Err(e) => {
@@ -194,5 +249,36 @@ impl Auth {
             parts.push(format!("password login for {:?}", l.username));
         }
         parts.join(", ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn demo_sessions_are_capped_and_carry_the_role() {
+        let auth = Auth {
+            oidc: None,
+            local: None,
+            public_url: Url::parse("https://homie.example").unwrap(),
+            roles: Default::default(),
+            demo: Some(crate::config::Demo {
+                role: "demo".into(),
+                max_sessions: 2,
+            }),
+            local_role: None,
+            sessions: Mutex::new(HashMap::new()),
+        };
+        let first = auth.demo_login().unwrap();
+        let second = auth.demo_login().unwrap();
+        let third = auth.demo_login().unwrap();
+        assert!(
+            auth.user(&first).await.is_none(),
+            "the oldest demo session goes"
+        );
+        let u = auth.user(&third).await.unwrap();
+        assert_eq!((u.name.as_str(), u.role.as_deref()), ("demo", Some("demo")));
+        assert!(auth.user(&second).await.is_some());
     }
 }

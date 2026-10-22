@@ -40,6 +40,10 @@ pub struct Config {
     pub logs: Logs,
     pub tailscale: Option<Tailscale>,
     pub github: Option<GitHub>,
+    /// read-only views for some users (RFC 0016)
+    pub roles: BTreeMap<String, Role>,
+    /// the passwordless "Try the demo" login (RFC 0016)
+    pub demo: Option<Demo>,
     pub healthchecks: Option<Healthchecks>,
 }
 
@@ -63,6 +67,8 @@ impl Default for Config {
             logs: Logs::default(),
             tailscale: None,
             github: None,
+            roles: BTreeMap::new(),
+            demo: None,
             healthchecks: None,
         }
     }
@@ -91,6 +97,53 @@ pub struct Auth {
     pub allowed_emails: Vec<String>,
     #[serde(default)]
     pub allowed_groups: Vec<String>,
+    /// email to role name (RFC 0016); users not listed have full access
+    #[serde(default)]
+    pub roles: BTreeMap<String, String>,
+}
+
+/// Pages a role can be given. The Overview is always there, with the cards
+/// of the allowed pages only.
+pub const PAGES: [&str; 10] = [
+    "infra",
+    "workloads",
+    "gitops",
+    "alerts",
+    "logs",
+    "security",
+    "tailscale",
+    "workflows",
+    "services",
+    "outage",
+];
+
+/// A read-only view (RFC 0016). Roles never run actions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Role {
+    pub pages: Vec<String>,
+    /// explicit Kubernetes namespaces, exact names
+    #[serde(default)]
+    pub namespaces: Vec<String>,
+    /// Proxmox guests are shown only with one of these tags
+    #[serde(default)]
+    pub proxmox_tags: Vec<String>,
+    /// "namespace/name" of the ServiceAccount Homie impersonates for this
+    /// role's Kubernetes reads
+    #[serde(default)]
+    pub kubernetes_service_account: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Demo {
+    pub role: String,
+    #[serde(default = "default_demo_sessions")]
+    pub max_sessions: usize,
+}
+
+fn default_demo_sessions() -> usize {
+    200
 }
 
 /// Built-in username and password login. Without `password_hash`, a random
@@ -103,6 +156,9 @@ pub struct LocalLogin {
     /// argon2 PHC string from `homie hash-password`
     #[serde(default)]
     pub password_hash: Option<Secret>,
+    /// a role for this user (RFC 0016), e.g. on a public demo instance
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 fn default_username() -> String {
@@ -581,6 +637,14 @@ pub fn load(explicit: Option<PathBuf>) -> Result<Config> {
     Ok(cfg)
 }
 
+/// DNS-1123 label: Kubernetes namespace and ServiceAccount names.
+fn valid_namespace(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 63
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
 fn check_url(what: &str, url: &str) -> Result<url::Url> {
     let u = url::Url::parse(url).map_err(|e| format!("{what}: {url:?} is not a URL: {e}"))?;
     if !matches!(u.scheme(), "http" | "https") {
@@ -596,6 +660,58 @@ pub fn validate(cfg: &Config) -> Result<()> {
         .map_err(|e| format!("listen: {:?} is not ip:port: {e}", cfg.listen))?;
     if cfg.refresh_seconds < 5 {
         return Err("refresh_seconds must be 5 or more".into());
+    }
+    for (name, r) in &cfg.roles {
+        if let Some(p) = r.pages.iter().find(|p| !PAGES.contains(&p.as_str())) {
+            return Err(
+                format!("roles.{name}.pages: unknown page {p:?} (one of {PAGES:?})").into(),
+            );
+        }
+        if let Some(n) = r.namespaces.iter().find(|n| !valid_namespace(n)) {
+            return Err(format!(
+                "roles.{name}.namespaces: {n:?} is not a namespace name (no globs)"
+            )
+            .into());
+        }
+        let kube_pages = r
+            .pages
+            .iter()
+            .any(|p| matches!(p.as_str(), "workloads" | "gitops"));
+        if kube_pages && !cfg.kubernetes.is_empty() {
+            if r.namespaces.is_empty() {
+                return Err(format!("roles.{name}: list the namespaces it may see").into());
+            }
+            if !r
+                .kubernetes_service_account
+                .as_deref()
+                .and_then(|s| s.split_once('/'))
+                .is_some_and(|(ns, sa)| valid_namespace(ns) && valid_namespace(sa))
+            {
+                return Err(format!(
+                    "roles.{name}.kubernetes_service_account: set \"namespace/name\" of a read-only ServiceAccount"
+                )
+                .into());
+            }
+        }
+    }
+    let role_known = |what: &str, r: &str| -> Result<()> {
+        if cfg.roles.contains_key(r) {
+            Ok(())
+        } else {
+            Err(format!("{what}: no [roles.{r}]").into())
+        }
+    };
+    if let Some(d) = &cfg.demo {
+        role_known("demo.role", &d.role)?;
+        if cfg.auth.is_none() && cfg.local_login.is_none() {
+            return Err("demo: needs a login method ([auth] or [local_login])".into());
+        }
+    }
+    for r in cfg.auth.iter().flat_map(|a| a.roles.values()) {
+        role_known("auth.roles", r)?;
+    }
+    if let Some(r) = cfg.local_login.as_ref().and_then(|l| l.role.as_ref()) {
+        role_known("local_login.role", r)?;
     }
     if let Some(q) = &cfg.quiet_hours {
         crate::quiet::Quiet::new(&q.window, q.timezone.as_deref())?;
@@ -828,6 +944,64 @@ mod tests {
     }
 
     #[test]
+    fn roles_and_demo() {
+        let mut cfg = Config {
+            allow_unauthenticated: true,
+            ..Config::default()
+        };
+        let k: Kubernetes =
+            serde_json::from_value(serde_json::json!({"auth": "kubeconfig"})).unwrap();
+        cfg.kubernetes.insert("main".into(), k);
+        let role = |v: serde_json::Value| -> Role { serde_json::from_value(v).unwrap() };
+        cfg.roles.insert(
+            "demo".into(),
+            role(
+                serde_json::json!({"pages": ["infra", "workloads"], "namespaces": ["apps"],
+                "kubernetes_service_account": "homie/homie-demo"}),
+            ),
+        );
+        assert!(validate(&cfg).is_ok());
+        for (bad, why) in [
+            (serde_json::json!({"pages": ["admin"]}), "unknown page"),
+            (
+                serde_json::json!({"pages": ["workloads"], "kubernetes_service_account": "homie/d"}),
+                "no namespaces",
+            ),
+            (
+                serde_json::json!({"pages": ["workloads"], "namespaces": ["apps-*"], "kubernetes_service_account": "homie/d"}),
+                "glob",
+            ),
+            (
+                serde_json::json!({"pages": ["gitops"], "namespaces": ["apps"]}),
+                "no service account",
+            ),
+            (
+                serde_json::json!({"pages": ["gitops"], "namespaces": ["apps"], "kubernetes_service_account": "d"}),
+                "not ns/name",
+            ),
+        ] {
+            cfg.roles.insert("bad".into(), role(bad));
+            assert!(validate(&cfg).is_err(), "{why}");
+        }
+        cfg.roles.remove("bad");
+        assert!(
+            serde_json::from_value::<Role>(serde_json::json!({"pages": [], "actions": true}))
+                .is_err(),
+            "roles never act"
+        );
+        cfg.demo = Some(Demo {
+            role: "nope".into(),
+            max_sessions: 1,
+        });
+        assert!(validate(&cfg).is_err(), "unknown demo role");
+        cfg.demo = Some(Demo {
+            role: "demo".into(),
+            max_sessions: 1,
+        });
+        assert!(validate(&cfg).is_err(), "demo without a login method");
+    }
+
+    #[test]
     fn loopback_guard_and_auth_rules() {
         let mut cfg = Config {
             listen: "0.0.0.0:7777".into(),
@@ -858,6 +1032,7 @@ mod tests {
         cfg.local_login = Some(LocalLogin {
             username: "homie".into(),
             password_hash: None,
+            role: None,
         });
         assert!(validate(&cfg).is_err(), "no hash and no state_dir");
         cfg.state_dir = Some("/tmp/homie".into());
