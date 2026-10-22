@@ -127,7 +127,7 @@ export class ApiError extends Error {}
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, { credentials: "same-origin", ...init });
   if (r.status === 401) {
-    window.location.href = "/auth/login";
+    if (window.location.pathname !== "/login") window.location.href = "/login";
     throw new ApiError("login required");
   }
   const body = r.status === 204 ? null : await r.json().catch(() => null);

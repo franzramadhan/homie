@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { act, useMeta } from "./api";
 import "./index.css";
 import { GitOps } from "./routes/gitops";
+import { Login } from "./routes/login";
 import { Infra } from "./routes/infra";
 import { Observability } from "./routes/observability";
 import { Overview } from "./routes/overview";
@@ -55,7 +56,7 @@ function Layout() {
           {m?.auth && (
             <button
               className="underline"
-              onClick={() => act("/auth/logout").finally(() => (window.location.href = "/auth/login"))}
+              onClick={() => act("/auth/logout").finally(() => (window.location.href = "/login"))}
             >
               log out
             </button>
@@ -91,8 +92,12 @@ const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, sta
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
+    {window.location.pathname === "/login" ? (
+      <Login />
+    ) : (
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    )}
   </StrictMode>,
 );

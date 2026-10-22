@@ -11,7 +11,7 @@ and the milestones are in [rfc/0001-homie-foundation.md](rfc/0001-homie-foundati
 |---|---|
 | `src/config.rs`, `secret.rs`, `http.rs`, `quiet.rs`, `cache.rs` | config layering, secret references, per-integration TLS, quiet hours, query cache and snapshot |
 | `src/integrations/` | one module per domain: `proxmox`, `kubernetes`, `helm`, `flux`, `grafana`, `security` (presets), `outage` (Tailscale, healthchecks); `mod.rs` builds them and serves named queries |
-| `src/auth.rs` | OIDC login and server-side sessions |
+| `src/auth/` | `oidc` (provider login), `local` (username + argon2 password, generated first password, lockout), `mod.rs` (sessions, cookie) |
 | `src/server/` | `api` (meta, queries, actions), `guard` (Host, CSRF, session), `login`, `assets` (embedded UI) |
 | `src/check.rs` | `homie check` |
 | `web/` | Vite + React + TanStack Router/Query/Table SPA; `src/api.ts` mirrors the Rust JSON shapes |

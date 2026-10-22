@@ -1,6 +1,5 @@
 //! OIDC login (authorization code + PKCE) with any provider that supports
-//! discovery, and server-side sessions. Tokens never reach the browser: the
-//! cookie only carries an opaque session id.
+//! discovery. Tokens stay on the server; the session layer keeps them.
 
 use std::{
     collections::HashMap,
@@ -29,19 +28,12 @@ type OidcClient = CoreClient<
     EndpointMaybeSet,
 >;
 
-// ponytail: fixed session lifetime; make it configurable if anyone asks
-const SESSION_TTL: Duration = Duration::from_secs(12 * 3600);
 const LOGIN_TTL: Duration = Duration::from_secs(600);
-const REFRESH_MARGIN_SECS: i64 = 60;
-pub const COOKIE: &str = "__Host-homie";
 
-pub struct Auth {
+pub struct Oidc {
     client: OidcClient,
     http: reqwest::Client,
     cfg: config::Auth,
-    pub public_url: Url,
-    // ponytail: sessions live in memory; one replica, a restart means one silent re-login
-    sessions: Mutex<HashMap<String, Session>>,
     pending: Mutex<HashMap<String, Pending>>,
 }
 
@@ -51,18 +43,12 @@ struct Pending {
     at: Instant,
 }
 
-#[derive(Clone)]
-struct Session {
-    email: String,
-    id_token: String,
-    id_exp: i64,
-    refresh: Option<String>,
-    created: Instant,
-}
-
-pub struct User {
+/// What a login or a refresh yields.
+pub struct Tokens {
     pub email: String,
     pub id_token: String,
+    pub id_exp: i64,
+    pub refresh: Option<String>,
 }
 
 /// The oauth2 crate's HTTP client interface, on top of our reqwest.
@@ -90,9 +76,15 @@ fn payload(token: &CoreIdToken) -> Result<Value> {
     )?)
 }
 
-impl Auth {
-    pub async fn new(cfg: &config::Auth, public_url: &str) -> Result<Self> {
-        let public_url = Url::parse(public_url)?;
+fn raw(token: &CoreIdToken) -> Result<String> {
+    Ok(serde_json::to_value(token)?
+        .as_str()
+        .unwrap_or_default()
+        .to_string())
+}
+
+impl Oidc {
+    pub async fn new(cfg: &config::Auth, public_url: &Url) -> Result<Self> {
         crate::http::init_tls();
         let http = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
@@ -128,8 +120,6 @@ impl Auth {
             client,
             http,
             cfg: cfg.clone(),
-            public_url,
-            sessions: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
         })
     }
@@ -159,8 +149,8 @@ impl Auth {
         url.to_string()
     }
 
-    /// Finishes the login. Returns the new session id and the user's email.
-    pub async fn callback(&self, code: &str, state: &str) -> Result<(String, String)> {
+    /// Finishes the login and checks the allowlists.
+    pub async fn callback(&self, code: &str, state: &str) -> Result<Tokens> {
         let p = self
             .pending
             .lock()
@@ -204,73 +194,23 @@ impl Auth {
                 .iter()
                 .any(|g| self.cfg.allowed_groups.iter().any(|a| a == g));
         if !allowed {
-            tracing::warn!(msg = "login", user = %email, result = "denied");
+            tracing::warn!(msg = "login", method = "oidc", user = %email, result = "denied");
             return Err(format!("{email} is not allowed to use this Homie").into());
         }
-
-        let sid = CsrfToken::new_random().secret().clone();
-        self.sessions.lock().unwrap().insert(
-            sid.clone(),
-            Session {
-                email: email.clone(),
-                id_token: serde_json::to_value(id_token)?
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string(),
-                id_exp: claims["exp"].as_i64().unwrap_or(0),
-                refresh: token.refresh_token().map(|r| r.secret().clone()),
-                created: Instant::now(),
-            },
-        );
-        tracing::info!(msg = "login", user = %email, result = "ok");
-        Ok((sid, email))
+        Ok(Tokens {
+            email,
+            id_token: raw(id_token)?,
+            id_exp: claims["exp"].as_i64().unwrap_or(0),
+            refresh: token.refresh_token().map(|r| r.secret().clone()),
+        })
     }
 
-    /// The session's user, with an ID token refreshed when it is about to
-    /// expire. `None` when the session is unknown, too old, or can no longer
-    /// produce a valid ID token.
-    pub async fn user(&self, sid: &str) -> Option<User> {
-        let s = self.sessions.lock().unwrap().get(sid).cloned()?;
-        if s.created.elapsed() > SESSION_TTL {
-            self.logout(sid);
-            return None;
-        }
-        let now = jiff::Timestamp::now().as_second();
-        if s.id_exp - now > REFRESH_MARGIN_SECS {
-            return Some(User {
-                email: s.email,
-                id_token: s.id_token,
-            });
-        }
-        match self.refresh(&s).await {
-            Ok(fresh) => {
-                let user = User {
-                    email: fresh.email.clone(),
-                    id_token: fresh.id_token.clone(),
-                };
-                self.sessions.lock().unwrap().insert(sid.to_string(), fresh);
-                Some(user)
-            }
-            Err(e) if s.id_exp > now => {
-                tracing::debug!(msg = "token refresh failed, current token still valid", error = %e);
-                Some(User {
-                    email: s.email,
-                    id_token: s.id_token,
-                })
-            }
-            Err(e) => {
-                tracing::info!(msg = "session ended", user = %s.email, reason = %e);
-                self.logout(sid);
-                None
-            }
-        }
-    }
-
-    async fn refresh(&self, s: &Session) -> Result<Session> {
+    /// A fresh ID token from the refresh token.
+    pub async fn refresh(&self, email: &str, refresh: Option<&str>) -> Result<Tokens> {
         let rt = RefreshToken::new(
-            s.refresh
-                .clone()
-                .ok_or("no refresh token (request offline_access)")?,
+            refresh
+                .ok_or("no refresh token (request offline_access)")?
+                .to_string(),
         );
         let token = self
             .client
@@ -281,26 +221,18 @@ impl Auth {
         // refreshed ID tokens carry no nonce
         id_token.claims(&self.client.id_token_verifier(), |_: Option<&Nonce>| Ok(()))?;
         let claims = payload(id_token)?;
-        Ok(Session {
-            email: s.email.clone(),
-            id_token: serde_json::to_value(id_token)?
-                .as_str()
-                .unwrap_or_default()
-                .to_string(),
+        Ok(Tokens {
+            email: email.to_string(),
+            id_token: raw(id_token)?,
             id_exp: claims["exp"].as_i64().unwrap_or(0),
             refresh: token
                 .refresh_token()
                 .map(|r| r.secret().clone())
-                .or_else(|| s.refresh.clone()),
-            created: s.created,
+                .or_else(|| refresh.map(String::from)),
         })
     }
 
-    pub fn logout(&self, sid: &str) {
-        self.sessions.lock().unwrap().remove(sid);
-    }
-
-    pub async fn probe(&self) -> Result<String> {
-        Ok(format!("OIDC provider {} discovered", self.cfg.issuer))
+    pub fn probe(&self) -> String {
+        format!("OIDC provider {} discovered", self.cfg.issuer)
     }
 }

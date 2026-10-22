@@ -35,6 +35,8 @@ pub fn router(state: Shared) -> Router {
         .layer(from_fn_with_state(state.clone(), guard::session));
     Router::new()
         .merge(api)
+        .route("/auth/options", get(login::options))
+        .route("/auth/local", post(login::local))
         .route("/auth/login", get(login::login))
         .route("/auth/callback", get(login::callback))
         .route("/healthz", get(|| async { "ok" }))
@@ -46,10 +48,7 @@ pub fn router(state: Shared) -> Router {
 pub async fn run(cfg: Config) -> Result<()> {
     let lab = Lab::new(&cfg).await?;
     let cache = Cache::new(cfg.state_dir.clone())?;
-    let auth = match &cfg.auth {
-        Some(a) => Some(Auth::new(a, &cfg.public_url).await?),
-        None => None,
-    };
+    let auth = Auth::new(&cfg).await?;
     if auth.is_none() && cfg.allow_unauthenticated {
         tracing::warn!(
             msg = "insecure",

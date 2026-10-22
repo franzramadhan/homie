@@ -13,21 +13,21 @@ pub async fn run(cfg: Config) -> Result<()> {
     println!("{}\n", serde_json::to_string_pretty(&cfg)?);
 
     let lab = Lab::new(&cfg).await?;
-    let auth = match &cfg.auth {
-        Some(a) => Some(Auth::new(a, &cfg.public_url).await),
-        None => None,
-    };
+    let auth = Auth::new(&cfg).await;
 
     let cache = crate::cache::Cache::new(None)?;
     let anonymous = crate::integrations::Caller::default();
     let mut probes: Vec<(String, Probe)> = Vec::new();
     match &auth {
-        Some(Ok(a)) => probes.push(("auth".into(), Box::pin(a.probe()))),
-        Some(Err(e)) => probes.push((
-            "auth".into(),
-            Box::pin(async move { Err(e.to_string().into()) }),
-        )),
-        None => {}
+        Ok(Some(a)) => {
+            let detail = a.probe();
+            probes.push(("auth".into(), Box::pin(async move { Ok(detail) })));
+        }
+        Err(e) => {
+            let e = e.to_string();
+            probes.push(("auth".into(), Box::pin(async move { Err(e.into()) })));
+        }
+        Ok(None) => {}
     }
     for (n, p) in &lab.proxmox {
         probes.push((format!("proxmox.{n}"), Box::pin(p.probe())));

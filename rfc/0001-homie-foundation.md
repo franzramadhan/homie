@@ -147,15 +147,33 @@ Proxmox or the cluster either. It shows instead:
 
 ### Authentication
 
-`[auth]` absent means no login. Homie then refuses to listen on a non-loopback
-address unless `allow_unauthenticated = true` is set. That setting is for two
-cases: a container published only on the host's loopback, and an instance
-behind an auth proxy (oauth2-proxy, Authelia, Cloudflare Access application,
-Tailscale Serve). Homie logs a warning at start when it is on.
+Two login methods, each optional, both offered on one login page (`/login`):
 
-`[auth]` present means OIDC with any standards-compliant provider (discovery
-via `issuer/.well-known/openid-configuration`): Cloudflare Access, Authentik,
-Keycloak, Authelia, Pocket ID, Zitadel, Google, and others.
+- **`[local_login]`: username and password.** The username defaults to
+  `homie`. There is no default password, because a password published in
+  this repo would open every instance that never changed it. Either set
+  `password_hash` (an argon2id string from `homie hash-password`), or leave
+  it out and Homie generates a random password at the first start. The
+  password goes to `state_dir/initial-password` and its hash to
+  `state_dir/local-login.hash`, both mode 0600; the log only names the file.
+  After 10 wrong attempts within 15 minutes, logins are refused for 5
+  minutes. Password sessions carry no ID token, so `forward_token` clusters
+  need an OIDC login.
+- **`[auth]`: OIDC** with any standards-compliant provider (discovery via
+  `issuer/.well-known/openid-configuration`): Cloudflare Access, Authentik,
+  Keycloak, Authelia, Pocket ID, Zitadel, Google, and others. The login page
+  shows "Sign in with SSO"; with OIDC alone it goes straight to the provider.
+
+With neither, there is no login, and Homie refuses to listen on a
+non-loopback address unless `allow_unauthenticated = true` is set. That
+setting is for two cases: a container published only on the host's
+loopback, and an instance behind an auth proxy (oauth2-proxy, Authelia,
+Cloudflare Access application, Tailscale Serve). Homie logs a warning at
+start when it is on.
+
+The session cookie is `__Host-homie` (Secure) when `public_url` is HTTPS or
+localhost. Password login on a plain-HTTP LAN address works with a plain
+`homie` cookie, but the password then crosses the network unencrypted.
 
 ```mermaid
 sequenceDiagram
@@ -419,7 +437,11 @@ allow_unauthenticated = false          # only for loopback-published containers 
 window = "23:30-06:00"
 timezone = "UTC"
 
-[auth]                                 # optional; absent = no login
+[local_login]                          # optional: username + password login
+username = "homie"
+password_hash = { env = "HOMIE_PASSWORD_HASH" }  # from `homie hash-password`; absent = generated into state_dir
+
+[auth]                                 # optional: OIDC login
 issuer = "https://idp.example.com/"
 client_id = "homie"
 client_secret = { env = "OIDC_CLIENT_SECRET" }
@@ -568,9 +590,12 @@ Setup outside this repo:
 
 ## Security considerations
 
-- Without `[auth]`, Homie binds to loopback only, unless
+- Without a login method, Homie binds to loopback only, unless
   `allow_unauthenticated` is set explicitly. That setting is logged at every
   start.
+- Password login stores only an argon2id hash, never ships a default
+  password, writes a generated one only to a 0600 file (never to the log),
+  and locks out after 10 failures in 15 minutes.
 - With `forward_token`, Homie holds no standing Kubernetes privilege. A
   compromised Homie gets only the ID tokens of live sessions (minutes long)
   and their refresh tokens (hours), held in memory. With `in_cluster`, the
