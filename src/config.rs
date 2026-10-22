@@ -35,6 +35,7 @@ pub struct Config {
     pub grafana: BTreeMap<String, Grafana>,
     pub openbao: BTreeMap<String, OpenBao>,
     pub security: Security,
+    pub logs: Logs,
     pub tailscale: Option<Tailscale>,
     pub healthchecks: Option<Healthchecks>,
 }
@@ -55,6 +56,7 @@ impl Default for Config {
             grafana: BTreeMap::new(),
             openbao: BTreeMap::new(),
             security: Security::default(),
+            logs: Logs::default(),
             tailscale: None,
             healthchecks: None,
         }
@@ -287,6 +289,46 @@ pub struct Grafana {
 
 fn default_ignore_alerts() -> Vec<String> {
     vec!["Watchdog".into()]
+}
+
+/// Log search (RFC 0008): only these datasources can be queried.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Logs {
+    pub datasources: Vec<LogSource>,
+    pub max_rows: usize,
+}
+
+impl Default for Logs {
+    fn default() -> Self {
+        Self {
+            datasources: Vec::new(),
+            max_rows: 1000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LogSource {
+    pub label: String,
+    pub grafana: String,
+    pub datasource: String,
+    #[serde(rename = "type")]
+    pub kind: LogKind,
+    /// query for one pod, with {namespace} and {pod}
+    #[serde(default)]
+    pub pod_query: Option<String>,
+    /// query for one node or host, with {node}
+    #[serde(default)]
+    pub node_query: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogKind {
+    Victorialogs,
+    Loki,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -608,6 +650,17 @@ pub fn validate(cfg: &Config) -> Result<()> {
             && !cfg.grafana.contains_key(g)
         {
             return Err(format!("security.{preset}.grafana: no [grafana.{g}]").into());
+        }
+    }
+    let mut labels = std::collections::HashSet::new();
+    for s in &cfg.logs.datasources {
+        if !cfg.grafana.contains_key(&s.grafana) {
+            return Err(
+                format!("logs.datasources {:?}: no [grafana.{}]", s.label, s.grafana).into(),
+            );
+        }
+        if !labels.insert(&s.label) {
+            return Err(format!("logs.datasources: label {:?} used twice", s.label).into());
         }
     }
     if let Some(t) = &cfg.tailscale {

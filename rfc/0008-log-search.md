@@ -31,6 +31,20 @@ Every log question leaves Homie for Grafana Explore.
 | `logs.datasources` | none | list of `{grafana, datasource, type, label}` |
 | `logs.max_rows` | `1000` | cap per query |
 
+## Changes during implementation
+
+- Datasource entries: `label`, `grafana`, `datasource`, `type`
+  (`victorialogs` or `loki`), and optional `pod_query` / `node_query`
+  templates (`{namespace}`, `{pod}`, `{node}`) that drive the "logs" links
+  on pods and nodes. Wazuh and Tetragon context links were left out: their
+  security tables already link to Grafana Explore.
+- Endpoint `POST /api/logs` with `{source, query, minutes, limit}`: a POST
+  for the body, with the write checks (X-Homie, Origin); every query is
+  logged with the user (`msg="logs"`).
+- Terminal color codes are stripped from messages.
+- A prefilled link runs its search on open; the URL keeps source, query and
+  range.
+
 ## Alternatives
 
 | Option | Why not |

@@ -1,9 +1,18 @@
 // Kubernetes: nodes, unhealthy pods, workloads, warning events, Helm releases.
 
-import { useMeta, useQ, type HelmRelease, type K8sOverview, type Sparks } from "../api";
+import { logsLink, useMeta, useQ, type HelmRelease, type K8sOverview, type Sparks } from "../api";
 import { Badge, Bar, DataTable, Ext, Source, Spark, ago, bytes } from "../ui";
 
+function LogsLink({ href }: { href: string | null }) {
+  return href ? (
+    <a href={href} className="ml-2 text-xs text-ink-subtle underline decoration-ink-faint underline-offset-2 hover:text-ink">
+      logs
+    </a>
+  ) : null;
+}
+
 function Cluster({ name, metrics }: { name: string; metrics: boolean }) {
+  const meta = useMeta().data;
   const q = useQ<K8sOverview>("k8s", name);
   const sparks = useQ<Sparks>("spark-k8s", name, metrics).data?.data;
   const helm = useQ<HelmRelease[]>("helm", name);
@@ -16,7 +25,16 @@ function Cluster({ name, metrics }: { name: string; metrics: boolean }) {
               filter={false}
               data={d.nodes}
               columns={[
-                { accessorKey: "name", header: "Node", cell: ({ row }) => <Ext href={row.original.link}>{row.original.name}</Ext> },
+                {
+                  accessorKey: "name",
+                  header: "Node",
+                  cell: ({ row }) => (
+                    <>
+                      <Ext href={row.original.link}>{row.original.name}</Ext>
+                      <LogsLink href={logsLink(meta, "node_query", { node: row.original.name })} />
+                    </>
+                  ),
+                },
                 {
                   id: "ready",
                   accessorFn: (n) => n.ready,
@@ -53,7 +71,16 @@ function Cluster({ name, metrics }: { name: string; metrics: boolean }) {
                 empty="Every pod is running and ready"
                 columns={[
                   { accessorKey: "namespace", header: "Namespace" },
-                  { accessorKey: "name", header: "Pod", cell: ({ row }) => <Ext href={row.original.link}>{row.original.name}</Ext> },
+                  {
+                    accessorKey: "name",
+                    header: "Pod",
+                    cell: ({ row }) => (
+                      <>
+                        <Ext href={row.original.link}>{row.original.name}</Ext>
+                        <LogsLink href={logsLink(meta, "pod_query", { namespace: row.original.namespace, pod: row.original.name })} />
+                      </>
+                    ),
+                  },
                   { accessorKey: "phase", header: "Phase" },
                   { accessorKey: "reason", header: "Reason", cell: ({ row }) => <Badge tone="bad">{row.original.reason}</Badge> },
                   { accessorKey: "restarts", header: "Restarts" },

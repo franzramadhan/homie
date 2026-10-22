@@ -21,6 +21,7 @@ export type Meta = {
   kubernetes: { name: string; quiet: boolean; headlamp_url: string | null; forward_token: boolean; metrics: boolean; argocd_url: string | null }[];
   grafana: { name: string; quiet: boolean; url: string; insecure: string | null }[];
   openbao: { name: string; quiet: boolean; url: string; insecure: string | null }[];
+  logs: { label: string; type: "victorialogs" | "loki"; pod_query: string | null; node_query: string | null }[];
   security: string[];
   tailscale: boolean;
   healthchecks: { url: string } | null;
@@ -169,6 +170,17 @@ export type PgCluster = {
   backup_age_hours: number | null;
   backup_stale: boolean;
 };
+
+export type LogRow = { time: string; message: string; labels: string };
+
+/** Link to the log page with a source's template filled in. */
+export function logsLink(m: Meta | undefined, kind: "pod_query" | "node_query", vars: Record<string, string>): string | null {
+  const src = m?.logs.find((s) => s[kind]);
+  const tpl = src?.[kind];
+  if (!src || !tpl) return null;
+  const q = Object.entries(vars).reduce((t, [k, v]) => t.replaceAll(`{${k}}`, v), tpl);
+  return `/logs?${new URLSearchParams({ source: src.label, q })}`;
+}
 
 export type Series = { cpu: number[]; mem: number[] };
 export type Sparks = { nodes: Record<string, Series>; guests?: Record<string, Series> };

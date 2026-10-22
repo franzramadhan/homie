@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::Shared;
-use crate::integrations::{Caller, argocd, flux, proxmox::PowerRequest};
+use crate::integrations::{Caller, argocd, flux, logs, proxmox::PowerRequest};
 
 fn error(status: StatusCode, msg: impl ToString) -> Response {
     (status, Json(json!({ "error": msg.to_string() }))).into_response()
@@ -40,6 +40,9 @@ pub async fn meta(State(state): State<Shared>, Extension(caller): Extension<Call
         })).collect::<Vec<_>>(),
         "openbao": lab.openbao.values().map(|b| json!({
             "name": b.name, "quiet": b.quiet, "url": b.url, "insecure": b.insecure,
+        })).collect::<Vec<_>>(),
+        "logs": lab.logs.datasources.iter().map(|s| json!({
+            "label": s.label, "type": s.kind, "pod_query": s.pod_query, "node_query": s.node_query,
         })).collect::<Vec<_>>(),
         "security": lab.presets(),
         "tailscale": lab.tailscale.is_some(),
@@ -166,5 +169,27 @@ pub async fn argocd_refresh(
     match result {
         Ok(done) => Json(json!({ "refreshed": done })).into_response(),
         Err(e) => error(StatusCode::BAD_REQUEST, e),
+    }
+}
+
+/// Log search. A POST for the body; it reads only, but every query is logged.
+pub async fn search_logs(
+    State(state): State<Shared>,
+    Extension(caller): Extension<Caller>,
+    Json(req): Json<logs::SearchRequest>,
+) -> Response {
+    let started = std::time::Instant::now();
+    let result = state.lab.search_logs(&req).await;
+    let user = caller.email.as_deref().unwrap_or("local");
+    let ms = started.elapsed().as_millis() as u64;
+    match result {
+        Ok(r) => {
+            tracing::info!(msg = "logs", user, source = %req.source, minutes = req.minutes, query = %req.query, ms, result = "ok");
+            Json(r).into_response()
+        }
+        Err(e) => {
+            tracing::warn!(msg = "logs", user, source = %req.source, query = %req.query, ms, error = %e, result = "error");
+            error(StatusCode::BAD_REQUEST, e)
+        }
     }
 }

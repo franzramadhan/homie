@@ -215,11 +215,20 @@ impl Grafana {
         datasource: &str,
         query: &str,
     ) -> Result<Vec<serde_json::Map<String, Value>>> {
+        self.logsql_params(datasource, &[("query", query)]).await
+    }
+
+    /// LogsQL with extra arguments (`start`, `limit`).
+    pub async fn logsql_params(
+        &self,
+        datasource: &str,
+        params: &[(&str, &str)],
+    ) -> Result<Vec<serde_json::Map<String, Value>>> {
         let path = format!(
             "/api/datasources/proxy/uid/{}/select/logsql/query",
             enc(datasource)
         );
-        let text = self.get(&path, &[("query", query)]).await?.text().await?;
+        let text = self.get(&path, params).await?.text().await?;
         text.lines()
             .filter(|l| !l.trim().is_empty())
             .map(|l| {
@@ -229,6 +238,31 @@ impl Grafana {
                     .unwrap_or_default())
             })
             .collect()
+    }
+
+    /// LogQL range query through a Loki datasource, newest first.
+    pub async fn loki_range(
+        &self,
+        datasource: &str,
+        query: &str,
+        seconds: i64,
+        limit: usize,
+    ) -> Result<Value> {
+        let path = format!(
+            "/api/datasources/proxy/uid/{}/loki/api/v1/query_range",
+            enc(datasource)
+        );
+        let end = jiff::Timestamp::now().as_nanosecond();
+        let start = end - i128::from(seconds) * 1_000_000_000;
+        let (start, end, limit) = (start.to_string(), end.to_string(), limit.to_string());
+        let params = [
+            ("query", query),
+            ("start", &start),
+            ("end", &end),
+            ("limit", &limit),
+            ("direction", "backward"),
+        ];
+        Ok(self.get(&path, &params).await?.json().await?)
     }
 
     /// Explore with this query prefilled, last 24 h.
