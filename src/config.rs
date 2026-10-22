@@ -443,9 +443,24 @@ pub struct GitHub {
     pub api_url: String,
     #[serde(default)]
     pub quiet: bool,
+    /// where the picker saves watches (RFC 0015)
+    #[serde(default)]
+    pub store: WatchStore,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WatchStore {
+    /// a ConfigMap when running in a cluster, else a file in state_dir, else off
+    #[default]
+    Auto,
+    Configmap,
+    File,
+    /// paste-only, as in RFC 0014
+    Off,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Watch {
     /// owner/name

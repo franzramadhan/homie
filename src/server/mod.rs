@@ -42,6 +42,7 @@ pub fn router(state: Shared) -> Router {
         .route("/api/logs", post(api::search_logs))
         .route("/api/github/repos", get(github::repos))
         .route("/api/github/workflows", get(github::workflows))
+        .route("/api/github/watch", post(github::save_watch))
         .route("/github/login", get(github::login))
         .route("/github/callback", get(github::callback))
         .route("/auth/logout", post(login::logout))

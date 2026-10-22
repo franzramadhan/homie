@@ -75,6 +75,42 @@ subjects:
     name: {{ $sa }}
     namespace: {{ .Release.Namespace }}
 {{- end }}
+{{- if .Values.rbac.githubWatch }}
+---
+# The workflow picker saves its watch list in one ConfigMap (RFC 0015).
+# RBAC cannot limit create to a name; get and update are limited to it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}-github-watch
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "homie.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [homie-github-watch]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}-github-watch
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "homie.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}-github-watch
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
 {{- if .Values.rbac.helmReleases }}
 ---
 # The Helm releases view lists Secrets of type helm.sh/release.v1; RBAC

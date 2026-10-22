@@ -26,7 +26,7 @@ export type Meta = {
   logs: { label: string; type: "victorialogs" | "loki"; pod_query: string | null; node_query: string | null }[];
   security: string[];
   tailscale: boolean;
-  github: { watch: number; helper: boolean } | null;
+  github: { watch: number; helper: boolean; store: "configmap" | "file" | null } | null;
   healthchecks: { url: string } | null;
 };
 
@@ -188,7 +188,7 @@ export type GhRun = {
   commit_link: string;
   link: string;
 };
-export type GhWorkflow = { repo: string; workflow: string; name: string; link: string; runs: GhRun[]; error: string | null };
+export type GhWorkflow = { repo: string; workflow: string; source: "config" | "saved"; name: string; link: string; runs: GhRun[]; error: string | null };
 
 /** The run that decides health: the newest completed one, and whether a run waits too long. */
 export function workflowHealth(w: GhWorkflow): "failed" | "stuck" | "ok" | "unknown" {
