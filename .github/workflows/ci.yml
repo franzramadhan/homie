@@ -22,6 +22,7 @@ jobs:
     outputs:
       rust: ${{ steps.files.outputs.rust }}
       web: ${{ steps.files.outputs.web }}
+      chart: ${{ steps.files.outputs.chart }}
     steps:
       - id: files
         env:
@@ -32,10 +33,11 @@ jobs:
           printf '%s\n' "$files"
           rust=false
           web=false
+          chart=false
           if grep -qE '^(src/|examples/|Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.github/workflows/ci\.yml$)' <<<"$files"; then rust=true; fi
           if grep -qE '^(web/|\.github/workflows/ci\.yml$)' <<<"$files"; then web=true; fi
-          echo "rust=$rust" >> "$GITHUB_OUTPUT"
-          echo "web=$web" >> "$GITHUB_OUTPUT"
+          if grep -qE '^(charts/|\.github/workflows/ci\.yml$)' <<<"$files"; then chart=true; fi
+          printf 'rust=%s\nweb=%s\nchart=%s\n' "$rust" "$web" "$chart" >> "$GITHUB_OUTPUT"
 
   test:
     needs: changes
@@ -69,3 +71,17 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check:contrast
       - run: bun run build
+
+  chart:
+    needs: changes
+    if: needs.changes.outputs.chart == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.1
+      - run: helm lint charts/homie --strict
+      - run: helm template homie charts/homie --set rbac.helmReleases=true --set ingress.enabled=true --set httpRoute.enabled=true > /dev/null

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "homie.name" . }}
+  labels:
+    {{- include "homie.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "homie.selector" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http

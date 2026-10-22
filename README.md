@@ -44,7 +44,7 @@ Behavior that suits a homelab:
 ### Laptop or Linux box
 
 ```bash
-mise use -g github:franzramadhan/homie          # or download a tarball from GitHub Releases
+mise use -g github:franzramadhan/homie          # or: brew install franzramadhan/tap/homie
 mkdir -p ~/.config/homie
 curl -fsSL https://raw.githubusercontent.com/franzramadhan/homie/main/examples/local.toml \
   -o ~/.config/homie/config.toml                   # then edit it
@@ -69,6 +69,15 @@ host's loopback. See `examples/docker-compose.yaml`.
 
 ### Kubernetes
 
+With Helm (config goes in the `config` value, secrets in `existingSecret`):
+
+```bash
+helm install homie oci://ghcr.io/franzramadhan/charts/homie --version <version> \
+  -n homie --create-namespace -f my-values.yaml
+```
+
+Or the dependency-free kustomize base:
+
 ```bash
 kubectl apply -k deploy/kubernetes
 kubectl -n homie create secret generic homie \
@@ -81,7 +90,8 @@ kubectl -n homie create secret generic homie \
 
 Then expose the `homie` Service with your Ingress, Gateway API route or
 Tailscale Ingress. Register `https://<host>/auth/callback` as the redirect
-URI at your provider. The Helm view needs `deploy/kubernetes/rbac-helm.yaml`.
+URI at your provider. The Helm view needs `deploy/kubernetes/rbac-helm.yaml` (chart:
+`rbac.helmReleases=true`).
 
 ## Configure
 

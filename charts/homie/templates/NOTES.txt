@@ -1,0 +1,7 @@
+Homie {{ .Chart.AppVersion }} is installed as {{ include "homie.name" . }} in {{ .Release.Namespace }}.
+
+- Login: the pod refuses to start without [auth] (OIDC) or [local_login]
+  with a password_hash in `config`. Secrets go into the Secret named by
+  existingSecret as HOMIE__* variables.
+- Check the config and every integration from a laptop: `homie check`.
+- Reach it: kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "homie.name" . }} 8080:{{ .Values.service.port }}
