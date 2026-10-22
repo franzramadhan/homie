@@ -13,14 +13,15 @@ pub fn page_of(kind: &str) -> Option<&'static str> {
     Some(match kind {
         "pve" | "spark-pve" => "infra",
         "k8s" | "spark-k8s" => "workloads",
-        "flux" | "argocd" => "gitops",
+        "flux" => "gitops",
         "alerts" => "alerts",
         "security" => "security",
         "tailscale" => "tailscale",
         "github" => "workflows",
         "openbao" | "cnpg" => "services",
         "healthchecks" => "outage",
-        // Helm releases are read from Secrets: never for a role
+        // Helm releases are read from Secrets, and Argo CD would need its own
+        // RBAC for a role's ServiceAccount: never for a role
         _ => return None,
     })
 }
@@ -88,11 +89,6 @@ pub fn filter(role: &Role, kind: &str, mut data: Value, pve: Option<&Value>) -> 
                 });
             }
         }
-        "argocd" => {
-            if let Some(apps) = data.as_array_mut() {
-                apps.retain(|a| ns_ok(&a["dest_namespace"]));
-            }
-        }
         "pve" => {
             let vmids = visible_vmids(role, &data);
             retain_rows(&mut data, "guests", |g| {
@@ -140,6 +136,7 @@ mod tests {
         let r = demo();
         assert!(allows(&r, "k8s") && allows(&r, "flux") && allows(&r, "spark-pve"));
         assert!(!allows(&r, "alerts") && !allows(&r, "security") && !allows(&r, "helm"));
+        assert!(!allows(&r, "argocd"), "Argo CD is never for a role");
         assert!(!allows(&r, "logs") && !allows(&r, "nonsense"));
     }
 

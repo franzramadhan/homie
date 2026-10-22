@@ -124,7 +124,9 @@ Deviations found while building (v0.6.0):
 - Flux: a Kustomization is shown when every namespaced object in its
   `status.inventory` is in an allowed namespace; a HelmRelease by
   `spec.targetNamespace`, else its own namespace; sources are hidden.
-  Argo CD Applications by destination namespace.
+  Argo CD is hidden for roles: listing Applications needs extra RBAC for the
+  role's ServiceAccount, and the apiserver answers 403 (not "not installed")
+  without it.
 - Proxmox: storage and failed tasks are empty and power is off for a role.
 - `[[local_login.users]]` is not in v0.6.0: the demo button covers the demo,
   and OIDC users get roles through `[auth] roles`. `[local_login] role`
