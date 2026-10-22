@@ -18,4 +18,5 @@ the RFCs it implements. Versions stay 0.x (alpha) until a 1.0 is decided.
 | [0011](rfc/0011-service-status.md) | Service status cards (OpenBao, CNPG, backups) | accepted | v0.2.0 |
 | [0012](rfc/0012-sparklines.md) | Sparklines | accepted | v0.2.0 |
 | [0013](rfc/0013-packaging.md) | Helm chart and Homebrew tap | accepted | v0.2.0 |
-| - | Console, per-user Proxmox tickets, notifications | not written | v0.3.0 |
+| [0014](rfc/0014-github-actions.md) | GitHub Actions workflow monitoring | accepted | - |
+| - | Console, per-user Proxmox tickets, notifications | not written | later |
