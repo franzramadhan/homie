@@ -292,7 +292,7 @@ export function Overview() {
       ))}
       {page("workloads") && m.kubernetes.map((k) => <K8sCard key={k.name} name={k.name} />)}
       {page("gitops") && m.kubernetes.map((k) => <FluxCard key={k.name} name={k.name} />)}
-      {page("gitops") && m.kubernetes.map((k) => <ArgoCard key={`argo-${k.name}`} name={k.name} />)}
+      {!m.role && m.kubernetes.map((k) => <ArgoCard key={`argo-${k.name}`} name={k.name} />)}
       {m.grafana.map((g) => (
         <AlertsCard key={g.name} name={g.name} />
       ))}

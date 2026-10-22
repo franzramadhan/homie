@@ -184,9 +184,9 @@ export function GitOps() {
       {m.kubernetes.map((k) => (
         <Cluster key={k.name} name={k.name} />
       ))}
-      {m.kubernetes.map((k) => (
-        <ArgoCd key={`argo-${k.name}`} name={k.name} url={k.argocd_url} />
-      ))}
+      {/* Argo CD is never shown to a role (RFC 0016) */}
+      {!m.role &&
+        m.kubernetes.map((k) => <ArgoCd key={`argo-${k.name}`} name={k.name} url={k.argocd_url} />)}
     </div>
   );
 }
