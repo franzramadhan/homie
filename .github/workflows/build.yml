@@ -1,8 +1,8 @@
 name: build
 
 # Releases only: a v* tag publishes the binaries, the image and a GitHub
-# release. Every v0.* release is alpha and marked pre-release on GitHub; so is
-# any tag with a "-" suffix.
+# release. 0.x versions are alpha by semver; only a tag with a "-" suffix
+# (v0.2.0-rc.1) is marked pre-release, so `latest` installs keep working.
 # Tests run in ci.yml on the pull request.
 on:
   push:
@@ -155,7 +155,6 @@ jobs:
         run: |
           sha256sum homie-*.tar.gz > SHA256SUMS
           prerelease=()
-          # 0.x is alpha: no stable release before v1
-          [[ "$GITHUB_REF_NAME" == v0.* || "$GITHUB_REF_NAME" == *-* ]] && prerelease=(--prerelease)
+          [[ "$GITHUB_REF_NAME" == *-* ]] && prerelease=(--prerelease)
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --verify-tag --generate-notes "${prerelease[@]}" ./*
