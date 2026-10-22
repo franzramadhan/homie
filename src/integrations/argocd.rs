@@ -153,6 +153,9 @@ pub async fn refresh(client: Client, req: &RefreshRequest) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::{json as route, kube_client, list as kube_list, serve};
+    use axum::{Json, Router, extract::Path, http::StatusCode, routing::patch};
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn maps_application_status() {
@@ -188,5 +191,111 @@ mod tests {
             ("Unknown", "Unknown", "oci://charts x")
         );
         assert!(!valid_name("a/b"));
+        // multi-source revisions and a condition message
+        o.data = json!({"status": {"sync": {"revisions": ["def456"]},
+                                   "conditions": [{"type": "ComparisonError", "message": "repo unreachable"}]}});
+        let a = app(&o, None);
+        assert_eq!(
+            (a.revision.as_str(), a.message.as_str()),
+            ("def456", "repo unreachable")
+        );
+    }
+
+    #[tokio::test]
+    async fn lists_sorted_applications() {
+        let apps = json!([
+            {"metadata": {"name": "b", "namespace": "argocd"}, "spec": {}},
+            {"metadata": {"name": "a", "namespace": "team"}, "spec": {}},
+            {"metadata": {"name": "a", "namespace": "argocd"}, "spec": {}},
+        ]);
+        let url = serve(route(
+            "/apis/argoproj.io/v1alpha1/applications",
+            kube_list("Application", apps),
+        ))
+        .await;
+        let got = list(kube_client(&url), Some("https://argocd.example"))
+            .await
+            .unwrap();
+        let names: Vec<_> = got
+            .iter()
+            .map(|a| format!("{}/{}", a.namespace, a.name))
+            .collect();
+        assert_eq!(names, ["argocd/a", "argocd/b", "team/a"]);
+        assert_eq!(
+            got[2].link.as_deref(),
+            Some("https://argocd.example/applications/team/a")
+        );
+    }
+
+    #[tokio::test]
+    async fn list_without_argocd() {
+        let url = serve(Router::new()).await;
+        assert!(list(kube_client(&url), None).await.unwrap().is_empty());
+        let url = serve(Router::new().route(
+            "/apis/argoproj.io/v1alpha1/applications",
+            axum::routing::get(|| async { StatusCode::FORBIDDEN }),
+        ))
+        .await;
+        assert!(list(kube_client(&url), None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn refresh_annotates() {
+        let patches: Arc<Mutex<Vec<(String, Value)>>> = Default::default();
+        let log = patches.clone();
+        let app = Router::new().route(
+            "/apis/argoproj.io/v1alpha1/namespaces/{ns}/applications/{name}",
+            patch(
+                move |Path((ns, name)): Path<(String, String)>, body: String| async move {
+                    let body: Value = serde_json::from_str(&body).unwrap();
+                    log.lock().unwrap().push((format!("{ns}/{name}"), body));
+                    Json(json!({"metadata": {"name": name, "namespace": ns}}))
+                },
+            ),
+        );
+        let client = kube_client(&serve(app).await);
+        let req = |name: &str, hard| RefreshRequest {
+            namespace: "argocd".into(),
+            name: name.into(),
+            hard,
+        };
+        let done = refresh(client.clone(), &req("guestbook", true))
+            .await
+            .unwrap();
+        assert_eq!(done, "Application/argocd/guestbook (hard refresh)");
+        let done = refresh(client.clone(), &req("guestbook", false))
+            .await
+            .unwrap();
+        assert_eq!(done, "Application/argocd/guestbook (normal refresh)");
+        let modes: Vec<_> = patches
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(path, body)| {
+                (
+                    path.clone(),
+                    body["metadata"]["annotations"]["argocd.argoproj.io/refresh"].clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            modes,
+            [
+                ("argocd/guestbook".to_string(), json!("hard")),
+                ("argocd/guestbook".to_string(), json!("normal")),
+            ]
+        );
+        assert!(
+            refresh(client.clone(), &req("Bad/Name", false))
+                .await
+                .is_err()
+        );
+        let url = serve(Router::new()).await;
+        assert!(
+            refresh(kube_client(&url), &req("guestbook", false))
+                .await
+                .is_err()
+        );
+        assert_eq!(patches.lock().unwrap().len(), 2);
     }
 }

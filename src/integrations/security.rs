@@ -227,6 +227,239 @@ pub async fn debsecan(g: &Grafana, p: &config::MetricPreset) -> Result<Table> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::{json as route, kube_client, list, serve};
+    use axum::{
+        Router,
+        extract::{Path, Query},
+        http::StatusCode,
+        response::IntoResponse,
+        routing::get,
+    };
+    use std::collections::HashMap;
+
+    fn report(ns: Option<&str>, results: Value) -> Value {
+        json!({"metadata": {"name": "r", "namespace": ns}, "results": results})
+    }
+
+    fn results(policy: &str, outcomes: &[&str]) -> Vec<Value> {
+        outcomes
+            .iter()
+            .map(|r| json!({"policy": policy, "result": r}))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn kyverno_counts_failures_per_policy_and_namespace() {
+        let mut web = results("require-limits", &["fail", "fail", "pass", "warn"]);
+        web.extend(results("disallow-latest", &["error", "skip"]));
+        web.extend(results("all-good", &["pass"]));
+        let app = route(
+            "/apis/wgpolicyk8s.io/v1alpha2/policyreports",
+            list(
+                "PolicyReport",
+                json!([
+                    report(Some("web"), json!(web)),
+                    report(Some("db"), json!(results("require-limits", &["warn"]))),
+                    report(Some("empty"), json!(null)),
+                ]),
+            ),
+        )
+        .merge(route(
+            "/apis/wgpolicyk8s.io/v1alpha2/clusterpolicyreports",
+            list(
+                "ClusterPolicyReport",
+                json!([report(None, json!(results("require-labels", &["fail"])))]),
+            ),
+        ));
+        let t = kyverno(kube_client(&serve(app).await)).await.unwrap();
+        assert_eq!(t.columns, ["policy", "namespace", "fail", "warn"]);
+        assert_eq!(
+            t.rows,
+            [
+                vec![json!("require-limits"), json!("web"), json!(2), json!(1)],
+                vec![json!("disallow-latest"), json!("web"), json!(1), json!(0)],
+                vec![
+                    json!("require-labels"),
+                    json!("(cluster)"),
+                    json!(1),
+                    json!(0)
+                ],
+                vec![json!("require-limits"), json!("db"), json!(0), json!(1)],
+            ]
+        );
+        assert_eq!(t.total, 4.0);
+        assert_eq!(t.total_label, "failing checks");
+    }
+
+    #[tokio::test]
+    async fn kyverno_falls_back_to_openreports() {
+        let app = route(
+            "/apis/openreports.io/v1alpha1/reports",
+            list(
+                "Report",
+                json!([report(Some("web"), json!(results("p", &["fail"])))]),
+            ),
+        );
+        let t = kyverno(kube_client(&serve(app).await)).await.unwrap();
+        assert_eq!(t.rows, [vec![json!("p"), json!("web"), json!(1), json!(0)]]);
+    }
+
+    #[tokio::test]
+    async fn kyverno_errors() {
+        let e = kyverno(kube_client(&serve(Router::new()).await))
+            .await
+            .err()
+            .unwrap();
+        assert!(e.to_string().starts_with("no PolicyReport CRD found"));
+        let forbidden = Router::new().route(
+            "/apis/wgpolicyk8s.io/v1alpha2/policyreports",
+            get(|| async { StatusCode::FORBIDDEN }),
+        );
+        assert!(kyverno(kube_client(&serve(forbidden).await)).await.is_err());
+    }
+
+    /// A Grafana whose datasource proxy answers LogsQL with `logs` (NDJSON)
+    /// and PromQL with `prom(query)`.
+    async fn grafana(logs: &'static str, prom: fn(&str) -> Value) -> Grafana {
+        let app = Router::new()
+            .route(
+                "/api/datasources/proxy/uid/{uid}/select/logsql/query",
+                get(move |Path(uid): Path<String>| async move {
+                    if uid == "down" {
+                        StatusCode::BAD_GATEWAY.into_response()
+                    } else {
+                        logs.into_response()
+                    }
+                }),
+            )
+            .route(
+                "/api/datasources/proxy/uid/{uid}/api/v1/query",
+                get(
+                    move |Path(uid): Path<String>, Query(q): Query<HashMap<String, String>>| async move {
+                        if uid == "down" {
+                            StatusCode::BAD_GATEWAY.into_response()
+                        } else {
+                            axum::Json(prom(&q["query"])).into_response()
+                        }
+                    },
+                ),
+            );
+        let url = serve(app).await;
+        let cfg: config::Grafana =
+            serde_json::from_value(json!({"url": url, "token": "viewer-token"})).unwrap();
+        Grafana::new("lab", &cfg).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn tetragon_and_wazuh_tables() {
+        let g = grafana(
+            "{\"policy\":\"block-nc\",\"namespace\":\"web\",\"binary\":\"/bin/nc\",\"action\":\"Sigkill\",\"events\":\"4\",\"alerts\":\"4\",\"agent.name\":\"host-a\"}\n\n{\"policy\":\"p2\",\"events\":\"1\",\"alerts\":\"2\"}\n",
+            debsecan_prom,
+        )
+        .await;
+        let preset = |ds: &str| config::LogPreset {
+            grafana: "lab".into(),
+            datasource: ds.into(),
+            filter: "k8s.container.name:export-stdout".into(),
+        };
+        let t = tetragon(&g, &preset("vlogs")).await.unwrap();
+        assert_eq!(t.total, 5.0);
+        assert_eq!(
+            t.rows[0],
+            [
+                json!("block-nc"),
+                json!("web"),
+                json!("/bin/nc"),
+                json!("Sigkill"),
+                json!(4.0)
+            ]
+        );
+        assert!(t.link.unwrap().contains("/explore?"));
+        assert!(tetragon(&g, &preset("down")).await.is_err());
+
+        let wazuh_preset = |ds: &str| config::WazuhPreset {
+            grafana: "lab".into(),
+            datasource: ds.into(),
+            filter: "k8s.namespace.name:wazuh".into(),
+            min_level: 10,
+        };
+        let t = wazuh(&g, &wazuh_preset("vlogs")).await.unwrap();
+        assert_eq!((t.total, t.total_label), (6.0, "alerts"));
+        assert_eq!(
+            t.rows[1],
+            [Value::Null, Value::Null, Value::Null, json!(2.0)]
+        );
+        assert!(wazuh(&g, &wazuh_preset("down")).await.is_err());
+    }
+
+    fn debsecan_prom(query: &str) -> Value {
+        let sample = |labels: Value, v: &str| json!({"metric": labels, "value": [0, v]});
+        let result = if query.contains("debsecan_vulnerabilities") {
+            json!([
+                sample(
+                    json!({"instance": "host-a", "fixed": "true", "urgency": "high"}),
+                    "3"
+                ),
+                sample(
+                    json!({"instance": "host-a", "fixed": "true", "urgency": "low"}),
+                    "5"
+                ),
+                sample(
+                    json!({"instance": "host-a", "fixed": "false", "urgency": "low"}),
+                    "7"
+                ),
+                sample(
+                    json!({"instance": "host-b", "fixed": "true", "urgency": "medium"}),
+                    "1"
+                ),
+            ])
+        } else {
+            json!([
+                sample(json!({"instance": "host-a"}), "7200"),
+                sample(json!({"instance": "host-c"}), "90000"),
+            ])
+        };
+        json!({"status": "success", "data": {"result": result}})
+    }
+
+    #[tokio::test]
+    async fn debsecan_table() {
+        let g = grafana("", debsecan_prom).await;
+        let preset = |ds: &str| config::MetricPreset {
+            grafana: "lab".into(),
+            datasource: ds.into(),
+        };
+        let t = debsecan(&g, &preset("vm")).await.unwrap();
+        assert_eq!((t.total, t.total_label), (9.0, "fixable CVEs"));
+        assert_eq!(
+            t.rows,
+            [
+                vec![
+                    json!("host-a"),
+                    json!(8.0),
+                    json!(3.0),
+                    json!(7.0),
+                    json!(2.0)
+                ],
+                vec![
+                    json!("host-b"),
+                    json!(1.0),
+                    json!(0.0),
+                    json!(0.0),
+                    Value::Null
+                ],
+                vec![
+                    json!("host-c"),
+                    json!(0.0),
+                    json!(0.0),
+                    json!(0.0),
+                    json!(25.0)
+                ],
+            ]
+        );
+        assert!(t.link.is_some());
+        assert!(debsecan(&g, &preset("down")).await.is_err());
+    }
 
     #[test]
     fn log_rows_become_table_rows() {
