@@ -251,7 +251,240 @@ impl Healthchecks {
 
 #[cfg(test)]
 mod tests {
-    use super::glob;
+    use super::*;
+    use crate::testkit::serve;
+    use axum::{
+        Form, Json, Router,
+        http::{HeaderMap, StatusCode},
+        routing::{get, post},
+    };
+    use serde_json::json;
+    use std::{
+        collections::HashMap,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+
+    fn header(h: &HeaderMap, k: &str) -> String {
+        h.get(k)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    /// Answers the device list only for `Bearer tok`.
+    fn devices_route(body: Value) -> Router {
+        Router::new().route(
+            "/api/v2/tailnet/-/devices",
+            get(move |h: HeaderMap| async move {
+                if header(&h, "authorization") != "Bearer tok" {
+                    return Err(StatusCode::UNAUTHORIZED);
+                }
+                Ok(Json(body))
+            }),
+        )
+    }
+
+    /// A client from `cfg`, pointed at the fake API instead of api.tailscale.com.
+    async fn tailscale(cfg: Value, url: &str) -> Tailscale {
+        let mut ts = Tailscale::new(&serde_json::from_value(cfg).unwrap())
+            .await
+            .unwrap();
+        let tls = config::Tls {
+            tls_verify: true,
+            ca_file: None,
+            tls_server_name: None,
+        };
+        ts.target = http::target(url, &tls).await.unwrap();
+        ts
+    }
+
+    #[tokio::test]
+    async fn no_credentials() {
+        let cfg = serde_json::from_value(json!({"oauth_client_id": "id"})).unwrap();
+        let err = Tailscale::new(&cfg).await.err().unwrap();
+        assert_eq!(err.to_string(), "tailscale: no credentials");
+    }
+
+    #[tokio::test]
+    async fn devices_with_an_api_key() {
+        let now = jiff::Timestamp::now().to_string();
+        let url = serve(devices_route(json!({"devices": [
+            {"name": "web-1.example.ts.net", "lastSeen": now, "hostname": "web-1",
+             "os": "linux", "addresses": ["100.64.0.2"], "tags": ["tag:server"],
+             "user": "user@example.com", "clientVersion": "1.70.0-tabc-gdef",
+             "updateAvailable": true, "keyExpiryDisabled": true,
+             "expires": "2030-01-01T00:00:00Z", "isExternal": true},
+            {"name": "db-1.example.ts.net", "connectedToControl": false, "lastSeen": now,
+             "expires": "2030-01-01T00:00:00Z"},
+            {"name": "laptop.example.ts.net", "lastSeen": "2020-01-01T00:00:00Z",
+             "expires": "0001-01-01T00:00:00Z"},
+            {"hostname": "nameless"},
+        ]})))
+        .await;
+        let ts = tailscale(
+            json!({"api_key": "tok", "hosts": ["web-*", "db-*"], "quiet_hosts": ["db-*"]}),
+            &url,
+        )
+        .await;
+
+        let d = ts.devices(true).await.unwrap();
+        let names: Vec<&str> = d.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["db-1", "laptop", "web-1"]);
+        let (db, laptop, web) = (&d[0], &d[1], &d[2]);
+
+        // connectedToControl wins over a recent lastSeen
+        assert!(!db.online && db.watched && db.quiet && db.is_watched());
+        assert_eq!(db.key_expiry.as_deref(), Some("2030-01-01T00:00:00Z"));
+        assert!(!laptop.online && !laptop.watched && !laptop.quiet);
+        assert_eq!(laptop.key_expiry, None);
+        assert!(web.online && web.watched && !web.quiet);
+        assert_eq!(web.client_version, "1.70.0");
+        assert_eq!(
+            (web.addresses.clone(), web.tags.clone()),
+            (
+                vec!["100.64.0.2".to_string()],
+                vec!["tag:server".to_string()]
+            )
+        );
+        assert!(web.update_available && web.external);
+        assert_eq!(web.key_expiry, None);
+        assert_eq!((web.hostname.as_str(), web.os.as_str()), ("web-1", "linux"));
+
+        // quiet hours off: nothing is quiet
+        assert!(ts.devices(false).await.unwrap().iter().all(|d| !d.quiet));
+    }
+
+    #[tokio::test]
+    async fn device_list_errors() {
+        let url = serve(devices_route(json!({"devices": []}))).await;
+        let ts = tailscale(json!({"api_key": "wrong"}), &url).await;
+        let err = ts.devices(false).await.err().unwrap();
+        assert!(http::is_unauthorized(&err), "{err}");
+    }
+
+    #[tokio::test]
+    async fn oauth_token_is_fetched_once_and_cached() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let c = calls.clone();
+        let app = devices_route(json!({"devices": [{"name": "a"}]})).route(
+            "/api/v2/oauth/token",
+            post(move |Form(f): Form<HashMap<String, String>>| async move {
+                c.fetch_add(1, Ordering::Relaxed);
+                assert_eq!(
+                    (f["client_id"].as_str(), f["client_secret"].as_str()),
+                    ("id", "secret")
+                );
+                assert_eq!(f["grant_type"], "client_credentials");
+                Json(json!({"access_token": "tok", "expires_in": 3600}))
+            }),
+        );
+        let url = serve(app).await;
+        let ts = tailscale(
+            json!({"oauth_client_id": "id", "oauth_client_secret": "secret"}),
+            &url,
+        )
+        .await;
+        assert_eq!(ts.devices(false).await.unwrap().len(), 1);
+        assert_eq!(ts.devices(false).await.unwrap().len(), 1);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn oauth_token_errors() {
+        let app = Router::new()
+            .route(
+                "/a/api/v2/oauth/token",
+                post(|| async { Json(json!({"error": "nope"})) }),
+            )
+            .route(
+                "/b/api/v2/oauth/token",
+                post(|| async { StatusCode::UNAUTHORIZED }),
+            );
+        let url = serve(app).await;
+        let cfg = json!({"oauth_client_id": "id", "oauth_client_secret": "secret"});
+
+        let ts = tailscale(cfg.clone(), &format!("{url}/a")).await;
+        let err = ts.devices(false).await.err().unwrap();
+        assert_eq!(err.to_string(), "tailscale: no access_token");
+
+        let ts = tailscale(cfg, &format!("{url}/b")).await;
+        assert!(http::is_unauthorized(
+            &ts.devices(false).await.err().unwrap()
+        ));
+    }
+
+    #[tokio::test]
+    async fn healthchecks_list() {
+        let app = Router::new().route(
+            "/hc/api/v3/checks/",
+            get(|h: HeaderMap| async move {
+                if header(&h, "x-api-key") != "key" {
+                    return Err(StatusCode::UNAUTHORIZED);
+                }
+                Ok(Json(json!({"checks": [
+                    {"name": "backup", "status": "up", "last_ping": "2026-01-01T00:00:00+00:00",
+                     "next_ping": "2026-01-02T00:00:00+00:00"},
+                    {"status": "new"},
+                ]})))
+            }),
+        );
+        let url = serve(app).await;
+        let cfg = |key: &str| -> config::Healthchecks {
+            serde_json::from_value(
+                json!({"url": format!("{url}/hc/"), "api_key": key, "quiet": true}),
+            )
+            .unwrap()
+        };
+
+        let hc = Healthchecks::new(&cfg("key")).await.unwrap();
+        assert!(hc.quiet);
+        assert_eq!(hc.url, format!("{url}/hc"));
+        let checks = hc.checks().await.unwrap();
+        assert_eq!(checks.len(), 2);
+        assert_eq!(
+            (checks[0].name.as_str(), checks[0].status.as_str()),
+            ("backup", "up")
+        );
+        assert_eq!(
+            checks[0].last_ping.as_deref(),
+            Some("2026-01-01T00:00:00+00:00")
+        );
+        assert_eq!(
+            checks[0].next_ping.as_deref(),
+            Some("2026-01-02T00:00:00+00:00")
+        );
+        assert_eq!(
+            (checks[1].name.as_str(), checks[1].last_ping.as_deref()),
+            ("", None)
+        );
+
+        let wrong = Healthchecks::new(&cfg("wrong")).await.unwrap();
+        assert!(http::is_unauthorized(&wrong.checks().await.err().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn healthchecks_config_errors() {
+        let cfg = |v: Value| -> config::Healthchecks { serde_json::from_value(v).unwrap() };
+        let err = Healthchecks::new(&cfg(json!({"url": "nope", "api_key": "k"})))
+            .await
+            .err()
+            .unwrap();
+        assert!(err.to_string().starts_with("healthchecks: "), "{err}");
+        let err = Healthchecks::new(&cfg(json!({
+            "url": "http://127.0.0.1:1",
+            "api_key": {"env": "HOMIE_TEST_UNSET_HEALTHCHECKS_KEY"}
+        })))
+        .await
+        .err()
+        .unwrap();
+        assert!(
+            err.to_string().starts_with("healthchecks.api_key: "),
+            "{err}"
+        );
+    }
 
     #[test]
     fn globs() {

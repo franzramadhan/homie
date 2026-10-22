@@ -577,4 +577,344 @@ mod tests {
         assert_eq!((n(&v, "a"), n(&v, "b"), n(&v, "missing")), (12, 3, 0));
         assert!(flag(&v, "c"));
     }
+
+    use crate::testkit::{json, serve};
+    use axum::{
+        Json, Router,
+        extract::{Path, Query},
+        http::StatusCode,
+        routing::{get, post},
+    };
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    /// A two-node cluster: pve-01 online, pve-02 offline.
+    fn cluster(power: bool) -> Router {
+        let privs = if power {
+            json!({"/": {"VM.PowerMgmt": 1, "Sys.Audit": 1}})
+        } else {
+            json!({"/": {"Sys.Audit": 1}})
+        };
+        let guest = |t: &str, id: u64, name: &str, node: &str, tags: &str| {
+            json!({"type": t, "vmid": id, "name": name, "node": node, "status": "running",
+                   "cpu": 0.5, "maxcpu": 2, "mem": 1024, "maxmem": "2048", "uptime": 60.0, "tags": tags})
+        };
+        json(
+            "/api2/json/cluster/status",
+            json!({"data": [
+                {"type": "cluster", "name": "lab", "quorate": 1},
+                {"type": "node", "name": "pve-01", "online": 1},
+                {"type": "node", "name": "pve-02", "online": 0},
+            ]}),
+        )
+        .merge(json(
+            "/api2/json/cluster/resources",
+            json!({"data": [
+                {"type": "node", "node": "pve-02", "status": "offline"},
+                {"type": "node", "node": "pve-01", "status": "online", "cpu": 0.1, "maxcpu": 8,
+                 "mem": 1, "maxmem": 2, "disk": 3, "maxdisk": 4, "uptime": 5},
+                {"type": "node", "node": "a b", "status": "online"},
+                {"type": "storage", "storage": "local", "node": "pve-01", "status": "available",
+                 "plugintype": "dir", "shared": 0, "disk": 10, "maxdisk": 100},
+                {"type": "sdn", "sdn": "localnetwork"},
+                guest("qemu", 101, "web", "pve-01", "prod;homie-protected"),
+                guest("qemu", 100, "db", "pve-01", ""),
+                guest("lxc", 102, "busy", "pve-01", "a,b c"),
+                guest("lxc", 103, "noid", "pve-01", ""),
+                guest("qemu", 104, "odd", "a b", ""),
+            ]}),
+        ))
+        .merge(json(
+            "/api2/json/cluster/ha/status/current",
+            json!({"data": [
+                {"type": "quorum", "node": "pve-01"},
+                {"type": "service", "sid": "vm:101", "node": "pve-01", "state": "started"},
+            ]}),
+        ))
+        .merge(json("/api2/json/access/permissions", json!({"data": privs})))
+        .merge(json("/api2/json/version", json!({"data": {"version": "9.0.3"}})))
+        .route(
+            "/api2/json/nodes/{node}/tasks",
+            get(|Path(node): Path<String>, Query(q): Query<HashMap<String, String>>| async move {
+                if q.get("source").map(String::as_str) == Some("active") {
+                    let busy = q["vmid"] == "102";
+                    return Json(json!({"data": if busy { json!([{"type": "qmshutdown"}]) } else { json!([]) }}));
+                }
+                assert_eq!((q["errors"].as_str(), q["limit"].as_str()), ("1", "10"));
+                assert!(q["since"].parse::<i64>().is_ok());
+                let task = |start: u64| {
+                    json!({"upid": format!("UPID:{node}:{start}"), "type": "qmstart", "id": 101,
+                           "user": "root@pam", "starttime": start, "status": "error"})
+                };
+                Json(json!({"data": [task(10), task(20)]}))
+            }),
+        )
+        .route(
+            "/api2/json/nodes/{node}/{kind}/{vmid}/status/{action}",
+            post(|Path((node, kind, vmid, action)): Path<(String, String, String, String)>| async move {
+                if vmid == "103" {
+                    return Json(json!({"data": null}));
+                }
+                Json(json!({"data": format!("UPID:{node}:{kind}:{vmid}:{action}")}))
+            }),
+        )
+        .route(
+            "/api2/json/nodes/{node}/tasks/{upid}/status",
+            get(|Path((_, upid)): Path<(String, String)>| async move {
+                Json(json!({"data": {"status": "stopped", "exitstatus": format!("OK {upid}")}}))
+            }),
+        )
+    }
+
+    async fn pve(endpoints: &[&str]) -> Proxmox {
+        let cfg = serde_json::from_value(json!({
+            "endpoints": endpoints, "token": "u@pve!t=x", "protected_tags": ["homie-protected"]
+        }))
+        .unwrap();
+        Proxmox::new("lab", &cfg).await.unwrap()
+    }
+
+    fn failing() -> Router {
+        Router::new().fallback(|| async { StatusCode::INTERNAL_SERVER_ERROR })
+    }
+
+    #[tokio::test]
+    async fn overview_of_the_cluster() {
+        let url = serve(cluster(true)).await;
+        let p = pve(&[url.as_str()]).await;
+        assert_eq!(p.ui_url, url);
+        let o = p.overview().await.unwrap();
+
+        assert_eq!(o.cluster.name.as_deref(), Some("lab"));
+        assert_eq!(o.cluster.quorate, Some(true));
+        assert_eq!((o.cluster.nodes_online, o.cluster.nodes_total), (1, 2));
+        let nodes: Vec<(&str, bool)> = o
+            .nodes
+            .iter()
+            .map(|n| (n.name.as_str(), n.online))
+            .collect();
+        assert_eq!(nodes, [("a b", true), ("pve-01", true), ("pve-02", false)]);
+        let n1 = &o.nodes[1];
+        assert_eq!(
+            (n1.maxcpu, n1.mem, n1.maxmem, n1.disk, n1.maxdisk, n1.uptime),
+            (8, 1, 2, 3, 4, 5)
+        );
+        assert_eq!(n1.cpu, 0.1);
+
+        let ids: Vec<u64> = o.guests.iter().map(|g| g.vmid).collect();
+        assert_eq!(ids, [100, 101, 102, 103, 104]);
+        let web = &o.guests[1];
+        assert!(web.protected && !web.template);
+        assert_eq!(web.tags, ["prod", "homie-protected"]);
+        assert_eq!((web.maxmem, web.uptime), (2048, 60));
+        assert_eq!(o.guests[2].tags, ["a", "b", "c"]);
+        assert!(!o.guests[0].protected);
+
+        assert_eq!(o.storage.len(), 1);
+        let st = &o.storage[0];
+        assert_eq!(
+            (st.storage.as_str(), st.plugintype.as_str(), st.shared),
+            ("local", "dir", false)
+        );
+        assert_eq!((st.disk, st.maxdisk), (10, 100));
+
+        assert_eq!(o.ha.len(), 1);
+        assert_eq!(
+            (o.ha[0].sid.as_str(), o.ha[0].state.as_str()),
+            ("vm:101", "started")
+        );
+        assert!(o.can_power);
+
+        // only the safe online node is asked, newest failure first
+        let tasks: Vec<(&str, u64)> = o
+            .failed_tasks
+            .iter()
+            .map(|t| (t.node.as_str(), t.starttime))
+            .collect();
+        assert_eq!(tasks, [("pve-01", 20), ("pve-01", 10)]);
+        assert_eq!(o.failed_tasks[0].upid, "UPID:pve-01:20");
+        assert_eq!(
+            (
+                o.failed_tasks[0].user.as_str(),
+                o.failed_tasks[0].kind.as_str()
+            ),
+            ("root@pam", "qmstart")
+        );
+        assert_eq!(o.failed_tasks[0].id, "101");
+    }
+
+    /// HA, permissions and tasks are optional: their errors only empty them.
+    #[tokio::test]
+    async fn overview_without_extras() {
+        let app = json("/api2/json/cluster/status", json!({"data": []})).merge(json(
+            "/api2/json/cluster/resources",
+            json!({"data": [{"type": "node", "node": "pve-01", "status": "online"}, {"type": "qemu", "vmid": 7}]}),
+        ));
+        let o = pve(&[serve(app).await.as_str()])
+            .await
+            .overview()
+            .await
+            .unwrap();
+        assert_eq!(
+            (o.cluster.name, o.cluster.quorate, o.cluster.nodes_total),
+            (None, None, 0)
+        );
+        assert!(o.ha.is_empty() && o.failed_tasks.is_empty() && !o.can_power);
+        assert_eq!(o.nodes.len(), 1);
+        assert_eq!((o.guests[0].vmid, o.guests[0].name.as_str()), (7, ""));
+        assert!(o.guests[0].tags.is_empty());
+
+        let err = pve(&[serve(failing()).await.as_str()])
+            .await
+            .overview()
+            .await
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("500"), "{err}");
+    }
+
+    fn req(vmid: u64, kind: &str, action: &str, confirm: Option<&str>) -> PowerRequest {
+        PowerRequest {
+            node: "pve-01".into(),
+            vmid,
+            kind: kind.into(),
+            action: action.into(),
+            confirm: confirm.map(String::from),
+        }
+    }
+
+    #[tokio::test]
+    async fn power_actions() {
+        let p = pve(&[serve(cluster(true)).await.as_str()]).await;
+        let p = &p;
+        let err = |r: PowerRequest| async move { p.power(&r).await.err().unwrap().to_string() };
+
+        assert_eq!(
+            p.power(&req(100, "qemu", "start", None)).await.unwrap(),
+            "UPID:pve-01:qemu:100:start"
+        );
+        assert_eq!(
+            err(req(100, "qemu", "destroy", None)).await,
+            "unknown action \"destroy\""
+        );
+        assert_eq!(
+            err(req(100, "lxc", "start", None)).await,
+            "no lxc 100 on node \"pve-01\""
+        );
+        assert!(
+            err(req(100, "qemu", "stop", None))
+                .await
+                .contains("hard power-off")
+        );
+        assert_eq!(
+            p.power(&req(100, "qemu", "stop", Some("db")))
+                .await
+                .unwrap(),
+            "UPID:pve-01:qemu:100:stop"
+        );
+        assert!(
+            err(req(101, "qemu", "reboot", None))
+                .await
+                .contains("web is protected")
+        );
+        assert_eq!(
+            p.power(&req(101, "qemu", "reboot", Some("web")))
+                .await
+                .unwrap(),
+            "UPID:pve-01:qemu:101:reboot"
+        );
+        assert_eq!(
+            err(req(102, "lxc", "shutdown", None)).await,
+            "busy already has a running task (qmshutdown); wait for it to finish"
+        );
+        assert_eq!(
+            err(req(103, "lxc", "start", None)).await,
+            "Proxmox returned no task id"
+        );
+        let mut odd = req(104, "qemu", "start", None);
+        odd.node = "a b".into();
+        assert_eq!(err(odd).await, "unexpected node name");
+    }
+
+    #[tokio::test]
+    async fn task_status_and_probe() {
+        let p = pve(&[serve(cluster(true)).await.as_str()]).await;
+        let t = p.task("pve-01", "UPID:pve-01:1:qmstart:").await.unwrap();
+        assert_eq!(t.status, "stopped");
+        assert_eq!(t.exitstatus.as_deref(), Some("OK UPID:pve-01:1:qmstart:"));
+        for (node, upid) in [
+            ("pve-01", "not-a-upid"),
+            ("../x", "UPID:a"),
+            ("pve-01", "UPID:a/b"),
+        ] {
+            let err = p.task(node, upid).await.err().unwrap();
+            assert_eq!(err.to_string(), "invalid node or task id");
+        }
+        assert_eq!(
+            p.probe().await.unwrap(),
+            "Proxmox VE 9.0.3, power actions enabled"
+        );
+        let p = pve(&[serve(cluster(false)).await.as_str()]).await;
+        assert_eq!(
+            p.probe().await.unwrap(),
+            "Proxmox VE 9.0.3, power actions off (no VM.PowerMgmt)"
+        );
+    }
+
+    /// GETs move past a 5xx endpoint; POSTs do not, a failed POST may have run.
+    #[tokio::test]
+    async fn failover_rules() {
+        let (bad, good) = (serve(failing()).await, serve(cluster(true)).await);
+        let p = pve(&[bad.as_str(), good.as_str()]).await;
+        assert_eq!(p.get("/version").await.unwrap()["version"], "9.0.3");
+        assert_eq!(p.preferred.load(Ordering::Relaxed), 1);
+
+        let p = pve(&[bad.as_str(), good.as_str()]).await;
+        let err = p
+            .call(true, "/nodes/pve-01/qemu/100/status/start")
+            .await
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("500"), "{err}");
+
+        let err = pve(&[bad.as_str()])
+            .await
+            .get("/version")
+            .await
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("500"), "{err}");
+
+        let down = pve(&["http://127.0.0.1:1", "http://127.0.0.1:1"]).await;
+        assert!(down.get("/version").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn config_errors_and_ui_url() {
+        let cfg = |v: serde_json::Value| -> config::Proxmox { serde_json::from_value(v).unwrap() };
+        let err = Proxmox::new("lab", &cfg(json!({"endpoints": ["nope"], "token": "t"})))
+            .await
+            .err()
+            .unwrap();
+        assert!(err.to_string().starts_with("proxmox.lab nope: "), "{err}");
+        let err = Proxmox::new(
+            "lab",
+            &cfg(json!({"endpoints": ["http://127.0.0.1:1"], "token": {"env": "HOMIE_TEST_UNSET_PVE_TOKEN"}})),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(err.to_string().starts_with("proxmox.lab.token: "), "{err}");
+        let p = Proxmox::new(
+            "lab",
+            &cfg(json!({"endpoints": ["http://127.0.0.1:1"], "token": "t",
+                        "ui_url": "https://pve.example.com", "quiet": true})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            (p.ui_url.as_str(), p.quiet, p.name.as_str()),
+            ("https://pve.example.com", true, "lab")
+        );
+    }
 }

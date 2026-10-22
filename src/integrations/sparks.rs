@@ -149,4 +149,96 @@ mod tests {
         let s = rrd_series(&rows, "memused", "memtotal");
         assert_eq!((s.cpu, s.mem), (vec![0.5], vec![0.5]));
     }
+
+    use crate::testkit::{json, serve};
+    use axum::{Json, Router, extract::Query, http::StatusCode, routing::get};
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    async fn pve(url: &str) -> Proxmox {
+        let cfg =
+            serde_json::from_value(json!({"endpoints": [url], "token": "u@pve!t=x"})).unwrap();
+        Proxmox::new("lab", &cfg).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn proxmox_rrd_for_online_nodes_and_running_guests() {
+        let rrd = |cpu: f64| json!({"data": [{"cpu": cpu, "memused": 1.0, "memtotal": 4.0, "mem": 3.0, "maxmem": 4.0}]});
+        let app = json(
+            "/api2/json/cluster/resources",
+            json!({"data": [
+                {"type": "node", "node": "pve-01", "status": "online"},
+                {"type": "node", "node": "pve-02", "status": "offline"},
+                {"type": "node", "node": "pve-03", "status": "online"},
+                {"type": "qemu", "node": "pve-01", "vmid": 101, "status": "running"},
+                {"type": "lxc", "node": "pve-01", "vmid": 102, "status": "stopped"},
+                {"type": "lxc", "node": "pve-01", "status": "running"},
+                {"type": "storage", "node": "pve-01", "status": "available"},
+            ]}),
+        )
+        .merge(json("/api2/json/nodes/pve-01/rrddata", rrd(0.25)))
+        .merge(json("/api2/json/nodes/pve-01/qemu/101/rrddata", rrd(0.75)));
+        // pve-03 has no RRD route: a 404 drops it instead of failing the rest
+        let p = pve(&serve(app).await).await;
+        let s = proxmox(&p).await.unwrap();
+        assert_eq!(s.nodes.keys().collect::<Vec<_>>(), ["pve-01"]);
+        assert_eq!(s.nodes["pve-01"].cpu, vec![0.25]);
+        assert_eq!(s.nodes["pve-01"].mem, vec![0.25]);
+        assert_eq!(s.guests.keys().collect::<Vec<_>>(), ["101"]);
+        assert_eq!(s.guests["101"].cpu, vec![0.75]);
+        assert_eq!(s.guests["101"].mem, vec![0.75]);
+    }
+
+    #[tokio::test]
+    async fn proxmox_error_when_resources_fail() {
+        let app = Router::new().route(
+            "/api2/json/cluster/resources",
+            get(|| async { StatusCode::FORBIDDEN }),
+        );
+        let p = pve(&serve(app).await).await;
+        assert!(proxmox(&p).await.err().unwrap().to_string().contains("403"));
+    }
+
+    async fn grafana(app: Router) -> Grafana {
+        let url = serve(app).await;
+        let cfg = serde_json::from_value(json!({"url": url, "token": "t"})).unwrap();
+        Grafana::new("g", &cfg).await.unwrap()
+    }
+
+    fn metrics() -> NodeMetrics {
+        serde_json::from_value(
+            json!({"grafana": "g", "datasource": "vm", "cpu": "cpu_q", "memory": "mem_q"}),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn kubernetes_series_by_node_label() {
+        let app = Router::new().route(
+            "/api/datasources/proxy/uid/vm/api/v1/query_range",
+            get(|Query(q): Query<HashMap<String, String>>| async move {
+                let v = if q["query"] == "cpu_q" { "0.5" } else { "0.25" };
+                Json(json!({"status": "success", "data": {"result": [
+                    {"metric": {"node": "k1"}, "values": [[1, v], [2, v]]},
+                    {"metric": {"instance": "x"}, "values": [[1, "1"]]},
+                ]}}))
+            }),
+        );
+        let g = grafana(app).await;
+        let s = kubernetes(&g, &metrics()).await.unwrap();
+        assert_eq!(s.nodes.len(), 1);
+        assert_eq!(s.nodes["k1"].cpu, vec![0.5, 0.5]);
+        assert_eq!(s.nodes["k1"].mem, vec![0.25, 0.25]);
+    }
+
+    #[tokio::test]
+    async fn kubernetes_query_error() {
+        let g = grafana(json(
+            "/api/datasources/proxy/uid/vm/api/v1/query_range",
+            json!({"status": "error", "error": "bad query"}),
+        ))
+        .await;
+        let err = kubernetes(&g, &metrics()).await.err().unwrap();
+        assert!(err.to_string().contains("bad query"), "{err}");
+    }
 }
