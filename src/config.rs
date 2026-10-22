@@ -278,6 +278,9 @@ impl Kubernetes {
 #[serde(deny_unknown_fields)]
 pub struct Grafana {
     pub url: String,
+    /// where browsers open Grafana when `url` is internal (a cluster Service)
+    #[serde(default)]
+    pub ui_url: Option<String>,
     pub token: Secret,
     #[serde(default = "yes")]
     pub tls_verify: bool,
@@ -673,6 +676,9 @@ pub fn validate(cfg: &Config) -> Result<()> {
     }
     for (name, g) in &cfg.grafana {
         check_url(&format!("grafana.{name}.url"), &g.url)?;
+        if let Some(u) = &g.ui_url {
+            check_url(&format!("grafana.{name}.ui_url"), u)?;
+        }
     }
     let s = &cfg.security;
     if let Some(k) = &s.kyverno
