@@ -128,6 +128,9 @@ Deviations found while building (v0.6.0):
   role's ServiceAccount, and the apiserver answers 403 (not "not installed")
   without it.
 - Proxmox: storage and failed tasks are empty and power is off for a role.
+- IP addresses are replaced with `<ip>` in every text a role receives (event
+  messages name pod addresses), and Proxmox tags that are addresses are
+  dropped.
 - `[[local_login.users]]` is not in v0.6.0: the demo button covers the demo,
   and OIDC users get roles through `[auth] roles`. `[local_login] role`
   gives the single local user a role, so a public demo instance has no

@@ -43,6 +43,54 @@ fn strip_links(v: &mut Value) {
     }
 }
 
+/// An IP address, with or without a port (`10.0.0.1`, `10.0.0.1:8080`,
+/// `fd00::1`, `[fd00::1]:80`).
+fn is_ip(s: &str) -> bool {
+    use std::net::{IpAddr, SocketAddr};
+    s.parse::<IpAddr>().is_ok() || s.parse::<SocketAddr>().is_ok()
+}
+
+/// Replaces IP addresses in free text with `<ip>`: event messages, Proxmox
+/// tags and the like name hosts and pods a public view must not show.
+fn redact_ips(s: &str) -> String {
+    let addr_char = |c: char| c.is_ascii_hexdigit() || matches!(c, '.' | ':' | '[' | ']');
+    let mut out = String::with_capacity(s.len());
+    let mut run = String::new();
+    let flush = |run: &mut String, out: &mut String| {
+        // a URL scheme's ':' or a trailing '.' sticks to the run; trim before testing
+        let t = run.trim_matches(|c| c == ':' || c == '.');
+        if t.chars().any(|c| c == '.' || c == ':') && is_ip(t) {
+            let start = run.find(t).unwrap_or(0);
+            out.push_str(&run[..start]);
+            out.push_str("<ip>");
+            out.push_str(&run[start + t.len()..]);
+        } else {
+            out.push_str(run);
+        }
+        run.clear();
+    };
+    for c in s.chars() {
+        if addr_char(c) {
+            run.push(c);
+        } else {
+            flush(&mut run, &mut out);
+            out.push(c);
+        }
+    }
+    flush(&mut run, &mut out);
+    out
+}
+
+/// `redact_ips` on every string, at any depth.
+fn redact_all(v: &mut Value) {
+    match v {
+        Value::String(s) => *s = redact_ips(s),
+        Value::Object(m) => m.values_mut().for_each(redact_all),
+        Value::Array(a) => a.iter_mut().for_each(redact_all),
+        _ => {}
+    }
+}
+
 fn retain_rows(v: &mut Value, key: &str, keep: impl Fn(&Value) -> bool) {
     if let Some(rows) = v[key].as_array_mut() {
         rows.retain(keep);
@@ -94,6 +142,12 @@ pub fn filter(role: &Role, kind: &str, mut data: Value, pve: Option<&Value>) -> 
             retain_rows(&mut data, "guests", |g| {
                 g["vmid"].as_u64().is_some_and(|id| vmids.contains(&id))
             });
+            // tags often carry the guest's address: drop those outright
+            for g in data["guests"].as_array_mut().into_iter().flatten() {
+                if let Some(tags) = g["tags"].as_array_mut() {
+                    tags.retain(|t| !t.as_str().is_some_and(is_ip));
+                }
+            }
             retain_rows(&mut data, "ha", |h| {
                 h["sid"]
                     .as_str()
@@ -114,6 +168,7 @@ pub fn filter(role: &Role, kind: &str, mut data: Value, pve: Option<&Value>) -> 
         _ => {}
     }
     strip_links(&mut data);
+    redact_all(&mut data);
     data
 }
 
@@ -129,6 +184,33 @@ mod tests {
             proxmox_tags: vec!["demo".into()],
             kubernetes_service_account: Some("homie/homie-demo".into()),
         }
+    }
+
+    #[test]
+    fn addresses_are_redacted() {
+        assert_eq!(
+            redact_ips(
+                r#"Readiness probe failed: Get "http://10.0.1.185:8080/healthz": dial tcp 10.0.1.185:8080: connect: refused"#
+            ),
+            r#"Readiness probe failed: Get "http://<ip>/healthz": dial tcp <ip>: connect: refused"#
+        );
+        assert_eq!(
+            redact_ips("node at fd00::1 and [fd00::2]:443."),
+            "node at <ip> and <ip>."
+        );
+        // hashes, versions and times stay
+        for keep in [
+            "main@sha1:f5acd8e78b29be79070d7282eacf661cc74df011",
+            "v1.36.4+k0s",
+            "12:30:05",
+            "litellm-helm@1.1.3",
+            "deadbeef",
+        ] {
+            assert_eq!(redact_ips(keep), keep);
+        }
+        let pve = json!({"guests": [{"vmid": 1, "tags": ["10.0.0.40", "demo", "k8s"]}]});
+        let f = filter(&demo(), "pve", pve, None);
+        assert_eq!(f["guests"][0]["tags"], json!(["demo", "k8s"]));
     }
 
     #[test]

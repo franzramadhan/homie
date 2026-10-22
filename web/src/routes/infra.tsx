@@ -121,7 +121,7 @@ function Cluster({ name }: { name: string }) {
     <Source
       title={`Proxmox ${name}`}
       query={q}
-      right={q.data?.data && <Ext href={q.data.data.ui_url}>open Proxmox UI</Ext>}
+      right={q.data?.data?.ui_url && <Ext href={q.data.data.ui_url}>open Proxmox UI</Ext>}
     >
       {(d) => {
         const guestCols: Col<Guest>[] = [
