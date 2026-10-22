@@ -321,7 +321,250 @@ fn enc(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::state;
+    use super::*;
+    use crate::{secret::Secret, testkit};
+    use axum::{
+        Json, Router,
+        extract::{Path, Query},
+        http::{HeaderMap, StatusCode},
+        response::IntoResponse,
+        routing::get,
+    };
+    use std::{collections::HashMap, path::PathBuf};
+
+    fn cfg(url: &str, token: Secret) -> config::Grafana {
+        config::Grafana {
+            url: url.into(),
+            ui_url: None,
+            token,
+            tls_verify: true,
+            ca_file: None,
+            tls_server_name: None,
+            quiet: false,
+            ignore_alerts: vec!["Watchdog".into()],
+        }
+    }
+
+    fn bearer(h: &HeaderMap) -> String {
+        h.get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .trim_start_matches("Bearer ")
+            .to_string()
+    }
+
+    /// A Grafana that accepts the token "new". Seeing "old", it rotates the
+    /// token file to "new" and answers 401, as after a rotation.
+    async fn fake(token_file: PathBuf) -> String {
+        let alerts = json!({"data": {"alerts": [
+            {"state": "Pending", "labels": {"alertname": "B", "severity": "warning"},
+             "annotations": {"description": "only a description"}, "activeAt": "t1"},
+            {"state": "Alerting", "labels": {"alertname": "Z", "severity": "critical"},
+             "annotations": {"summary": "disk full", "description": "ignored"}, "activeAt": "t2"},
+            {"state": "Alerting", "labels": {"alertname": "A"}},
+            {"state": "Normal (NoData)", "labels": {"alertname": "C"}},
+            {"state": "Alerting", "labels": {"alertname": "Watchdog"}},
+            {"state": "NoData", "labels": {"alertname": "D"}},
+            {"state": "Unknown", "labels": {"alertname": "E"}},
+        ]}});
+        let search = move |h: HeaderMap| {
+            let file = token_file.clone();
+            async move {
+                match bearer(&h).as_str() {
+                    "new" => (StatusCode::OK, "[]").into_response(),
+                    "old" => {
+                        std::fs::write(&file, "new\n").unwrap();
+                        (StatusCode::UNAUTHORIZED, "token expired").into_response()
+                    }
+                    _ => (StatusCode::UNAUTHORIZED, "invalid API key").into_response(),
+                }
+            }
+        };
+        let prom = |Path((uid, api)): Path<(String, String)>,
+                    Query(q): Query<HashMap<String, String>>| async move {
+            let body = match (uid.as_str(), api.as_str()) {
+                ("vm", "query") => {
+                    assert_eq!(q["query"], "up");
+                    json!({"status": "success", "data": {"result": [
+                        {"metric": {"job": "node"}, "value": [1, "1"]},
+                        {"metric": {"job": "bad"}, "value": [1, "x"]},
+                    ]}})
+                }
+                ("vm", "query_range") => {
+                    let span: i64 =
+                        q["end"].parse::<i64>().unwrap() - q["start"].parse::<i64>().unwrap();
+                    assert_eq!((span, q["step"].as_str()), (3600, "60"));
+                    json!({"status": "success", "data": {"result": [
+                        {"metric": {"job": "node"}, "values": [[1, "1.5"], [2, "oops"], [3, "2"]]},
+                        {"values": []},
+                    ]}})
+                }
+                ("broken", _) => json!({"status": "error", "error": "parse error"}),
+                _ => json!({"status": "error"}),
+            };
+            Json(body)
+        };
+        let logsql = |Path(uid): Path<String>| async move {
+            match uid.as_str() {
+                "vl" => "{\"_msg\": \"a\"}\n\n[1]\n{\"_msg\": \"b\"}\n".to_string(),
+                _ => "not json\n".to_string(),
+            }
+        };
+        let loki = |Query(q): Query<HashMap<String, String>>| async move {
+            let span = q["end"].parse::<i128>().unwrap() - q["start"].parse::<i128>().unwrap();
+            assert_eq!(span, 300 * 1_000_000_000);
+            assert_eq!(
+                (q["limit"].as_str(), q["direction"].as_str()),
+                ("10", "backward")
+            );
+            Json(json!({"status": "success", "query": q["query"]}))
+        };
+        testkit::serve(
+            Router::new()
+                .route(
+                    "/api/health",
+                    get(|| async { Json(json!({"version": "11.2.0"})) }),
+                )
+                .route("/api/search", get(search))
+                .route(
+                    "/api/prometheus/grafana/api/v1/alerts",
+                    get(move || async move { Json(alerts) }),
+                )
+                .route("/api/datasources/proxy/uid/{uid}/api/v1/{api}", get(prom))
+                .route(
+                    "/api/datasources/proxy/uid/{uid}/select/logsql/query",
+                    get(logsql),
+                )
+                .route(
+                    "/api/datasources/proxy/uid/{uid}/loki/api/v1/query_range",
+                    get(loki),
+                ),
+        )
+        .await
+    }
+
+    fn tmp(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("homie-grafana-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn alerts_filtered_and_sorted() {
+        let url = fake(tmp("alerts").join("unused")).await;
+        let mut c = cfg(&url, Secret::Plain("new".into()));
+        c.ui_url = Some("https://grafana.example/".into());
+        let g = Grafana::new("lab", &c).await.unwrap();
+        assert_eq!((g.name.as_str(), g.insecure), ("lab", Some("plain_http")));
+        let a = g.alerts().await.unwrap();
+        let got: Vec<_> = a
+            .alerts
+            .iter()
+            .map(|a| (a.name.as_str(), a.state.as_str(), a.summary.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("A", "firing", ""),
+                ("Z", "firing", "disk full"),
+                ("B", "pending", "only a description"),
+                ("D", "error", ""),
+            ]
+        );
+        assert_eq!(a.alerts[1].severity, "critical");
+        assert_eq!(a.alerts[1].active_at, "t2");
+        assert_eq!(a.link, "https://grafana.example/alerting/list");
+    }
+
+    #[tokio::test]
+    async fn token_reloaded_once_after_401() {
+        let dir = tmp("reload");
+        let file = dir.join("token");
+        std::fs::write(&file, "old").unwrap();
+        let url = fake(file.clone()).await;
+        let g = Grafana::new("lab", &cfg(&url, Secret::File { file }))
+            .await
+            .unwrap();
+        assert_eq!(g.url, url);
+        assert_eq!(g.probe().await.unwrap(), "Grafana 11.2.0, token accepted");
+        assert_eq!(g.token.get().await, "new");
+
+        let g = Grafana::new("lab", &cfg(&url, Secret::Plain("bad".into())))
+            .await
+            .unwrap();
+        let e = g.probe().await.unwrap_err().to_string();
+        assert_eq!(e, "HTTP 401 Unauthorized: invalid API key");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn datasource_queries() {
+        let url = fake(tmp("ds").join("unused")).await;
+        let g = Grafana::new("lab", &cfg(&url, Secret::Plain("new".into())))
+            .await
+            .unwrap();
+
+        let s = g.promql("vm", "up").await.unwrap();
+        assert_eq!(
+            (s[0].labels["job"].as_str(), s[0].value),
+            (Some("node"), 1.0)
+        );
+        assert!(s[1].value.is_nan());
+        let e = g.promql("broken", "up").await.err().unwrap();
+        assert_eq!(e.to_string(), "query failed: parse error");
+        let e = g.promql("other", "up").await.err().unwrap();
+        assert_eq!(e.to_string(), "query failed: unknown error");
+
+        let r = g.promql_range("vm", "rate(x[5m])", 3600, 60).await.unwrap();
+        assert_eq!(r[0].0["job"], "node");
+        assert_eq!(r[0].1, [1.5, 2.0]);
+        assert!(r[1].0.is_empty() && r[1].1.is_empty());
+        let e = g.promql_range("broken", "x", 60, 60).await.unwrap_err();
+        assert_eq!(e.to_string(), "query failed: parse error");
+
+        let rows = g.logsql("vl", "*").await.unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(
+            (rows[0]["_msg"].as_str(), rows[2]["_msg"].as_str()),
+            (Some("a"), Some("b"))
+        );
+        assert!(rows[1].is_empty(), "a non-object row is an empty row");
+        assert!(g.logsql("garbage", "*").await.is_err());
+
+        let body = g.loki_range("lk", "{unit=\"x\"}", 300, 10).await.unwrap();
+        assert_eq!(body["query"], "{unit=\"x\"}");
+    }
+
+    #[tokio::test]
+    async fn explore_link_and_config_errors() {
+        let mut c = cfg("http://127.0.0.1:9", Secret::Plain("t".into()));
+        c.ui_url = Some("https://grafana.example/sub/".into());
+        let g = Grafana::new("lab", &c).await.unwrap();
+        let link = Url::parse(&g.explore("vm", "up{job=\"x\"}")).unwrap();
+        assert_eq!(link.path(), "/sub/explore");
+        let q: HashMap<_, _> = link.query_pairs().into_owned().collect();
+        assert_eq!(q["schemaVersion"], "1");
+        let panes: Value = serde_json::from_str(&q["panes"]).unwrap();
+        assert_eq!(panes["a"]["queries"][0]["expr"], "up{job=\"x\"}");
+        assert_eq!(panes["a"]["datasource"], "vm");
+
+        let e = Grafana::new("lab", &cfg("not a url", Secret::Plain("t".into())))
+            .await
+            .err()
+            .unwrap();
+        assert!(e.to_string().starts_with("grafana.lab: "), "{e}");
+        let unset = Secret::Env {
+            env: "HOMIE_TEST_GRAFANA_UNSET".into(),
+        };
+        let e = Grafana::new("lab", &cfg("http://x", unset))
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(
+            e.to_string(),
+            "grafana.lab.token: environment variable HOMIE_TEST_GRAFANA_UNSET is not set"
+        );
+    }
 
     #[test]
     fn alert_states() {

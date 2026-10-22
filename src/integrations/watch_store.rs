@@ -110,6 +110,15 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit;
+    use axum::{
+        Json, Router,
+        http::StatusCode,
+        response::IntoResponse,
+        routing::{get, post},
+    };
+    use serde_json::{Value, json};
+    use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn file_round_trip() {
@@ -135,27 +144,103 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// Against the current kubeconfig context, namespace default:
-    /// `cargo test -- --ignored configmap_round_trip`
     #[tokio::test]
-    #[ignore]
-    async fn configmap_round_trip() {
-        let client = kube::Client::try_default().await.unwrap();
-        let api: Api<ConfigMap> = Api::namespaced(client, "default");
-        let _ = api.delete(CONFIGMAP, &Default::default()).await;
-        let store = Store::ConfigMap(api.clone());
+    async fn off_and_file_errors() {
+        let off = Store::new(WatchStore::Off, Some(Path::new("/x")))
+            .await
+            .unwrap();
+        assert!(off.name().is_none());
+        assert!(off.load().await.unwrap().is_empty());
+        assert_eq!(
+            off.save(&[]).await.unwrap_err().to_string(),
+            "saving watches is turned off (github.store = \"off\")"
+        );
+        // not in a cluster here
+        let e = Store::new(WatchStore::Configmap, None).await.err().unwrap();
+        assert!(
+            e.to_string()
+                .starts_with("github.store = \"configmap\" runs in a cluster only")
+        );
+
+        let dir = std::env::temp_dir().join(format!("homie-watch-err-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("github-watch.json")).unwrap();
+        let store = Store::new(WatchStore::File, Some(&dir)).await.unwrap();
+        let e = store.load().await.unwrap_err().to_string();
+        assert!(e.contains("github-watch.json: "), "{e}");
+        assert!(store.save(&[]).await.is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A Kubernetes API holding at most one ConfigMap in namespace `ns`;
+    /// records the writes as "create" or "replace".
+    async fn fake_api() -> (
+        String,
+        Arc<Mutex<Option<Value>>>,
+        Arc<Mutex<Vec<&'static str>>>,
+    ) {
+        let cm: Arc<Mutex<Option<Value>>> = Arc::default();
+        let writes: Arc<Mutex<Vec<&'static str>>> = Arc::default();
+        let path = format!("/api/v1/namespaces/ns/configmaps/{CONFIGMAP}");
+        let (get_cm, post_cm, put_cm) = (cm.clone(), cm.clone(), cm.clone());
+        let (post_w, put_w) = (writes.clone(), writes.clone());
+        let app = Router::new()
+            .route(
+                &path,
+                get(move || async move {
+                    match get_cm.lock().unwrap().clone() {
+                        Some(v) => Json(v).into_response(),
+                        None => (
+                            StatusCode::NOT_FOUND,
+                            Json(json!({"kind": "Status", "apiVersion": "v1", "metadata": {},
+                                "status": "Failure", "reason": "NotFound", "code": 404,
+                                "message": "configmaps \"homie-github-watch\" not found"})),
+                        )
+                            .into_response(),
+                    }
+                })
+                .put(move |Json(mut v): Json<Value>| async move {
+                    assert_eq!(v["metadata"]["resourceVersion"], "1");
+                    v["metadata"]["resourceVersion"] = json!("2");
+                    put_w.lock().unwrap().push("replace");
+                    *put_cm.lock().unwrap() = Some(v.clone());
+                    Json(v)
+                }),
+            )
+            .route(
+                "/api/v1/namespaces/ns/configmaps",
+                post(move |Json(mut v): Json<Value>| async move {
+                    v["metadata"]["resourceVersion"] = json!("1");
+                    post_w.lock().unwrap().push("create");
+                    *post_cm.lock().unwrap() = Some(v.clone());
+                    (StatusCode::CREATED, Json(v))
+                }),
+            );
+        (testkit::serve(app).await, cm, writes)
+    }
+
+    #[tokio::test]
+    async fn configmap_against_fake_api() {
+        let (url, cm, writes) = fake_api().await;
+        let store = Store::ConfigMap(Api::namespaced(testkit::kube_client(&url), "ns"));
+        assert_eq!(store.name(), Some("configmap"));
         assert!(store.load().await.unwrap().is_empty());
         let mut w = vec![Watch {
             repo: "o/r".into(),
             workflow: "ci.yml".into(),
         }];
-        store.save(&w).await.unwrap(); // create
+        store.save(&w).await.unwrap();
         w.push(Watch {
             repo: "o/r".into(),
             workflow: "plan.yml".into(),
         });
-        store.save(&w).await.unwrap(); // replace
+        store.save(&w).await.unwrap();
+        assert_eq!(*writes.lock().unwrap(), ["create", "replace"]);
         assert_eq!(store.load().await.unwrap(), w);
-        api.delete(CONFIGMAP, &Default::default()).await.unwrap();
+        let saved = cm.lock().unwrap().clone().unwrap();
+        assert_eq!(saved["metadata"]["name"], CONFIGMAP);
+
+        // a ConfigMap without the key holds no watches
+        *cm.lock().unwrap() = Some(json!({"metadata": {"name": CONFIGMAP}, "data": {}}));
+        assert!(store.load().await.unwrap().is_empty());
     }
 }

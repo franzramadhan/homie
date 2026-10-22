@@ -188,4 +188,119 @@ mod tests {
         );
         assert!(r[0].time.starts_with("2026-10-22T08:00:00"));
     }
+
+    async fn grafana() -> Grafana {
+        use axum::{
+            Json, Router,
+            extract::{Path, Query},
+            routing::get,
+        };
+        use std::collections::HashMap;
+
+        let vl = |Query(q): Query<HashMap<String, String>>| async move {
+            assert_eq!((q["query"].as_str(), q["limit"].as_str()), ("error", "3"));
+            let start: i64 = q["start"].parse().unwrap();
+            assert!((jiff::Timestamp::now().as_second() - start - 900).abs() < 5);
+            [
+                r#"{"_time": "2026-10-22T08:00:01Z", "_msg": "b", "_stream": "{unit=\"x\"}"}"#,
+                r#"{"_time": "2026-10-22T08:00:03Z", "_msg": "\u001b[31mc\u001b[0m"}"#,
+                r#"{"_time": "2026-10-22T08:00:02Z", "_msg": "a"}"#,
+            ]
+            .join("\n")
+        };
+        let loki = |Path(uid): Path<String>, Query(q): Query<HashMap<String, String>>| async move {
+            assert_eq!(q["limit"], "3");
+            Json(match uid.as_str() {
+                "lk" => json!({"status": "success", "data": {"result": [
+                    {"stream": {"unit": "x"}, "values": [["1792656000000000000", "old"]]},
+                    {"stream": {"unit": "y"}, "values": [["1792656060000000000", "new"]]},
+                ]}}),
+                "lk-bad" => json!({"status": "error", "error": "parse error at line 1"}),
+                _ => json!({"status": "error"}),
+            })
+        };
+        let url = crate::testkit::serve(
+            Router::new()
+                .route("/api/datasources/proxy/uid/vl/select/logsql/query", get(vl))
+                .route(
+                    "/api/datasources/proxy/uid/{uid}/loki/api/v1/query_range",
+                    get(loki),
+                ),
+        )
+        .await;
+        let cfg = crate::config::Grafana {
+            url,
+            ui_url: None,
+            token: crate::secret::Secret::Plain("t".into()),
+            tls_verify: true,
+            ca_file: None,
+            tls_server_name: None,
+            quiet: false,
+            ignore_alerts: Vec::new(),
+        };
+        Grafana::new("lab", &cfg).await.unwrap()
+    }
+
+    fn source(kind: LogKind, datasource: &str) -> LogSource {
+        LogSource {
+            label: "logs".into(),
+            grafana: "lab".into(),
+            datasource: datasource.into(),
+            kind,
+            pod_query: None,
+            node_query: None,
+        }
+    }
+
+    fn request(query: &str) -> SearchRequest {
+        SearchRequest {
+            source: "logs".into(),
+            query: query.into(),
+            minutes: 15,
+            limit: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn search_victorialogs_newest_first_and_truncated() {
+        let g = grafana().await;
+        let src = source(LogKind::Victorialogs, "vl");
+        let r = search(&g, &src, &request("  error "), 2).await.unwrap();
+        assert!(r.truncated);
+        let msgs: Vec<_> = r.rows.iter().map(|r| r.message.as_str()).collect();
+        assert_eq!(msgs, ["c", "a"]);
+    }
+
+    #[tokio::test]
+    async fn search_loki() {
+        let g = grafana().await;
+        let r = search(
+            &g,
+            &source(LogKind::Loki, "lk"),
+            &request("{unit=~\".+\"}"),
+            2,
+        )
+        .await
+        .unwrap();
+        assert!(!r.truncated);
+        assert_eq!(
+            r.rows[0],
+            Row {
+                time: "2026-10-22T08:01:00Z".into(),
+                message: "new".into(),
+                labels: "unit=y".into(),
+            }
+        );
+        assert_eq!(r.rows[1].message, "old");
+        let e = search(&g, &source(LogKind::Loki, "lk-bad"), &request("x"), 2)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(e.to_string(), "query failed: parse error at line 1");
+        let e = search(&g, &source(LogKind::Loki, "other"), &request("x"), 2)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(e.to_string(), "query failed: unknown error");
+    }
 }

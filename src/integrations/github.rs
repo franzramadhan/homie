@@ -601,4 +601,316 @@ mod tests {
         );
         assert!(valid_repo("org/.github"));
     }
+
+    use axum::{
+        Json, Router,
+        extract::Path,
+        http::{HeaderMap, StatusCode},
+        response::{IntoResponse, Response},
+        routing::{get, post},
+    };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    fn bearer(h: &HeaderMap) -> String {
+        h.get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .trim_start_matches("Bearer ")
+            .to_string()
+    }
+
+    fn not_found() -> Response {
+        (StatusCode::NOT_FOUND, r#"{"message": "Not Found"}"#).into_response()
+    }
+
+    fn authorized(h: &HeaderMap) -> bool {
+        ["inst-1", "inst-2", "pat"].contains(&bearer(h).as_str())
+    }
+
+    /// A GitHub API: user1 is a user installation (id 1), org1 an
+    /// organization installation (id 2), noid and notoken are broken
+    /// installations. Workflow reads need an installation token or "pat".
+    /// Counts the access token requests.
+    async fn fake(minted: Arc<AtomicUsize>) -> String {
+        let installation = |kind: &'static str| {
+            move |Path(owner): Path<String>, h: HeaderMap| async move {
+                assert_eq!(bearer(&h).split('.').count(), 3, "app JWT expected");
+                match (kind, owner.as_str()) {
+                    ("users", "user1") => Json(json!({"id": 1})).into_response(),
+                    ("orgs", "org1") => Json(json!({"id": 2})).into_response(),
+                    ("users", "noid") => Json(json!({})).into_response(),
+                    ("users", "notoken") => Json(json!({"id": 9})).into_response(),
+                    _ => not_found(),
+                }
+            }
+        };
+        let access = move |Path(id): Path<u64>| {
+            let minted = minted.clone();
+            async move {
+                minted.fetch_add(1, Ordering::SeqCst);
+                match id {
+                    9 => Json(json!({})),
+                    _ => Json(json!({"token": format!("inst-{id}")})),
+                }
+            }
+        };
+        let meta = |Path((_, repo, file)): Path<(String, String, String)>, h: HeaderMap| async move {
+            if !authorized(&h) {
+                return (StatusCode::UNAUTHORIZED, "Bad credentials").into_response();
+            }
+            match repo.as_str() {
+                "limited" => (
+                    StatusCode::FORBIDDEN,
+                    [("x-ratelimit-remaining", "0")],
+                    "API rate limit exceeded",
+                )
+                    .into_response(),
+                "private" => (StatusCode::FORBIDDEN, "Resource not accessible").into_response(),
+                _ if file == "ci.yml" => Json(json!({"name": "CI"})).into_response(),
+                _ => Json(json!({})).into_response(),
+            }
+        };
+        let runs = |h: HeaderMap| async move {
+            assert!(authorized(&h));
+            Json(json!({"workflow_runs": [
+                {"run_number": 12, "display_title": "fix", "status": "in_progress", "event": "push",
+                 "head_branch": "main", "actor": {"login": "dev"}, "head_sha": "0123456789",
+                 "run_started_at": "2026-10-22T08:00:00Z", "html_url": "https://github.com/o/r/actions/runs/12"},
+                {"run_number": 11, "status": "completed", "conclusion": "success"},
+            ]}))
+        };
+        let installations = |h: HeaderMap| async move {
+            assert_eq!(bearer(&h), "user-token");
+            Json(json!({"installations": [{"id": 1}, {"id": "x"}, {"id": 2}]}))
+        };
+        let repositories = |Path(id): Path<u64>| async move {
+            Json(match id {
+                1 => json!({"repositories": [{"full_name": "zed/b"}, {"name": "no full name"}]}),
+                _ => json!({"repositories": [{"full_name": "acme/a"}]}),
+            })
+        };
+        let workflows = |Path((owner, _)): Path<(String, String)>| async move {
+            if owner == "gone" {
+                return not_found();
+            }
+            Json(json!({"workflows": [
+                {"name": "CI", "path": ".github/workflows/ci.yml", "state": "active"},
+                {"name": "Dynamic", "state": "active"},
+            ]}))
+            .into_response()
+        };
+        crate::testkit::serve(
+            Router::new()
+                .route("/users/{owner}/installation", get(installation("users")))
+                .route("/orgs/{owner}/installation", get(installation("orgs")))
+                .route("/app/installations/{id}/access_tokens", post(access))
+                .route("/repos/{owner}/{repo}/actions/workflows", get(workflows))
+                .route("/repos/{owner}/{repo}/actions/workflows/{file}", get(meta))
+                .route(
+                    "/repos/{owner}/{repo}/actions/workflows/{file}/runs",
+                    get(runs),
+                )
+                .route("/user/installations", get(installations))
+                .route("/user/installations/{id}/repositories", get(repositories)),
+        )
+        .await
+    }
+
+    fn watch(repo: &str, workflow: &str) -> config::Watch {
+        config::Watch {
+            repo: repo.into(),
+            workflow: workflow.into(),
+        }
+    }
+
+    fn cfg(api_url: &str) -> config::GitHub {
+        config::GitHub {
+            app_id: Some(42),
+            private_key: Some(crate::secret::Secret::Plain(TEST_KEY.into())),
+            token: None,
+            client_id: None,
+            client_secret: None,
+            watch: Vec::new(),
+            api_url: api_url.into(),
+            quiet: false,
+            store: config::WatchStore::Off,
+        }
+    }
+
+    #[tokio::test]
+    async fn app_installation_tokens_and_runs() {
+        let minted = Arc::new(AtomicUsize::new(0));
+        let url = fake(minted.clone()).await;
+        let mut c = cfg(&url);
+        c.watch = vec![
+            watch("user1/app", "ci.yml"),
+            watch("org1/infra", "plan.yml"),
+            watch("none/x", "a.yml"),
+            watch("user1/limited", "ci.yml"),
+            watch("user1/private", "ci.yml"),
+        ];
+        let gh = GitHub::new(&c, None).await.unwrap();
+        assert!(!gh.helper && gh.store.name().is_none());
+
+        let all = gh.workflows().await.unwrap();
+        let by = |label: &str| all.iter().find(|w| w.label() == label).unwrap();
+        let app = by("user1/app/ci.yml");
+        assert_eq!(
+            (app.name.as_str(), app.source, app.err()),
+            ("CI", "config", None)
+        );
+        assert_eq!(
+            app.link,
+            "https://github.com/user1/app/actions/workflows/ci.yml"
+        );
+        let r = &app.runs[0];
+        assert_eq!(
+            (r.number, r.status.as_str(), r.seconds, r.sha.as_str()),
+            (12, "in_progress", None, "0123456")
+        );
+        assert_eq!(app.runs[1].conclusion.as_deref(), Some("success"));
+        // organizations: /users fails, /orgs answers; a workflow without a name keeps its file name
+        let infra = by("org1/infra/plan.yml");
+        assert_eq!((infra.name.as_str(), infra.err()), ("plan.yml", None));
+        assert!(
+            by("none/x/a.yml")
+                .err()
+                .unwrap()
+                .starts_with("the GitHub App is not installed for none: HTTP 404")
+        );
+        assert_eq!(
+            by("user1/limited/ci.yml").err(),
+            Some("GitHub rate limit reached; showing the last data")
+        );
+        assert_eq!(
+            by("user1/private/ci.yml").err(),
+            Some("HTTP 403 Forbidden: Resource not accessible")
+        );
+        // one token per owner, then cached
+        assert_eq!(minted.load(Ordering::SeqCst), 2);
+        gh.workflows().await.unwrap();
+        assert_eq!(minted.load(Ordering::SeqCst), 2);
+
+        let e = gh.token_for("noid").await.unwrap_err();
+        assert_eq!(e.to_string(), "installation without id");
+        let e = gh.token_for("notoken").await.unwrap_err();
+        assert_eq!(e.to_string(), "no installation token");
+    }
+
+    #[tokio::test]
+    async fn token_workflows_fail_together() {
+        let url = fake(Arc::new(AtomicUsize::new(0))).await;
+        let mut c = cfg(&url);
+        (c.app_id, c.private_key) = (None, None);
+        c.token = Some(crate::secret::Secret::Plain("pat".into()));
+        let gh = GitHub::new(&c, None).await.unwrap();
+        assert!(gh.workflows().await.unwrap().is_empty());
+
+        c.watch = vec![watch("o/limited", "ci.yml"), watch("o/private", "ci.yml")];
+        let gh = GitHub::new(&c, None).await.unwrap();
+        let e = gh.workflows().await.err().unwrap();
+        assert_eq!(
+            e.to_string(),
+            "GitHub rate limit reached; showing the last data"
+        );
+
+        c.token = Some(crate::secret::Secret::Plain("wrong".into()));
+        c.watch = vec![watch("o/r", "ci.yml")];
+        let gh = GitHub::new(&c, None).await.unwrap();
+        let e = gh.workflows().await.err().unwrap();
+        assert_eq!(e.to_string(), "HTTP 401 Unauthorized: Bad credentials");
+    }
+
+    #[tokio::test]
+    async fn sign_in_helper() {
+        let url = fake(Arc::new(AtomicUsize::new(0))).await;
+        let gh = GitHub::new(&cfg(&url), None).await.unwrap();
+        assert!(gh.authorize_url("https://homie.example/cb", "s").is_none());
+        let e = gh
+            .exchange("code", "https://homie.example/cb")
+            .await
+            .unwrap_err();
+        assert_eq!(e.to_string(), "the GitHub sign-in helper is not configured");
+
+        let mut c = cfg(&url);
+        c.client_id = Some(crate::secret::Secret::Plain("Iv1.abc".into()));
+        c.client_secret = Some(crate::secret::Secret::Plain("shh".into()));
+        let gh = GitHub::new(&c, None).await.unwrap();
+        assert!(gh.helper);
+        let u =
+            url::Url::parse(&gh.authorize_url("https://homie.example/cb", "st8").unwrap()).unwrap();
+        assert_eq!(u.path(), "/login/oauth/authorize");
+        let q: HashMap<_, _> = u.query_pairs().into_owned().collect();
+        assert_eq!(
+            (
+                q["client_id"].as_str(),
+                q["redirect_uri"].as_str(),
+                q["state"].as_str()
+            ),
+            ("Iv1.abc", "https://homie.example/cb", "st8")
+        );
+
+        assert_eq!(
+            gh.user_repos("user-token").await.unwrap(),
+            ["acme/a", "zed/b"]
+        );
+        let w = gh.user_workflows("user-token", "o/r").await.unwrap();
+        assert_eq!(
+            w[0],
+            json!({"name": "CI", "file": "ci.yml", "state": "active"})
+        );
+        assert_eq!(w[1]["file"], "");
+        let e = gh.user_workflows("user-token", "o/r/x").await.unwrap_err();
+        assert_eq!(e.to_string(), "repository must be owner/name");
+        assert!(gh.user_workflows("user-token", "gone/r").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn config_errors() {
+        async fn err(c: config::GitHub) -> String {
+            GitHub::new(&c, None).await.err().unwrap().to_string()
+        }
+        let mut c = cfg("https://api.example");
+        c.private_key = None;
+        assert_eq!(err(c).await, "github: set app_id and private_key, or token");
+        let mut c = cfg("https://api.example");
+        c.private_key = Some(crate::secret::Secret::Plain(
+            "-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----".into(),
+        ));
+        assert!(
+            err(c)
+                .await
+                .starts_with("github.private_key: not an RSA key")
+        );
+        let mut c = cfg("https://api.example");
+        c.private_key = Some(crate::secret::Secret::Plain("not base64!".into()));
+        assert!(!err(c).await.is_empty());
+        assert!(err(cfg("no url")).await.starts_with("github: "));
+        let mut c = cfg("https://api.example");
+        c.client_id = Some(crate::secret::Secret::Env {
+            env: "HOMIE_TEST_GH_UNSET".into(),
+        });
+        assert_eq!(
+            err(c).await,
+            "environment variable HOMIE_TEST_GH_UNSET is not set"
+        );
+        let mut c = cfg("https://api.example");
+        c.store = config::WatchStore::File;
+        assert_eq!(
+            err(c).await,
+            "github.store: github.store = \"file\" needs state_dir"
+        );
+
+        let dir = std::env::temp_dir().join(format!("homie-gh-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("github-watch.json"), "{not json").unwrap();
+        let mut c = cfg("https://api.example");
+        c.store = config::WatchStore::File;
+        let e = GitHub::new(&c, Some(&dir)).await.err().unwrap().to_string();
+        assert!(e.starts_with("github.store: "), "{e}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
