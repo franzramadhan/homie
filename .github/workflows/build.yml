@@ -77,12 +77,14 @@ jobs:
       - run: rustup target add "$TARGET"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: ${{ matrix.target }}
-      - run: cargo build --release --locked --target "$TARGET"
-      - name: Package
+          key: ${{ matrix.target }}-${{ startsWith(github.ref, 'refs/tags/v') && 'release' || 'dev-image' }}
+      - name: Build
+        env:
+          PROFILE: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || 'dev-image' }}
         run: |
+          cargo build --profile "$PROFILE" --locked --target "$TARGET"
           mkdir -p dist
-          tar -czf "dist/homie-${GITHUB_REF_NAME//\//-}-${TARGET}.tar.gz" -C "target/${TARGET}/release" homie
+          tar -czf "dist/homie-${GITHUB_REF_NAME//\//-}-${TARGET}.tar.gz" -C "target/${TARGET}/${PROFILE}" homie
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: homie-${{ matrix.target }}

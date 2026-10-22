@@ -1,0 +1,68 @@
+name: coverage
+
+# Tests with coverage on every push to main that touches Rust code. The
+# results go to the orphan branch `badges` as shields.io endpoint JSON
+# (written through the contents API, so the commits are signed); README
+# badges read them from there.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "examples/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/coverage.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup component add llvm-tools-preview
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-llvm-cov
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: coverage
+      - name: Test with coverage
+        run: |
+          set -o pipefail
+          cargo llvm-cov --locked --json --summary-only --output-path cov.json 2>&1 | tee test.log
+          passed=$(grep -oE 'test result: ok\. [0-9]+ passed' test.log | awk '{s+=$4} END {print s+0}')
+          percent=$(jq -r '.data[0].totals.lines.percent | floor' cov.json)
+          echo "PASSED=$passed" >> "$GITHUB_ENV"
+          echo "PERCENT=$percent" >> "$GITHUB_ENV"
+          echo "$passed tests passed, $percent% lines covered" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish badges
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          color=red
+          if [ "$PERCENT" -ge 80 ]; then color=brightgreen
+          elif [ "$PERCENT" -ge 60 ]; then color=yellowgreen
+          elif [ "$PERCENT" -ge 40 ]; then color=yellow; fi
+          put() {
+            local path="repos/${GITHUB_REPOSITORY}/contents/$1" sha
+            sha=$(gh api "${path}?ref=badges" --jq .sha 2>/dev/null || true)
+            local args=(-f branch=badges -f message="$1 for ${GITHUB_SHA:0:7}" -f content="$(printf '%s' "$2" | base64 -w0)")
+            if [ -n "$sha" ]; then args+=(-f sha="$sha"); fi
+            gh api --method PUT "$path" "${args[@]}" --silent
+          }
+          put coverage.json "{\"schemaVersion\":1,\"label\":\"coverage\",\"message\":\"${PERCENT}%\",\"color\":\"${color}\"}"
+          put tests.json "{\"schemaVersion\":1,\"label\":\"tests\",\"message\":\"${PASSED} passed\",\"color\":\"brightgreen\"}"
