@@ -38,6 +38,19 @@ pub async fn run(cfg: Config) -> Result<()> {
     for (n, g) in &lab.grafana {
         probes.push((format!("grafana.{n}"), Box::pin(g.probe())));
     }
+    for (n, b) in &lab.openbao {
+        probes.push((
+            format!("openbao.{n}"),
+            Box::pin(async move {
+                let h = serde_json::to_value(b.health().await?)?;
+                Ok(format!(
+                    "{} {}",
+                    h["state"].as_str().unwrap_or("?"),
+                    h["version"].as_str().unwrap_or("")
+                ))
+            }),
+        ));
+    }
     for preset in lab.presets() {
         let (lab, cache, anonymous) = (&lab, &cache, &anonymous);
         probes.push((

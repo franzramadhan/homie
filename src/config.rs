@@ -33,6 +33,7 @@ pub struct Config {
     pub proxmox: BTreeMap<String, Proxmox>,
     pub kubernetes: BTreeMap<String, Kubernetes>,
     pub grafana: BTreeMap<String, Grafana>,
+    pub openbao: BTreeMap<String, OpenBao>,
     pub security: Security,
     pub tailscale: Option<Tailscale>,
     pub healthchecks: Option<Healthchecks>,
@@ -52,6 +53,7 @@ impl Default for Config {
             proxmox: BTreeMap::new(),
             kubernetes: BTreeMap::new(),
             grafana: BTreeMap::new(),
+            openbao: BTreeMap::new(),
             security: Security::default(),
             tailscale: None,
             healthchecks: None,
@@ -205,6 +207,9 @@ pub struct Kubernetes {
     /// Deep-link templates (RFC 0007); `headlamp_url` fills unset ones.
     #[serde(default)]
     pub links: LinkTemplates,
+    /// CloudNativePG: hours after which the last backup counts as stale (RFC 0011)
+    #[serde(default = "default_backup_age")]
+    pub cnpg_max_backup_age_hours: f64,
     /// Node CPU and memory history for sparklines (RFC 0012)
     #[serde(default)]
     pub metrics: Option<NodeMetrics>,
@@ -238,6 +243,10 @@ pub struct LinkTemplates {
     pub pod: Option<String>,
     pub workload: Option<String>,
     pub flux: Option<String>,
+}
+
+fn default_backup_age() -> f64 {
+    26.0
 }
 
 fn default_headlamp_cluster() -> String {
@@ -372,6 +381,31 @@ pub struct Healthchecks {
     pub tls_server_name: Option<String>,
     #[serde(default)]
     pub quiet: bool,
+}
+
+/// OpenBao or Vault, for its unauthenticated health (RFC 0011).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenBao {
+    pub url: String,
+    #[serde(default = "yes")]
+    pub tls_verify: bool,
+    #[serde(default)]
+    pub ca_file: Option<PathBuf>,
+    #[serde(default)]
+    pub tls_server_name: Option<String>,
+    #[serde(default)]
+    pub quiet: bool,
+}
+
+impl OpenBao {
+    pub fn tls(&self) -> Tls {
+        Tls {
+            tls_verify: self.tls_verify,
+            ca_file: self.ca_file.clone(),
+            tls_server_name: self.tls_server_name.clone(),
+        }
+    }
 }
 
 impl Grafana {
@@ -542,6 +576,9 @@ pub fn validate(cfg: &Config) -> Result<()> {
         if k.auth_mode() == KubeAuth::ForwardToken && cfg.auth.is_none() {
             return Err(format!("kubernetes.{name}: auth = \"forward_token\" needs [auth]").into());
         }
+    }
+    for (name, b) in &cfg.openbao {
+        check_url(&format!("openbao.{name}.url"), &b.url)?;
     }
     for (name, g) in &cfg.grafana {
         check_url(&format!("grafana.{name}.url"), &g.url)?;

@@ -2,7 +2,7 @@
 
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import { useMeta, useQ, type Alerts, type Check, type Device, type Envelope, type FluxItem, type K8sOverview, type PveOverview, type SecurityTable } from "../api";
+import { useMeta, useQ, type Alerts, type BaoHealth, type Check, type PgCluster, type Device, type Envelope, type FluxItem, type K8sOverview, type PveOverview, type SecurityTable } from "../api";
 import { Badge, sourceTone, type Tone } from "../ui";
 
 function Card<T>({ title, to, env, summary }: { title: string; to?: string; env: Envelope<T> | undefined; summary: (d: T) => { tone: Tone; lines: ReactNode[] } }) {
@@ -174,6 +174,41 @@ function TailscaleCard() {
   );
 }
 
+function OpenBaoCard({ name }: { name: string }) {
+  const q = useQ<BaoHealth>("openbao", name);
+  return (
+    <Card
+      title={`OpenBao ${name}`}
+      env={q.data}
+      summary={(d) => ({
+        tone: d.sealed || !d.initialized || d.state.startsWith("HTTP") ? "bad" : "ok",
+        lines: [d.sealed ? "SEALED" : !d.initialized ? "not initialized" : `unsealed, ${d.state}`, `version ${d.version}`],
+      })}
+    />
+  );
+}
+
+function CnpgCard({ name }: { name: string }) {
+  const q = useQ<PgCluster[]>("cnpg", name);
+  // clusters without CloudNativePG show nothing
+  if (q.data?.data && q.data.data.length === 0) return null;
+  return (
+    <Card
+      title={`PostgreSQL ${name}`}
+      env={q.data}
+      summary={(d) => ({
+        tone: d.some((c) => !c.healthy) ? "bad" : d.some((c) => c.backup_stale || !c.archiving) ? "warn" : "ok",
+        lines: d.flatMap((c) => [
+          `${c.namespace}/${c.name}: ${c.ready}/${c.instances} ready, primary ${c.primary}`,
+          c.backup_age_hours === null
+            ? "no completed backup"
+            : `last backup ${c.backup_age_hours < 1 ? "under an hour" : `${Math.round(c.backup_age_hours)}h`} ago${c.backup_stale ? " (stale)" : ""}${c.archiving ? "" : ", WAL archiving off"}`,
+        ]),
+      })}
+    />
+  );
+}
+
 function HealthchecksCard() {
   const q = useQ<Check[]>("healthchecks", "_");
   return (
@@ -212,6 +247,12 @@ export function Overview() {
       ))}
       {m.grafana.map((g) => (
         <AlertsCard key={g.name} name={g.name} />
+      ))}
+      {m.openbao.map((b) => (
+        <OpenBaoCard key={b.name} name={b.name} />
+      ))}
+      {m.kubernetes.map((k) => (
+        <CnpgCard key={`pg-${k.name}`} name={k.name} />
       ))}
       {m.security.map((s) => (
         <SecurityCard key={s} preset={s} />

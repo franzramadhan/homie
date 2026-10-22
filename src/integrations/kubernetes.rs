@@ -28,6 +28,7 @@ pub struct Kube {
     pub headlamp_url: Option<String>,
     pub links: super::links::Links,
     pub metrics: Option<config::NodeMetrics>,
+    pub cnpg_max_backup_age_hours: f64,
     base: Config,
     shared: Option<Client>,
 }
@@ -131,6 +132,7 @@ impl Kube {
                 .as_ref()
                 .map(|u| u.trim_end_matches('/').to_string()),
             metrics: cfg.metrics.clone(),
+            cnpg_max_backup_age_hours: cfg.cnpg_max_backup_age_hours,
             links: super::links::Links::new(
                 &cfg.links,
                 cfg.headlamp_url.as_deref(),

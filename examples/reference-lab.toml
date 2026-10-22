@@ -48,6 +48,11 @@ quiet = true
 url = "https://<stack>.grafana.net"
 token = { env = "GRAFANA_CLOUD_TOKEN" }
 
+# seal state on the overview (unauthenticated /v1/sys/health)
+[openbao.lab]
+url = "https://openbao.openbao.svc:8200"
+ca_file = "/etc/lab-ca/ca.crt"
+
 [security.kyverno]
 kubernetes = "homelab"
 
