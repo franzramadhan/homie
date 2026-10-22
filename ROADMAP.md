@@ -13,7 +13,7 @@ the RFCs it implements. Versions stay 0.x (alpha) until a 1.0 is decided.
 | [0006](rfc/0006-alertmanager.md) | Prometheus Alertmanager as an alert source | rejected | - |
 | [0007](rfc/0007-link-templates.md) | Deep-link templates | implemented | v0.2.0 |
 | [0008](rfc/0008-log-search.md) | Log search | implemented | v0.2.0 |
-| [0009](rfc/0009-live-updates.md) | Live updates (SSE) | accepted | v0.3.0 |
+| [0009](rfc/0009-live-updates.md) | Live updates (SSE) | implemented | v0.3.0 |
 | [0010](rfc/0010-guest-migrate.md) | Guest migration | rejected | - |
 | [0011](rfc/0011-service-status.md) | Service status cards (OpenBao, CNPG, backups) | implemented | v0.2.0 |
 | [0012](rfc/0012-sparklines.md) | Sparklines | implemented | v0.2.0 |
