@@ -45,12 +45,15 @@ comma, colon, parentheses or a new sentence.
 
 - `.github/workflows/ci.yml` runs on pull requests only: `cargo fmt --check`,
   `cargo clippy -D warnings`, `cargo test`.
-- `.github/workflows/build.yml` runs on pushes to `main` and `v*` tags:
-  native per-target binaries, then the multi-arch `scratch` image from the
-  Linux binaries (`ghcr.io/franzramadhan/homie`), then on tags a GitHub
-  release with the tarballs and `SHA256SUMS`.
+- `.github/workflows/build.yml` runs on `v*` tags only: native per-target
+  binaries, the multi-arch `scratch` image from the Linux binaries
+  (`ghcr.io/franzramadhan/homie`), and a GitHub release with the tarballs and
+  `SHA256SUMS`. Merges to `main` publish nothing.
 - Release: bump `version` in `Cargo.toml`, merge, then tag `v<version>`.
   The build fails when the tag and `Cargo.toml` disagree.
+- Test in the lab first with a pre-release: set `version = "X.Y.Z-rc.N"`,
+  tag `vX.Y.Z-rc.N`. The image gets only that exact tag (no `X.Y`, no
+  `latest`) and the GitHub release is marked pre-release.
 - Rust is pinned in `rust-toolchain.toml`. Bump it there.
 
 ## GitHub Actions
