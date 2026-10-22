@@ -74,12 +74,17 @@ pub async fn target(url: &str, tls: &Tls) -> Result<Target> {
     })
 }
 
-/// `base` joined with an absolute API path, keeping any path prefix in `base`.
+/// `base` joined with an absolute API path, keeping any path prefix in
+/// `base`. A query string in `path` stays a query string.
 pub fn join(base: &Url, path: &str) -> Url {
     let mut u = base.clone();
     let prefix = u.path().trim_end_matches('/').to_string();
+    let (path, query) = match path.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (path, None),
+    };
     u.set_path(&format!("{prefix}{path}"));
-    u.set_query(None);
+    u.set_query(query);
     u
 }
 
@@ -136,6 +141,10 @@ mod tests {
         assert_eq!(
             join(&b, "/api2/json/version").as_str(),
             "https://pve:8006/api2/json/version"
+        );
+        assert_eq!(
+            join(&b, "/api2/json/cluster/resources?type=vm").as_str(),
+            "https://pve:8006/api2/json/cluster/resources?type=vm"
         );
     }
 
