@@ -28,8 +28,6 @@ pub struct App {
     source: String,
     target_revision: String,
     destination: String,
-    /// for role filtering (RFC 0016)
-    dest_namespace: String,
     sync: String,
     health: String,
     revision: String,
@@ -85,7 +83,6 @@ fn app(o: &DynamicObject, argocd_url: Option<&str>) -> App {
             format!("{} {path}", text(&src["repoURL"]))
         },
         target_revision: text(&src["targetRevision"]),
-        dest_namespace: dest["namespace"].as_str().unwrap_or_default().to_string(),
         destination: format!(
             "{}/{}",
             dest["name"]
