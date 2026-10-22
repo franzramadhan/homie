@@ -1,0 +1,66 @@
+image:
+  repository: ghcr.io/franzramadhan/homie
+  # defaults to the chart's appVersion
+  tag: ""
+  # sha256:..., pins the image; wins over the tag
+  digest: ""
+  pullPolicy: IfNotPresent
+
+# Homie's config.toml. Secrets do not belong here: put them in a Secret as
+# HOMIE__* variables and name it in existingSecret. Without [auth] (OIDC) or
+# [local_login] with a password_hash, Homie refuses to listen on 0.0.0.0.
+config: |
+  listen = "0.0.0.0:8080"
+
+  [kubernetes.this]
+  auth = "in_cluster"
+
+# Secret whose keys become environment variables (HOMIE__AUTH__CLIENT_SECRET,
+# HOMIE__LOCAL_LOGIN__PASSWORD_HASH, HOMIE__PROXMOX__LAB__TOKEN, ...)
+existingSecret: ""
+
+rbac:
+  create: true
+  # patch Flux objects (reconcile) and Argo CD Applications (refresh)
+  actions: true
+  # list Secrets for the Helm releases view (Homie never returns values)
+  helmReleases: false
+
+serviceAccount:
+  create: true
+  name: ""
+
+replicaCount: 1  # sessions live in memory: keep one replica
+
+service:
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: homie.example.com
+  tls: []
+
+# Gateway API HTTPRoute
+httpRoute:
+  enabled: false
+  parentRefs: []
+  hostnames: []
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 500m
+    memory: 128Mi
+
+# for example a CA bundle for ca_file
+extraVolumes: []
+extraVolumeMounts: []
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
