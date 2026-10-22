@@ -117,4 +117,65 @@ mod tests {
         let s: Secret = serde_json::from_str(r#"{"cmd": "exit 3"}"#).unwrap();
         assert!(s.resolve().await.is_err());
     }
+
+    #[tokio::test]
+    async fn sources_and_errors() {
+        let s = Secret::Env { env: "PATH".into() };
+        assert!(!s.resolve().await.unwrap().is_empty());
+        assert_eq!(format!("{s:?}"), "env:PATH");
+
+        let s = Secret::Cmd {
+            cmd: "echo oops >&2; exit 3".into(),
+        };
+        assert_eq!(format!("{s:?}"), "cmd:echo oops >&2; exit 3");
+        let e = s.resolve().await.unwrap_err().to_string();
+        assert!(
+            e.starts_with("secret command failed (") && e.ends_with("): oops"),
+            "{e}"
+        );
+        let s = Secret::Cmd {
+            cmd: r"printf '\377'".into(),
+        };
+        assert_eq!(
+            s.resolve().await.unwrap_err().to_string(),
+            "secret command printed invalid UTF-8"
+        );
+
+        let s = Secret::Plain(" \n".into());
+        assert_eq!(
+            s.resolve().await.unwrap_err().to_string(),
+            "secret from <redacted> is empty"
+        );
+        assert_eq!(serde_json::to_string(&s).unwrap(), r#""<redacted>""#);
+
+        let s = Secret::File {
+            file: "/nonexistent/homie-token".into(),
+        };
+        assert_eq!(format!("{s:?}"), "file:/nonexistent/homie-token");
+        let e = s.resolve().await.unwrap_err().to_string();
+        assert!(e.starts_with("reading /nonexistent/homie-token: "), "{e}");
+    }
+
+    #[tokio::test]
+    async fn cell_reloads_a_rotated_file() {
+        let path = std::env::temp_dir().join(format!("homie-secret-{}", std::process::id()));
+        std::fs::write(&path, "one\n").unwrap();
+        let cell = SecretCell::new(&Secret::File { file: path.clone() })
+            .await
+            .unwrap();
+        assert_eq!(cell.get().await, "one");
+        std::fs::write(&path, "two").unwrap();
+        assert_eq!(cell.get().await, "one");
+        cell.reload().await.unwrap();
+        assert_eq!(cell.get().await, "two");
+        std::fs::write(&path, "").unwrap();
+        assert!(cell.reload().await.is_err());
+        assert_eq!(
+            cell.get().await,
+            "two",
+            "a failed reload keeps the old value"
+        );
+        std::fs::remove_file(&path).unwrap();
+        assert!(SecretCell::new(&Secret::File { file: path }).await.is_err());
+    }
 }

@@ -8,6 +8,8 @@ mod quiet;
 mod roles;
 mod secret;
 mod server;
+#[cfg(test)]
+mod testkit;
 
 use std::{path::PathBuf, process::ExitCode};
 

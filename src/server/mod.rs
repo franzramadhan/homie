@@ -4,8 +4,12 @@ mod api;
 mod assets;
 mod github;
 mod guard;
+#[cfg(test)]
+pub(crate) mod harness;
 mod live;
 mod login;
+#[cfg(test)]
+mod tests;
 
 use std::sync::Arc;
 

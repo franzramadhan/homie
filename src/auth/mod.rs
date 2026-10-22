@@ -281,4 +281,127 @@ mod tests {
         assert_eq!((u.name.as_str(), u.role.as_deref()), ("demo", Some("demo")));
         assert!(auth.user(&second).await.is_some());
     }
+
+    #[tokio::test]
+    async fn no_login_method_means_no_auth() {
+        let cfg = crate::server::harness::config("");
+        assert!(Auth::new(&cfg).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn plain_http_cookies_and_missing_methods() {
+        let cfg = crate::server::harness::config(&format!(
+            "public_url = \"http://homie.lan:7777\"\nlisten = \"0.0.0.0:7777\"\n\
+             [local_login]\npassword_hash = \"{}\"\n",
+            crate::server::harness::password_hash()
+        ));
+        let auth = Auth::new(&cfg).await.unwrap().unwrap();
+        assert_eq!(auth.cookie_name(), "homie");
+        assert_eq!(
+            auth.cookie("abc", 60),
+            "homie=abc; Path=/; HttpOnly; SameSite=Lax; Max-Age=60"
+        );
+        assert_eq!(auth.probe(), "password login for \"homie\"");
+        let e = |r: Result<String>| r.unwrap_err().to_string();
+        assert_eq!(
+            e(auth.oidc_callback("c", "s").await),
+            "OIDC login is not configured"
+        );
+        assert_eq!(e(auth.demo_login()), "the demo is not configured");
+        assert_eq!(
+            e(auth.local_login("homie", "wrong").await),
+            "wrong username or password"
+        );
+        let sid = auth
+            .local_login("homie", crate::server::harness::PASSWORD)
+            .await
+            .unwrap();
+        let u = auth.user(&sid).await.unwrap();
+        assert_eq!((u.name.as_str(), u.id_token, u.role), ("homie", None, None));
+        auth.logout(&sid);
+        assert!(auth.user(&sid).await.is_none());
+
+        let none = Auth {
+            local: None,
+            ..auth
+        };
+        assert_eq!(
+            e(none.local_login("homie", "x").await),
+            "password login is not configured"
+        );
+    }
+
+    #[tokio::test]
+    async fn old_sessions_end() {
+        let auth = Auth {
+            oidc: None,
+            local: None,
+            public_url: Url::parse("https://homie.example").unwrap(),
+            roles: Default::default(),
+            demo: Some(crate::config::Demo {
+                role: "demo".into(),
+                max_sessions: 5,
+            }),
+            local_role: None,
+            sessions: Mutex::new(HashMap::new()),
+        };
+        let sid = auth.demo_login().unwrap();
+        // an Instant before the machine booted cannot exist; skip then
+        let Some(old) = Instant::now().checked_sub(DEMO_TTL + Duration::from_secs(1)) else {
+            return;
+        };
+        auth.sessions.lock().unwrap().get_mut(&sid).unwrap().created = old;
+        assert!(auth.user(&sid).await.is_none());
+        assert!(auth.sessions.lock().unwrap().is_empty(), "and are removed");
+    }
+
+    /// An OIDC session whose ID token expires at `exp` (seconds from now).
+    fn oidc_session(auth: &Auth, exp: i64, refresh: Option<&str>) -> String {
+        auth.create(Session {
+            user: "me@example.com".into(),
+            id_token: Some("old".into()),
+            id_exp: jiff::Timestamp::now().as_second() + exp,
+            refresh: refresh.map(String::from),
+            created: Instant::now(),
+            role: None,
+            demo: false,
+        })
+    }
+
+    #[tokio::test]
+    async fn id_tokens_are_refreshed_or_the_session_ends() {
+        use crate::server::harness::provider;
+        let op = provider(serde_json::json!({"email": "me@example.com"})).await;
+        let cfg = crate::server::harness::config(&format!(
+            "public_url = \"https://homie.example\"\n{}\n[roles.viewer]\npages = [\"infra\"]\n",
+            op.section()
+        ));
+        let auth = Auth::new(&cfg).await.unwrap().unwrap();
+        assert_eq!(auth.probe(), format!("OIDC provider {} discovered", op.url));
+
+        // far from expiry: no refresh
+        let sid = oidc_session(&auth, 3600, Some("r1"));
+        assert_eq!(
+            auth.user(&sid).await.unwrap().id_token.as_deref(),
+            Some("old")
+        );
+
+        // close to expiry: a new ID token, the refresh token is kept
+        let sid = oidc_session(&auth, 10, Some("r1"));
+        let fresh = auth.user(&sid).await.unwrap().id_token.unwrap();
+        assert_ne!(fresh, "old");
+        let s = auth.sessions.lock().unwrap()[&sid].clone();
+        assert_eq!(s.refresh.as_deref(), Some("r1"));
+        assert!(s.id_exp > jiff::Timestamp::now().as_second() + 500);
+
+        // expired and no refresh token: the session ends
+        let sid = oidc_session(&auth, -10, None);
+        assert!(auth.user(&sid).await.is_none());
+        assert!(!auth.sessions.lock().unwrap().contains_key(&sid));
+
+        // expired and the provider refuses: the session ends too
+        op.set(|s| s.refresh_ok = false);
+        let sid = oidc_session(&auth, -10, Some("r1"));
+        assert!(auth.user(&sid).await.is_none());
+    }
 }

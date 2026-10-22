@@ -231,11 +231,276 @@ pub async fn reconcile(client: Client, req: &ReconcileRequest) -> Result<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::{kube_client, list, serve};
+    use axum::{
+        Json, Router,
+        extract::Path,
+        http::StatusCode,
+        response::{IntoResponse, Response},
+        routing::get,
+    };
+    use std::sync::{Arc, Mutex};
 
     fn obj(kind: &str, data: Value) -> DynamicObject {
         let mut o = DynamicObject::new("x", &resource(kind).unwrap()).within("apps");
         o.data = data;
         o
+    }
+
+    /// Answers every Flux list with `answer(plural)`.
+    fn lists(answer: fn(&str) -> Response) -> Router {
+        Router::new().route(
+            "/apis/{group}/{version}/{plural}",
+            get(
+                move |Path((_, _, plural)): Path<(String, String, String)>| async move {
+                    answer(&plural)
+                },
+            ),
+        )
+    }
+
+    fn installed(plural: &str) -> Response {
+        let items = match plural {
+            "gitrepositories" => {
+                json!([{"metadata": {"name": "flux-system", "namespace": "flux-system"},
+                "status": {"artifact": {"revision": "main@sha1:abc"},
+                           "conditions": [{"type": "Ready", "status": "True", "reason": "Succeeded",
+                                           "message": "stored artifact", "lastTransitionTime": "2026-10-22T08:00:00Z"}]}}])
+            }
+            "kustomizations" => json!([{"metadata": {"name": "apps", "namespace": "flux-system"},
+                "spec": {"suspend": true},
+                "status": {"lastAppliedRevision": "main@sha1:abc",
+                           "conditions": [{"type": "Healthy", "status": "True"},
+                                          {"type": "Ready", "status": "False", "reason": "BuildFailed"}],
+                           "inventory": {"entries": [
+                               {"id": "web_web_apps_Deployment", "v": "v1"},
+                               {"id": "_web__Namespace", "v": "v1"},
+                               {"id": "db_pg_apps_StatefulSet", "v": "v1"},
+                               {"id": "web_svc__Service", "v": "v1"}]}}}]),
+            "helmreleases" => json!([
+                {"metadata": {"name": "pihole", "namespace": "flux-system"}, "spec": {"targetNamespace": "dns"}},
+                {"metadata": {"name": "grafana", "namespace": "monitoring"}, "spec": {}}]),
+            _ => return StatusCode::NOT_FOUND.into_response(),
+        };
+        Json(list("Item", items)).into_response()
+    }
+
+    fn sources_forbidden(plural: &str) -> Response {
+        match plural {
+            "kustomizations" | "helmreleases" => installed(plural),
+            _ => StatusCode::FORBIDDEN.into_response(),
+        }
+    }
+
+    #[tokio::test]
+    async fn lists_flux_objects_with_links() {
+        let client = kube_client(&serve(lists(installed)).await);
+        let links = super::super::links::Links::new(
+            &Default::default(),
+            Some("https://headlamp.example"),
+            "main",
+        );
+        let items = list_linked(client, &links, false).await.unwrap();
+        let summary: Vec<_> = items
+            .iter()
+            .map(|i| {
+                (
+                    i.kind.as_str(),
+                    i.name.as_str(),
+                    i.ready.as_str(),
+                    i.namespaces.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ("GitRepository", "flux-system", "True", vec![]),
+                (
+                    "Kustomization",
+                    "apps",
+                    "False",
+                    vec!["db".into(), "web".into()]
+                ),
+                ("HelmRelease", "pihole", "Unknown", vec!["dns".into()]),
+                (
+                    "HelmRelease",
+                    "grafana",
+                    "Unknown",
+                    vec!["monitoring".into()]
+                ),
+            ]
+        );
+        let (git, ks) = (&items[0], &items[1]);
+        assert_eq!(git.revision, "main@sha1:abc");
+        assert_eq!(
+            (git.reason.as_str(), git.since.as_str()),
+            ("Succeeded", "2026-10-22T08:00:00Z")
+        );
+        assert!(ks.suspended && !git.suspended);
+        assert_eq!(ks.reason, "BuildFailed");
+        assert_eq!(
+            ks.link.as_deref(),
+            Some("https://headlamp.example/c/main/flux/kustomize/kustomizations/flux-system/apps")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_role_lists_only_what_deploys() {
+        let client = kube_client(&serve(lists(sources_forbidden)).await);
+        let items = super::list(client.clone(), true).await.unwrap();
+        assert_eq!(items.len(), 3);
+        assert!(items.iter().all(|i| i.kind != "GitRepository"));
+        assert!(super::list(client, false).await.is_err());
+    }
+
+    type Patches = Arc<Mutex<Vec<(String, Value)>>>;
+
+    /// A fake API server that answers GETs with `objects` (by name) and
+    /// records every PATCH as (kind plural/namespace/name, body).
+    async fn patchable(objects: Value) -> (Client, Patches) {
+        let patches: Patches = Default::default();
+        let log = patches.clone();
+        let app =
+            Router::new().route(
+                "/apis/{group}/{version}/namespaces/{ns}/{plural}/{name}",
+                get(
+                    move |Path((_, _, _, _, name)): Path<(
+                        String,
+                        String,
+                        String,
+                        String,
+                        String,
+                    )>| async move {
+                        match objects.get(&name) {
+                            Some(o) => Json(o.clone()).into_response(),
+                            None => StatusCode::NOT_FOUND.into_response(),
+                        }
+                    },
+                )
+                .patch(
+                    move |Path((_, _, ns, plural, name)): Path<(
+                        String,
+                        String,
+                        String,
+                        String,
+                        String,
+                    )>,
+                          body: String| async move {
+                        let body: Value = serde_json::from_str(&body).unwrap();
+                        log.lock()
+                            .unwrap()
+                            .push((format!("{plural}/{ns}/{name}"), body));
+                        Json(json!({"metadata": {"name": name, "namespace": ns}}))
+                    },
+                ),
+            );
+        (kube_client(&serve(app).await), patches)
+    }
+
+    fn request(kind: &str, namespace: &str, name: &str, with_source: bool) -> ReconcileRequest {
+        ReconcileRequest {
+            kind: kind.into(),
+            namespace: namespace.into(),
+            name: name.into(),
+            with_source,
+        }
+    }
+
+    #[tokio::test]
+    async fn reconcile_annotates() {
+        let (client, patches) = patchable(json!({})).await;
+        let done = reconcile(
+            client,
+            &request("Kustomization", "flux-system", "apps", false),
+        )
+        .await
+        .unwrap();
+        assert_eq!(done, "Kustomization/flux-system/apps");
+        let patches = patches.lock().unwrap();
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].0, "kustomizations/flux-system/apps");
+        let at = patches[0].1["metadata"]["annotations"]["reconcile.fluxcd.io/requestedAt"]
+            .as_str()
+            .unwrap();
+        assert!(at.parse::<jiff::Timestamp>().is_ok(), "{at}");
+    }
+
+    #[tokio::test]
+    async fn reconcile_with_source() {
+        let (client, patches) = patchable(json!({
+            "apps": {"metadata": {"name": "apps", "namespace": "flux-system"},
+                     "spec": {"sourceRef": {"kind": "GitRepository", "name": "flux-system"}}},
+            "loose": {"metadata": {"name": "loose", "namespace": "flux-system"}, "spec": {}},
+            "odd": {"metadata": {"name": "odd", "namespace": "flux-system"},
+                    "spec": {"sourceRef": {"kind": "Secret", "name": "x"}}},
+        }))
+        .await;
+        let done = reconcile(
+            client.clone(),
+            &request("Kustomization", "flux-system", "apps", true),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            done,
+            "GitRepository/flux-system/flux-system, Kustomization/flux-system/apps"
+        );
+        let paths: Vec<_> = patches
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|p| p.0.clone())
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "gitrepositories/flux-system/flux-system",
+                "kustomizations/flux-system/apps"
+            ]
+        );
+
+        // no source to find: only the object itself
+        let done = reconcile(
+            client.clone(),
+            &request("Kustomization", "flux-system", "loose", true),
+        )
+        .await
+        .unwrap();
+        assert_eq!(done, "Kustomization/flux-system/loose");
+
+        let e = reconcile(
+            client.clone(),
+            &request("Kustomization", "flux-system", "odd", true),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(e.to_string(), "Secret is not a Flux kind");
+        assert!(
+            reconcile(
+                client,
+                &request("Kustomization", "flux-system", "gone", true)
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn reconcile_validates_before_calling_the_api() {
+        let (client, patches) = patchable(json!({})).await;
+        let e = reconcile(client.clone(), &request("Secret", "default", "x", false))
+            .await
+            .unwrap_err();
+        assert_eq!(e.to_string(), "Secret is not a Flux kind");
+        let e = reconcile(
+            client,
+            &request("Kustomization", "flux-system", "../x", false),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(e.to_string(), "invalid namespace or name");
+        assert!(patches.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -268,6 +533,7 @@ mod tests {
             source_of("HelmRelease", &h),
             Some(("OCIRepository".into(), "apps".into(), "x".into()))
         );
+        assert_eq!(source_of("GitRepository", &h), None);
     }
 
     #[test]

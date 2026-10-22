@@ -120,4 +120,51 @@ mod tests {
         assert!(!serde_json::to_string(&r).unwrap().contains("hunter2"));
         assert!(decode(b"not base64!").is_err());
     }
+
+    /// A Helm release Secret; `blob` is the `release` value before the
+    /// Kubernetes base64 layer.
+    fn secret(ns: &str, name: &str, version: &str, blob: Option<String>) -> Value {
+        let data = blob.map(|b| serde_json::json!({"release": STANDARD.encode(b)}));
+        serde_json::json!({"metadata": {"name": format!("sh.helm.release.v1.{name}.v{version}"), "namespace": ns,
+                                        "labels": {"owner": "helm", "name": name, "version": version}},
+                           "type": "helm.sh/release.v1", "data": data})
+    }
+
+    fn release(ns: &str, name: &str, version: u64, gzip: bool) -> String {
+        let doc = serde_json::json!({"name": name, "namespace": ns, "version": version,
+                                     "info": {"status": "deployed"}, "chart": {"metadata": {"name": name}}});
+        let raw = if gzip {
+            let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+            gz.write_all(doc.to_string().as_bytes()).unwrap();
+            gz.finish().unwrap()
+        } else {
+            doc.to_string().into_bytes()
+        };
+        STANDARD.encode(raw)
+    }
+
+    #[tokio::test]
+    async fn lists_the_newest_revision_of_each_release() {
+        use crate::testkit::{json, kube_client, list, serve};
+        let secrets = serde_json::json!([
+            secret("web", "site", "1", Some(release("web", "site", 1, true))),
+            secret("web", "site", "3", Some(release("web", "site", 3, true))),
+            secret("web", "site", "2", Some(release("web", "site", 2, true))),
+            secret("dns", "pihole", "1", Some(release("dns", "pihole", 1, false))),
+            secret("dns", "broken", "1", Some("not base64!".into())),
+            secret("dns", "empty", "1", None),
+            {"metadata": {"name": "unlabelled", "namespace": "dns"}},
+        ]);
+        let url = serve(json("/api/v1/secrets", list("Secret", secrets))).await;
+        let out = releases(kube_client(&url)).await.unwrap();
+        let got: Vec<_> = out
+            .iter()
+            .map(|r| (r.namespace.as_str(), r.name.as_str(), r.revision))
+            .collect();
+        assert_eq!(got, [("dns", "pihole", 1), ("web", "site", 3)]);
+        assert_eq!(out[0].status, "deployed");
+
+        let url = serve(axum::Router::new()).await;
+        assert!(releases(kube_client(&url)).await.is_err());
+    }
 }

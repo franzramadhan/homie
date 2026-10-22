@@ -67,7 +67,7 @@ impl OpenBao {
             .await?;
         let code = resp.status().as_u16();
         if !matches!(code, 200 | 429 | 472 | 473 | 501 | 503) {
-            return Err(http::ok(resp).await.unwrap_err());
+            return Err(http::ok(resp).await.err().unwrap());
         }
         let body: Value = resp.json().await?;
         let text = |k: &str| body[k].as_str().unwrap_or_default().to_string();
@@ -181,5 +181,186 @@ mod tests {
         assert_eq!(bao_state(503), "sealed");
         assert_eq!(bao_state(501), "uninitialized");
         assert_eq!(bao_state(500), "HTTP 500");
+    }
+
+    async fn bao(url: &str) -> Result<OpenBao> {
+        let cfg = serde_json::from_value(serde_json::json!({"url": url, "quiet": true})).unwrap();
+        OpenBao::new("bao", &cfg).await
+    }
+
+    /// One fake server; the URL path prefix picks the answer.
+    #[tokio::test]
+    async fn health_states() {
+        use axum::{Json, Router, http::StatusCode, routing::get};
+        let route = |code: u16, body: Value| {
+            get(move || async move { (StatusCode::from_u16(code).unwrap(), Json(body)) })
+        };
+        let app = Router::new()
+            .route(
+                "/active/v1/sys/health",
+                route(
+                    200,
+                    serde_json::json!({"initialized": true, "sealed": false, "version": "2.4.1", "cluster_name": "c1"}),
+                ),
+            )
+            .route("/standby/v1/sys/health", route(429, serde_json::json!({"initialized": true})))
+            .route("/sealed/v1/sys/health", route(503, serde_json::json!({})))
+            .route("/broken/v1/sys/health", route(500, serde_json::json!({"errors": ["boom"]})));
+        let url = crate::testkit::serve(app).await;
+
+        let b = bao(&format!("{url}/active/")).await.unwrap();
+        assert_eq!((b.name.as_str(), b.quiet), ("bao", true));
+        assert_eq!(b.url, format!("{url}/active"));
+        assert_eq!(b.insecure, Some("plain_http"));
+        let h = b.health().await.unwrap();
+        assert_eq!(
+            (h.state.as_str(), h.initialized, h.sealed),
+            ("active", true, false)
+        );
+        assert_eq!(
+            (h.version.as_str(), h.cluster_name.as_str()),
+            ("2.4.1", "c1")
+        );
+
+        let h = bao(&format!("{url}/standby"))
+            .await
+            .unwrap()
+            .health()
+            .await
+            .unwrap();
+        assert_eq!(
+            (h.state.as_str(), h.initialized, h.sealed),
+            ("standby", true, false)
+        );
+
+        // no body fields: sealed follows the status code
+        let h = bao(&format!("{url}/sealed"))
+            .await
+            .unwrap()
+            .health()
+            .await
+            .unwrap();
+        assert_eq!(
+            (h.state.as_str(), h.initialized, h.sealed),
+            ("sealed", false, true)
+        );
+        assert_eq!(h.version, "");
+
+        let err = bao(&format!("{url}/broken"))
+            .await
+            .unwrap()
+            .health()
+            .await
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("500"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn bad_url_names_the_instance() {
+        let err = bao("not a url").await.err().unwrap();
+        assert!(err.to_string().starts_with("openbao.bao:"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod cnpg_tests {
+    use super::*;
+    use crate::testkit::{json as route, kube_client, list, serve};
+    use axum::{Router, http::StatusCode, routing::get};
+    use serde_json::json;
+
+    fn hours_ago(h: i64) -> String {
+        (jiff::Timestamp::now() - jiff::SignedDuration::from_hours(h)).to_string()
+    }
+
+    fn cluster(ns: &str, name: &str, status: Value) -> Value {
+        json!({"metadata": {"name": name, "namespace": ns}, "status": status})
+    }
+
+    fn backup(ns: &str, cluster: &str, phase: &str, stopped: &str) -> Value {
+        json!({"metadata": {"name": format!("{cluster}-{phase}"), "namespace": ns},
+               "spec": {"cluster": {"name": cluster}},
+               "status": {"phase": phase, "stoppedAt": stopped}})
+    }
+
+    #[tokio::test]
+    async fn clusters_with_their_newest_backup() {
+        let ready = json!([{"type": "Ready", "status": "True"},
+                           {"type": "ContinuousArchiving", "status": "True"}]);
+        let clusters = json!([
+            cluster(
+                "apps",
+                "pg",
+                json!({"phase": "Cluster in healthy state", "instances": 2,
+                "readyInstances": 2, "currentPrimary": "pg-1", "conditions": ready})
+            ),
+            cluster(
+                "apps",
+                "legacy",
+                json!({"instances": 1, "readyInstances": 0,
+                "conditions": [{"type": "Ready", "status": "True"}],
+                "lastSuccessfulBackup": hours_ago(48)})
+            ),
+            cluster("other", "pg", json!({})),
+        ]);
+        let backups = json!([
+            backup("apps", "pg", "completed", &hours_ago(5)),
+            backup("apps", "pg", "completed", &hours_ago(2)),
+            backup("apps", "pg", "failed", &hours_ago(1)),
+            backup("apps", "legacy", "running", &hours_ago(1)),
+            backup("other", "legacy", "completed", &hours_ago(1)),
+        ]);
+        let app = route(
+            "/apis/postgresql.cnpg.io/v1/clusters",
+            list("Cluster", clusters),
+        )
+        .merge(route(
+            "/apis/postgresql.cnpg.io/v1/backups",
+            list("Backup", backups),
+        ));
+        let out = cnpg(kube_client(&serve(app).await), 26.0).await.unwrap();
+
+        let pg = &out[0];
+        assert!(pg.healthy && pg.archiving && !pg.backup_stale);
+        assert_eq!(
+            (pg.instances, pg.ready, pg.primary.as_str()),
+            (2, 2, "pg-1")
+        );
+        assert_eq!(pg.backup_age_hours, Some(2.0));
+
+        let legacy = &out[1];
+        assert!(!legacy.healthy && !legacy.archiving);
+        assert_eq!(legacy.backup_age_hours, Some(48.0));
+        assert!(legacy.backup_stale, "older than 26 hours");
+
+        let empty = &out[2];
+        assert!(!empty.healthy && empty.backup_stale);
+        assert_eq!(
+            (empty.last_backup.as_deref(), empty.backup_age_hours),
+            (None, None)
+        );
+    }
+
+    #[tokio::test]
+    async fn cnpg_not_installed_or_not_allowed() {
+        let url = serve(Router::new()).await;
+        assert!(cnpg(kube_client(&url), 26.0).await.unwrap().is_empty());
+
+        // unreadable Backups only lose the backup age
+        let clusters = list("Cluster", json!([cluster("apps", "pg", json!({}))]));
+        let app = route("/apis/postgresql.cnpg.io/v1/clusters", clusters).route(
+            "/apis/postgresql.cnpg.io/v1/backups",
+            get(|| async { StatusCode::FORBIDDEN }),
+        );
+        let out = cnpg(kube_client(&serve(app).await), 26.0).await.unwrap();
+        assert_eq!(out.len(), 1);
+        assert!(out[0].backup_stale);
+
+        let app = Router::new().route(
+            "/apis/postgresql.cnpg.io/v1/clusters",
+            get(|| async { StatusCode::FORBIDDEN }),
+        );
+        assert!(cnpg(kube_client(&serve(app).await), 26.0).await.is_err());
     }
 }
