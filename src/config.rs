@@ -471,8 +471,14 @@ pub fn validate(cfg: &Config) -> Result<()> {
         for (url, _) in p.targets() {
             check_url(&format!("proxmox.{name}.endpoints"), &url)?;
         }
+        if let Some(u) = &p.ui_url {
+            check_url(&format!("proxmox.{name}.ui_url"), u)?;
+        }
     }
     for (name, k) in &cfg.kubernetes {
+        if let Some(u) = &k.headlamp_url {
+            check_url(&format!("kubernetes.{name}.headlamp_url"), u)?;
+        }
         if k.auth_mode() == KubeAuth::ForwardToken && cfg.auth.is_none() {
             return Err(format!("kubernetes.{name}: auth = \"forward_token\" needs [auth]").into());
         }
@@ -614,5 +620,13 @@ mod tests {
         assert!(validate(&cfg).is_err(), "no hash and no state_dir");
         cfg.state_dir = Some("/tmp/homie".into());
         assert!(validate(&cfg).is_ok());
+
+        // link targets must be http(s): they become href attributes in the UI
+        let k: Kubernetes = serde_json::from_value(serde_json::json!({
+            "auth": "kubeconfig", "headlamp_url": "javascript:alert(1)"
+        }))
+        .unwrap();
+        cfg.kubernetes.insert("x".into(), k);
+        assert!(validate(&cfg).is_err());
     }
 }
