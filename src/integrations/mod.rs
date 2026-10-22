@@ -386,3 +386,138 @@ impl Lab {
         logs::search(self.grafana(&src.grafana)?, src, req, limit).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::harness::{backend, config, kubeconfig};
+
+    fn role(pages: &[&str], service_account: Option<&str>) -> Caller {
+        Caller {
+            email: Some("viewer@example.com".into()),
+            id_token: None,
+            role: Some(RoleRef {
+                name: "viewer".into(),
+                role: std::sync::Arc::new(crate::config::Role {
+                    pages: pages.iter().map(|p| p.to_string()).collect(),
+                    namespaces: vec!["apps".into()],
+                    proxmox_tags: vec!["demo".into()],
+                    kubernetes_service_account: service_account.map(String::from),
+                }),
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn queries_per_caller() {
+        let backend = backend().await;
+        let kc = kubeconfig(&backend);
+        let lab = Lab::new(&config(&format!(
+            "[kubernetes.main]\nauth = \"kubeconfig\"\nkubeconfig = \"{}\"\n\
+             [proxmox.lab]\nendpoints = [\"{backend}\"]\ntoken = \"t\"\n",
+            kc.display()
+        )))
+        .await
+        .unwrap();
+        let cache = Cache::new(None).unwrap();
+        let anyone = Caller::default();
+
+        assert!(
+            lab.query(&cache, "spark-k8s", "main", &anyone)
+                .await
+                .is_none(),
+            "no metrics configured"
+        );
+        assert!(lab.query(&cache, "alerts", "main", &anyone).await.is_none());
+
+        let no_sa = role(&["workloads"], None);
+        let env = lab.query(&cache, "k8s", "main", &no_sa).await.unwrap();
+        assert_eq!(
+            env.error.as_deref(),
+            Some("this role has no kubernetes_service_account")
+        );
+        assert!(
+            lab.query(&cache, "pve", "lab", &no_sa).await.is_none(),
+            "infra is not among the role's pages"
+        );
+
+        // a role's sparklines follow the guests it sees
+        let infra = role(&["infra"], None);
+        let sparks = lab.query(&cache, "spark-pve", "lab", &infra).await.unwrap();
+        assert!(sparks.error.is_none(), "{:?}", sparks.error);
+        let pve = lab.query(&cache, "pve", "lab", &infra).await.unwrap();
+        assert_eq!(pve.data.unwrap()["guests"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn fetch_errors_name_what_is_missing() {
+        let lab = Lab::new(&config(
+            "[quiet_hours]\nwindow = \"00:00-23:59\"\ntimezone = \"UTC\"\n\
+             [tailscale]\napi_key = \"tskey-x\"\n",
+        ))
+        .await
+        .unwrap();
+        assert!(lab.tailscale.is_some());
+        assert_eq!(
+            lab.quiet_active(),
+            lab.quiet.as_ref().unwrap().active(),
+            "quiet hours come from the config"
+        );
+        assert!(lab.presets().is_empty());
+        assert!(lab.insecure().is_empty());
+        let anyone = Caller::default();
+        for (kind, name, error) in [
+            ("bogus", "x", "unknown query \"bogus\""),
+            ("security", "none", "unknown preset \"none\""),
+            ("security", "kyverno", "kyverno is not configured"),
+            ("security", "tetragon", "tetragon is not configured"),
+            ("security", "wazuh", "wazuh is not configured"),
+            ("security", "debsecan", "debsecan is not configured"),
+            ("github", "main", "github is not configured"),
+            ("healthchecks", "main", "healthchecks is not configured"),
+            ("alerts", "none", "no grafana \"none\""),
+            ("k8s", "none", "no kubernetes \"none\""),
+            ("openbao", "none", "no such openbao"),
+        ] {
+            let e = lab.fetch(kind, name, &anyone, false).await.unwrap_err();
+            assert_eq!(e.to_string(), error, "{kind}/{name}");
+        }
+        assert!(lab.preset_owner("none").is_none());
+        let req = logs::SearchRequest {
+            source: "none".into(),
+            query: "x".into(),
+            minutes: 5,
+            limit: None,
+        };
+        assert!(lab.search_logs(&req).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn construction_errors_are_reported() {
+        let cfg = |toml: &str| -> Config {
+            figment::Figment::from(
+                <figment::providers::Toml as figment::providers::Format>::string(toml),
+            )
+            .extract()
+            .unwrap()
+        };
+        for (toml, error) in [
+            (
+                "[proxmox.lab]\nendpoints = [\"https://pve.example.com\"]\ntoken = { env = \"HOMIE_TEST_UNSET\" }\n",
+                "proxmox.lab.token",
+            ),
+            (
+                "[kubernetes.main]\nauth = \"kubeconfig\"\nkubeconfig = \"/nonexistent/kubeconfig\"\n",
+                "kubernetes.main",
+            ),
+            (
+                "[tailscale]\napi_key = { env = \"HOMIE_TEST_UNSET\" }\n",
+                "tailscale",
+            ),
+            ("[quiet_hours]\nwindow = \"later\"\n", "quiet_hours.window"),
+        ] {
+            let e = Lab::new(&cfg(toml)).await.err().unwrap().to_string();
+            assert!(e.contains(error), "{e}");
+        }
+    }
+}

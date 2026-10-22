@@ -197,6 +197,7 @@ mod tests {
 
     #[tokio::test]
     async fn generated_password_is_private_and_reused() {
+        crate::server::harness::logs();
         let dir = std::env::temp_dir().join(format!("homie-local-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let a = Local::new(&cfg(None), Some(&dir)).await.unwrap();
@@ -227,6 +228,7 @@ mod tests {
 
     #[tokio::test]
     async fn wrong_credentials_and_lockout() {
+        crate::server::harness::logs();
         let l = Local::new(&cfg(Some(hash("s3cret-long-enough").unwrap())), None)
             .await
             .unwrap();
