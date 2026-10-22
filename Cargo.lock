@@ -880,7 +880,7 @@ dependencies = [
 
 [[package]]
 name = "homie"
-version = "0.0.1"
+version = "0.1.0-rc.1"
 dependencies = [
  "axum",
  "base64 0.23.1",
