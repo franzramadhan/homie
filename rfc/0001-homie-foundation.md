@@ -482,6 +482,7 @@ quiet = false
 
 [grafana.<name>]                       # optional, repeatable
 url = "https://grafana.example.com"
+ui_url = ""                            # links (alert rules, Explore); default url
 token = { env = "GRAFANA_TOKEN" }
 tls_verify = true
 ca_file = ""

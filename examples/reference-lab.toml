@@ -41,6 +41,7 @@ ui_url = "https://pve-01.<tailnet>.ts.net:8006"
 
 [grafana.lab]
 url = "http://grafana.monitoring.svc"
+ui_url = "https://grafana.<tailnet>.ts.net"
 token = { env = "GRAFANA_LAB_TOKEN" }
 quiet = true
 

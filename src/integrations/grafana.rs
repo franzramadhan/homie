@@ -52,7 +52,13 @@ impl Grafana {
         Ok(Self {
             name: name.to_string(),
             quiet: cfg.quiet,
-            url: target.base.as_str().trim_end_matches('/').to_string(),
+            // links only; requests go through `target`
+            url: cfg
+                .ui_url
+                .as_deref()
+                .unwrap_or(target.base.as_str())
+                .trim_end_matches('/')
+                .to_string(),
             insecure: target.insecure,
             token: SecretCell::new(&cfg.token)
                 .await
