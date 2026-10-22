@@ -2,12 +2,12 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| draft | 2026-10-22 | - | - |
+| draft | 2026-10-22 | #24 | - |
 
 > Show the runs of chosen GitHub Actions workflows (for example Terraform
-> plan and apply) next to the rest of the lab. The user signs in to GitHub
-> through Homie, picks repositories they can read and the workflows to
-> watch, and Homie shows each workflow's latest runs and their state.
+> plan and apply) next to the rest of the lab. One shared watch list in the
+> config, read with a GitHub App installation token (or a fine-grained
+> token); a GitHub sign-in only helps pick repositories and workflows.
 
 ## Problem
 
@@ -18,82 +18,90 @@ A failed apply is exactly the kind of lab state Homie should show.
 
 ## Proposal
 
-### Authentication: a GitHub App with user authorization
+### One shared watch list
 
-| Option | Access | Fit |
+The watched workflows are part of the lab's state, not of the viewer, so
+the list is the same for everyone, like the Proxmox or Grafana sections:
+
+```toml
+[[github.watch]]
+repo = "owner/infrastructure"
+workflow = "terraform-plan.yml"     # file name or numeric id
+
+[[github.watch]]
+repo = "owner/infrastructure"
+workflow = "terraform-apply.yml"
+```
+
+The list lives in the config (GitOps-managed in a cluster, stateless).
+
+### Reading runs: no user sign-in
+
+| Credential | Access | Use |
 |---|---|---|
-| Fine-grained personal access token | One token in the config, scoped to chosen repositories, `Actions: read` + `Metadata: read` | Simplest, but one static identity for everyone, and the token's owner chooses the repositories, not the user |
-| OAuth App | Classic scopes only: private repositories need `repo`, which is full read and write | Too broad for a read-only view |
-| **GitHub App, user authorization (recommended)** | Permissions fixed by the app: `Actions: read`, `Metadata: read`. A user token can never do more than the app allows and the user can access. Tokens last 8 h and refresh. | Matches "the user signs in and picks repositories" with least privilege |
+| **GitHub App installation token (recommended)** | The app has only `Actions: read` and `Metadata: read`, installed on the watched repositories. Homie signs a JWT with the app's private key and exchanges it for 1 h installation tokens. | Cluster and laptop; no personal token |
+| Fine-grained personal access token | `Actions: read`, `Metadata: read`, chosen repositories | Simplest single-user setup |
+| OAuth App | Not supported: private repositories need the `repo` scope, which is full write access | - |
 
-- The operator registers a GitHub App (in their account or organization)
-  with only `Actions: read` and `Metadata: read`, user authorization on,
-  callback `<public_url>/github/callback`, and installs it on the
-  repositories Homie may see.
-- `[github] client_id`, `client_secret` (secret reference), optional
-  `allowed_orgs`. The fine-grained token is also accepted
-  (`[github] token`) for laptop and single-user setups, without the sign-in.
-- "Connect GitHub" on the new GitOps tab runs the GitHub OAuth web flow
-  (with PKCE and state). The user token and its refresh token stay in the
-  server-side session, like OIDC tokens; they never reach the browser.
+Reads work without anyone signed in, so the overview shows workflow health
+from a laptop even when the lab's SSO is down.
 
-### Choosing what to watch
+### Picking workflows: a sign-in helper
 
-- After connecting, Homie lists the repositories the user can access
-  through the app installation (`GET /user/installations`, then
-  `/user/installations/{id}/repositories`) and, for a picked repository,
-  its workflows (`GET /repos/{owner}/{repo}/actions/workflows`).
-- The choice is saved as watch entries `{owner, repo, workflow_id, name}`:
-  - **server profile:** in `state_dir/github-watch.json` per user (by
-    login), so it survives restarts when `state_dir` is set, and in the
-    session otherwise;
-  - **config:** `[[github.watch]]` entries are fixed for everyone (for
-    example the reference lab's `terraform-plan.yml` and
-    `terraform-apply.yml`) and need no sign-in when a token is set.
+- With `client_id` and `client_secret` (the same GitHub App's user
+  authorization), a signed-in Homie user can "Connect GitHub" on the
+  Workflows page (OAuth web flow with state; the user token stays in the
+  server-side session, never in the browser, and is dropped at logout).
+- Homie lists the repositories the user can reach through the app
+  installation and, for a picked repository, its workflows.
+- Choosing workflows produces the exact `[[github.watch]]` lines to copy
+  into the config. Homie does not write the config itself.
 
 ### What is shown
 
-- Per watched workflow: the last 10 runs
-  (`GET /repos/{owner}/{repo}/actions/workflows/{id}/runs?per_page=10`):
-  status (queued, in_progress, completed), conclusion (success, failure,
-  cancelled, skipped), event, branch, actor, commit title, started, duration,
-  link to the run.
-- Overview card "Workflows": failing when the latest completed run of any
-  watched workflow failed, amber while one is queued for more than 10
-  minutes (a missing runner, as when the lab's in-cluster runner is down).
-- Optional later: the Terraform plan summary ("Plan: 0 to add, 3 to change")
-  from the run's job log. Not in this RFC.
-- Polling every 60 s per watched workflow, cached and shared; GitHub's
-  limit for a user token is 5000 requests per hour.
+- Per watched workflow, the last 10 runs: status (queued, in_progress,
+  completed), conclusion (success, failure, cancelled, skipped), event,
+  branch, actor, started, duration, the commit id (short, linked to the
+  commit) and a link to the run.
+- No Terraform plan summary: the link to the run is enough.
+- Overview card "Workflows": red when the latest completed run of any
+  watched workflow failed; amber when a run has been queued for more than
+  10 minutes (no runner, as when an in-cluster runner is down overnight).
+- Polling every 60 s per watched workflow, cached and shared. Rate limit
+  (403 or 429 with `x-ratelimit-remaining: 0`) keeps the last data, marked
+  stale.
 
 ### Configuration
 
 | Key | Default | |
 |---|---|---|
-| `github.client_id`, `github.client_secret` | - | GitHub App user authorization |
-| `github.token` | - | fine-grained PAT instead (no sign-in) |
-| `github.allowed_orgs` | all | only list repositories of these owners |
-| `github.watch` | none | fixed `{owner, repo, workflow}` entries |
+| `github.app_id`, `github.private_key` (secret reference) | - | GitHub App: installation tokens for reading |
+| `github.token` | - | fine-grained PAT instead of the app |
+| `github.client_id`, `github.client_secret` | - | optional: the sign-in helper for picking |
+| `github.watch` | none | `{repo, workflow}` entries |
 | `github.api_url` | `https://api.github.com` | GitHub Enterprise Server |
+| `github.quiet` | `false` | quiet hours apply |
 
 ## Alternatives
 
 | Option | Why not |
 |---|---|
+| Per-user watch lists | Health would depend on the viewer, nothing shows before a sign-in, and the lists need storage the stateless cluster instance does not have |
 | OAuth App | `repo` scope for private repositories is full write access |
-| Webhooks (`workflow_run`) | Needs Homie reachable from GitHub; Homie is tailnet-only in the reference lab. Polling is enough for a dashboard. |
-| Reading Terraform state | Different per backend; the workflow run is the shared signal |
+| Webhooks (`workflow_run`) | Needs Homie reachable from GitHub; Homie is tailnet-only in the reference lab |
+| Terraform plan summary from job logs | Not needed: the run link and commit id are enough |
 
 ## Testing and rollout
 
-- **Tests:** OAuth state and PKCE; token refresh; watch-list persistence;
-  run mapping from recorded API responses; rate-limit handling (403 with
-  `x-ratelimit-remaining: 0` shows stale data, not an error loop).
-- **E2E:** a GitHub App installed on the infra repository; watch
-  `terraform-plan` and `terraform-apply`; a plan run on a test PR shows up.
+- **Tests:** app JWT signing and installation token caching; run mapping
+  from recorded API responses; queued-too-long and failed-last-run rules;
+  rate-limit handling; picker output is valid TOML.
+- **E2E:** GitHub App installed on the infra repository; watch
+  `terraform-plan` and `terraform-apply`; the latest runs appear with the
+  right state, commit and links.
 - **Rollout:** optional section; nothing changes without `[github]`.
 
-## Open questions
+## Decisions
 
-1. Per-user watch lists, or one shared list the admin edits in the UI?
-2. Show the Terraform plan summary in a first version?
+1. Shared list in the config, not per user.
+2. No plan summary; link to the run and the commit id.
