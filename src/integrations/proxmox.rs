@@ -142,6 +142,27 @@ fn flag(v: &Value, k: &str) -> bool {
     n(v, k) == 1 || v[k].as_bool() == Some(true)
 }
 
+/// Why an action needs the guest's name typed, if it does. Stop is a hard
+/// power-off, so it always needs it; protected guests need it for every action.
+fn confirmation_needed(guest: &Guest, action: &str, confirm: Option<&str>) -> Option<String> {
+    if confirm == Some(guest.name.as_str()) {
+        return None;
+    }
+    if action == "stop" {
+        Some(format!(
+            "stop is a hard power-off: type {} to confirm",
+            guest.name
+        ))
+    } else if guest.protected {
+        Some(format!(
+            "{} is protected: type its name to confirm",
+            guest.name
+        ))
+    } else {
+        None
+    }
+}
+
 /// Node names and UPIDs go into API paths: allow only what Proxmox produces.
 fn safe(x: &str) -> bool {
     !x.is_empty()
@@ -385,7 +406,10 @@ impl Proxmox {
     /// Validates the request against the live guest list, then starts the
     /// action. Returns the task UPID.
     pub async fn power(&self, req: &PowerRequest) -> Result<String> {
-        if !matches!(req.action.as_str(), "start" | "shutdown" | "reboot") {
+        if !matches!(
+            req.action.as_str(),
+            "start" | "shutdown" | "reboot" | "stop"
+        ) {
             return Err(format!("unknown action {:?}", req.action).into());
         }
         let guests = self.guests().await?;
@@ -393,11 +417,29 @@ impl Proxmox {
             .iter()
             .find(|g| g.vmid == req.vmid && g.kind == req.kind && g.node == req.node)
             .ok_or_else(|| format!("no {} {} on node {:?}", req.kind, req.vmid, req.node))?;
-        if guest.protected && req.confirm.as_deref() != Some(guest.name.as_str()) {
-            return Err(format!("{} is protected: type its name to confirm", guest.name).into());
+        if let Some(why) = confirmation_needed(guest, &req.action, req.confirm.as_deref()) {
+            return Err(why.into());
         }
         if !safe(&guest.node) {
             return Err("unexpected node name".into());
+        }
+        // one action at a time per guest: a second one only fails on the lock
+        let active = self
+            .call(
+                false,
+                &format!(
+                    "/nodes/{}/tasks?vmid={}&source=active",
+                    guest.node, guest.vmid
+                ),
+            )
+            .await?;
+        if let Some(t) = active.as_array().and_then(|a| a.first()) {
+            return Err(format!(
+                "{} already has a running task ({}); wait for it to finish",
+                guest.name,
+                s(t, "type")
+            )
+            .into());
         }
         let upid = self
             .call(
@@ -497,6 +539,31 @@ mod tests {
         let wrong = Proxmox::new("t", &cfg("homie@pve!t=wrong")).await.unwrap();
         let err = wrong.call(false, "/version").await.unwrap_err();
         assert!(http::is_unauthorized(&err), "{err}");
+    }
+
+    #[test]
+    fn confirmations() {
+        let mut g = Guest {
+            vmid: 1,
+            name: "vm1".into(),
+            kind: "qemu".into(),
+            node: "pve".into(),
+            status: "running".into(),
+            cpu: 0.0,
+            maxcpu: 1,
+            mem: 0,
+            maxmem: 0,
+            uptime: 0,
+            tags: vec![],
+            protected: false,
+            template: false,
+        };
+        assert!(confirmation_needed(&g, "shutdown", None).is_none());
+        assert!(confirmation_needed(&g, "stop", None).is_some());
+        assert!(confirmation_needed(&g, "stop", Some("vm1")).is_none());
+        g.protected = true;
+        assert!(confirmation_needed(&g, "reboot", Some("wrong")).is_some());
+        assert!(confirmation_needed(&g, "reboot", Some("vm1")).is_none());
     }
 
     #[test]
