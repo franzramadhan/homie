@@ -39,6 +39,8 @@ pub struct Cache {
     entries: Mutex<HashMap<String, Entry>>,
     snapshot: Option<PathBuf>,
     dirty: AtomicBool,
+    /// Bumped by `invalidate`, so live streams re-query right away (RFC 0009)
+    changed: tokio::sync::watch::Sender<()>,
 }
 
 impl Cache {
@@ -63,6 +65,7 @@ impl Cache {
             entries: Mutex::new(entries),
             snapshot,
             dirty: AtomicBool::new(false),
+            changed: tokio::sync::watch::Sender::new(()),
         })
     }
 
@@ -126,6 +129,12 @@ impl Cache {
         {
             e.1.at = None;
         }
+        self.changed.send_replace(());
+    }
+
+    /// Wakes when `invalidate` runs.
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<()> {
+        self.changed.subscribe()
     }
 
     /// Writes the snapshot file at most every 30 s, only when something changed.

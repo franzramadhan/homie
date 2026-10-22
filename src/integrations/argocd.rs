@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::Result;
 
-fn resource() -> ApiResource {
+pub(crate) fn resource() -> ApiResource {
     ApiResource::from_gvk(&GroupVersionKind::gvk(
         "argoproj.io",
         "v1alpha1",

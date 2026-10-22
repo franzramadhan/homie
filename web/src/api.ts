@@ -1,7 +1,8 @@
 // Types and fetch helpers for the Homie API. The shapes mirror the Rust
 // structs in src/integrations and src/server/api.rs.
 
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 export type Envelope<T> = {
   data: T | null;
@@ -16,6 +17,7 @@ export type Meta = {
   auth: boolean;
   user: string | null;
   refresh_seconds: number;
+  live_updates: boolean;
   quiet: { window: string; timezone: string; active: boolean } | null;
   proxmox: { name: string; quiet: boolean; ui_url: string; insecure: string | null }[];
   kubernetes: { name: string; quiet: boolean; headlamp_url: string | null; forward_token: boolean; metrics: boolean; argocd_url: string | null }[];
@@ -228,13 +230,69 @@ export function useMeta() {
   return useQuery({ queryKey: ["meta"], queryFn: () => http<Meta>("/api/meta"), refetchInterval: 60_000 });
 }
 
-/** A named query, polled every refresh_seconds while the tab is visible. */
+// Live updates (RFC 0009): true while this tab's event stream is open.
+let live = false;
+const liveListeners = new Set<() => void>();
+function setLive(v: boolean) {
+  live = v;
+  liveListeners.forEach((l) => l());
+}
+function useLive() {
+  return useSyncExternalStore(
+    (l) => (liveListeners.add(l), () => liveListeners.delete(l)),
+    () => live,
+  );
+}
+
+/**
+ * One event stream per tab for the named queries on screen. The server sends
+ * an envelope whenever one changes; polling takes over while it is down.
+ */
+export function useLiveStream() {
+  const meta = useMeta();
+  const qc = useQueryClient();
+  const [keys, setKeys] = useState("");
+  useEffect(() => {
+    const cache = qc.getQueryCache();
+    const update = () =>
+      setKeys(
+        cache
+          .getAll()
+          .filter((q) => q.queryKey[0] === "q" && q.getObserversCount() > 0)
+          .map((q) => `${q.queryKey[1]}/${q.queryKey[2]}`)
+          .sort()
+          .join(","),
+      );
+    update();
+    return cache.subscribe(update);
+  }, [qc]);
+  const enabled = !!meta.data?.live_updates;
+  useEffect(() => {
+    if (!enabled || !keys) return;
+    const es = new EventSource(`/api/stream?q=${encodeURIComponent(keys)}`);
+    es.onopen = () => setLive(true);
+    // EventSource reconnects by itself; polling covers the gap
+    es.onerror = () => setLive(false);
+    es.onmessage = (m) => {
+      const { key, envelope } = JSON.parse(m.data) as { key: string; envelope: Envelope<unknown> };
+      const i = key.indexOf("/");
+      qc.setQueryData(["q", key.slice(0, i), key.slice(i + 1)], envelope);
+    };
+    return () => {
+      es.close();
+      setLive(false);
+    };
+  }, [enabled, keys, qc]);
+}
+
+/** A named query: pushed by the live stream when it is open, else polled every refresh_seconds. */
 export function useQ<T>(kind: string, name: string, enabled = true): UseQueryResult<Envelope<T>> {
   const meta = useMeta();
+  const isLive = useLive();
   return useQuery({
     queryKey: ["q", kind, name],
     queryFn: () => http<Envelope<T>>(`/api/q/${kind}/${encodeURIComponent(name)}`),
-    refetchInterval: (meta.data?.refresh_seconds ?? 15) * 1000,
+    refetchInterval: isLive ? false : (meta.data?.refresh_seconds ?? 15) * 1000,
     enabled,
   });
 }

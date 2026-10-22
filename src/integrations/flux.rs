@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::Result;
 
-const KINDS: [(&str, &str, &str); 7] = [
+pub(crate) const KINDS: [(&str, &str, &str); 7] = [
     ("source.toolkit.fluxcd.io", "v1", "GitRepository"),
     ("source.toolkit.fluxcd.io", "v1", "OCIRepository"),
     ("source.toolkit.fluxcd.io", "v1", "HelmRepository"),
@@ -22,7 +22,7 @@ const KINDS: [(&str, &str, &str); 7] = [
     ("helm.toolkit.fluxcd.io", "v2", "HelmRelease"),
 ];
 
-fn resource(kind: &str) -> Option<ApiResource> {
+pub(crate) fn resource(kind: &str) -> Option<ApiResource> {
     let (group, version, kind) = KINDS.iter().find(|k| k.2 == kind)?;
     Some(ApiResource::from_gvk(&GroupVersionKind::gvk(
         group, version, kind,

@@ -4,6 +4,7 @@ mod api;
 mod assets;
 mod github;
 mod guard;
+mod live;
 mod login;
 
 use std::sync::Arc;
@@ -33,6 +34,7 @@ pub fn router(state: Shared) -> Router {
     let api = Router::new()
         .route("/api/meta", get(api::meta))
         .route("/api/q/{kind}/{name}", get(api::query))
+        .route("/api/stream", get(live::stream))
         .route("/api/act/pve/{name}/power", post(api::pve_power))
         .route("/api/act/pve/{name}/task", get(api::pve_task))
         .route("/api/act/flux/{name}/reconcile", post(api::flux_reconcile))
