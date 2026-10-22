@@ -24,13 +24,13 @@ function Instance({ name, url }: { name: string; url: string }) {
             { accessorKey: "state", header: "State", cell: ({ row }) => <Badge tone={row.original.state === "pending" ? "warn" : "bad"}>{row.original.state}</Badge> },
             { accessorKey: "name", header: "Alert" },
             { accessorKey: "severity", header: "Severity" },
-            { accessorKey: "summary", header: "Summary", cell: ({ row }) => <span className="text-xs">{row.original.summary}</span> },
+            { accessorKey: "summary", header: "Summary", cell: ({ row }) => <span className="block min-w-64 text-xs whitespace-normal">{row.original.summary}</span> },
             {
               id: "labels",
               accessorFn: (a) => Object.entries(a.labels).map(([k, v]) => `${k}=${v}`).join(" "),
               header: "Labels",
               cell: ({ row }) => (
-                <span className="text-xs text-zinc-500">
+                <span className="text-xs whitespace-normal text-ink-subtle">
                   {Object.entries(row.original.labels)
                     .filter(([k]) => !["alertname", "severity", "__alert_rule_uid__", "grafana_folder"].includes(k))
                     .map(([k, v]) => `${k}=${v}`)

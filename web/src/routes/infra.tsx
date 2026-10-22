@@ -154,7 +154,7 @@ function Cluster({ name }: { name: string }) {
             cell: ({ row }) => (row.original.status === "running" ? <Bar value={row.original.mem} max={row.original.maxmem} label={`${bytes(row.original.mem)} / ${bytes(row.original.maxmem)}`} /> : null),
           },
           { id: "uptime", accessorFn: (g) => g.uptime, header: "Uptime", cell: ({ row }) => duration(row.original.uptime) },
-          { id: "tags", accessorFn: (g) => g.tags.join(" "), header: "Tags", cell: ({ row }) => <span className="text-xs text-zinc-500">{row.original.tags.join(", ")}</span> },
+          { id: "tags", accessorFn: (g) => g.tags.join(" "), header: "Tags", cell: ({ row }) => <span className="text-xs whitespace-normal text-ink-subtle">{row.original.tags.join(", ")}</span> },
         ];
         if (d.can_power) {
           guestCols.push({
@@ -166,23 +166,23 @@ function Cluster({ name }: { name: string }) {
         }
         return (
           <div className="space-y-5">
-            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            <p className="text-sm text-ink-subtle">
               {d.cluster.name ? `Cluster ${d.cluster.name}, ` : ""}
               {d.cluster.quorate === null ? "standalone node" : d.cluster.quorate ? "quorate" : "NOT quorate"}, {d.cluster.nodes_online}/{d.cluster.nodes_total || d.nodes.length} nodes online
               {!d.can_power && ". Power actions are off: the token has no VM.PowerMgmt."}
             </p>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {d.nodes.map((n) => (
-                <div key={n.name} className="rounded border border-zinc-200 p-3 text-sm dark:border-zinc-800">
+                <div key={n.name} className="rounded-control border border-hairline p-3 text-sm">
                   <div className="mb-2 flex items-center justify-between">
                     <span className="font-medium">{n.name}</span>
                     <Badge tone={n.online ? "ok" : "bad"}>{n.online ? `up ${duration(n.uptime)}` : "offline"}</Badge>
                   </div>
                   {n.online && (
                     <div className="space-y-1 text-xs">
-                      <div className="flex items-center gap-2"><span className="w-12 text-zinc-500">CPU</span><Bar value={n.cpu} max={1} label={`${n.maxcpu} cores`} /></div>
-                      <div className="flex items-center gap-2"><span className="w-12 text-zinc-500">Memory</span><Bar value={n.mem} max={n.maxmem} label={`${bytes(n.mem)} / ${bytes(n.maxmem)}`} /></div>
-                      <div className="flex items-center gap-2"><span className="w-12 text-zinc-500">Root</span><Bar value={n.disk} max={n.maxdisk} label={`${bytes(n.disk)} / ${bytes(n.maxdisk)}`} /></div>
+                      <div className="flex items-center gap-2"><span className="w-12 text-ink-subtle">CPU</span><Bar value={n.cpu} max={1} label={`${n.maxcpu} cores`} /></div>
+                      <div className="flex items-center gap-2"><span className="w-12 text-ink-subtle">Memory</span><Bar value={n.mem} max={n.maxmem} label={`${bytes(n.mem)} / ${bytes(n.maxmem)}`} /></div>
+                      <div className="flex items-center gap-2"><span className="w-12 text-ink-subtle">Root</span><Bar value={n.disk} max={n.maxdisk} label={`${bytes(n.disk)} / ${bytes(n.maxdisk)}`} /></div>
                     </div>
                   )}
                 </div>
@@ -191,18 +191,18 @@ function Cluster({ name }: { name: string }) {
             {status && (
               <p
                 role="status"
-                className={`rounded px-2 py-1 text-sm ${status.tone === "bad" ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300" : status.tone === "ok" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" : "bg-zinc-100 dark:bg-zinc-900"}`}
+                className={`rounded-control px-2 py-1 text-sm ${status.tone === "bad" ? "bg-bad/12 text-bad" : status.tone === "ok" ? "bg-ok/12 text-ok" : "bg-surface-2"}`}
               >
                 {status.text}
               </p>
             )}
             <div>
-              <h3 className="mb-1 text-xs font-semibold text-zinc-500 uppercase">Guests</h3>
+              <h3 className="mb-1 text-xs font-semibold text-ink-subtle uppercase">Guests</h3>
               <DataTable columns={guestCols} data={d.guests.filter((g) => !g.template)} />
             </div>
             <div className="grid gap-5 lg:grid-cols-2">
               <div>
-                <h3 className="mb-1 text-xs font-semibold text-zinc-500 uppercase">Storage</h3>
+                <h3 className="mb-1 text-xs font-semibold text-ink-subtle uppercase">Storage</h3>
                 <DataTable
                   filter={false}
                   data={d.storage}
@@ -217,12 +217,12 @@ function Cluster({ name }: { name: string }) {
               <div className="space-y-5">
                 {d.ha.length > 0 && (
                   <div>
-                    <h3 className="mb-1 text-xs font-semibold text-zinc-500 uppercase">HA</h3>
+                    <h3 className="mb-1 text-xs font-semibold text-ink-subtle uppercase">HA</h3>
                     <DataTable filter={false} data={d.ha} columns={[{ accessorKey: "sid", header: "Resource" }, { accessorKey: "node", header: "Node" }, { accessorKey: "state", header: "State" }]} />
                   </div>
                 )}
                 <div>
-                  <h3 className="mb-1 text-xs font-semibold text-zinc-500 uppercase">Recent failed tasks</h3>
+                  <h3 className="mb-1 text-xs font-semibold text-ink-subtle uppercase">Recent failed tasks</h3>
                   <DataTable
                     filter={false}
                     data={d.failed_tasks}
@@ -232,7 +232,7 @@ function Cluster({ name }: { name: string }) {
                       { accessorKey: "node", header: "Node" },
                       { accessorKey: "type", header: "Task" },
                       { accessorKey: "id", header: "Target" },
-                      { accessorKey: "status", header: "Status", cell: ({ row }) => <span className="text-rose-600">{row.original.status}</span> },
+                      { accessorKey: "status", header: "Status", cell: ({ row }) => <span className="text-bad">{row.original.status}</span> },
                     ]}
                   />
                 </div>

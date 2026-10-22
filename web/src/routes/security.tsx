@@ -37,7 +37,7 @@ function Preset({ preset }: { preset: string }) {
           accessorFn: (r: Row) => r[i] ?? "",
           cell: ({ row }) => {
             const v = row.original[i];
-            return typeof v === "string" && v.length > 80 ? <span className="text-xs">{v}</span> : String(v ?? "");
+            return typeof v === "string" && v.length > 80 ? <span className="block min-w-64 text-xs whitespace-normal">{v}</span> : String(v ?? "");
           },
         }));
         return <DataTable columns={columns} data={d.rows} empty="Nothing found" />;

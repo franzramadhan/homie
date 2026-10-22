@@ -11,26 +11,26 @@ function Card<T>({ title, to, env, summary }: { title: string; to?: string; env:
   // a failing source with no data is the headline; stale data still counts but is flagged
   const tone: Tone = st.tone === "quiet" ? "quiet" : !s ? (st.tone === "muted" ? "muted" : "bad") : st.tone === "warn" && s.tone === "ok" ? "warn" : s.tone;
   const border: Record<Tone, string> = {
-    ok: "border-l-emerald-500",
-    warn: "border-l-amber-500",
-    bad: "border-l-rose-500",
-    quiet: "border-l-zinc-400",
-    muted: "border-l-zinc-300",
+    ok: "border-l-ok",
+    warn: "border-l-warn",
+    bad: "border-l-bad",
+    quiet: "border-l-quiet",
+    muted: "border-l-hairline-strong",
   };
   const body = (
-    <div className={`h-full rounded-lg border border-l-4 border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950 ${border[tone]}`}>
+    <div className={`h-full rounded-card border border-l-[3px] border-hairline bg-surface-1 p-4 ${border[tone]}`}>
       <div className="mb-2 flex items-start justify-between gap-2">
         <h2 className="text-sm font-semibold">{title}</h2>
         <Badge tone={st.tone}>{st.label}</Badge>
       </div>
       {s ? (
-        <ul className="space-y-0.5 text-sm text-zinc-700 dark:text-zinc-300">
+        <ul className="space-y-0.5 text-sm text-ink-muted">
           {s.lines.map((l, i) => (
             <li key={i}>{l}</li>
           ))}
         </ul>
       ) : (
-        <p className={`text-sm ${st.tone === "quiet" ? "text-zinc-500" : "text-rose-600"}`}>{env?.error ?? "Loading"}</p>
+        <p className={`text-sm ${st.tone === "quiet" ? "text-ink-subtle" : "text-bad"}`}>{env?.error ?? "Loading"}</p>
       )}
     </div>
   );
@@ -197,7 +197,7 @@ export function Overview() {
   if (!m) return null;
   const nothing = !m.proxmox.length && !m.kubernetes.length && !m.grafana.length && !m.tailscale && !m.healthchecks;
   if (nothing) {
-    return <p className="text-sm text-zinc-500">Nothing is configured yet. Add a [proxmox.*], [kubernetes.*] or [grafana.*] section and restart, then run `homie check`.</p>;
+    return <p className="text-sm text-ink-subtle">Nothing is configured yet. Add a [proxmox.*], [kubernetes.*] or [grafana.*] section and restart, then run `homie check`.</p>;
   }
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

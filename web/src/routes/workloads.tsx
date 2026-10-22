@@ -34,7 +34,7 @@ function Cluster({ name }: { name: string }) {
               ]}
             />
             <div>
-              <h3 className="mb-1 text-xs font-semibold text-zinc-500 uppercase">Unhealthy pods</h3>
+              <h3 className="mb-1 text-xs font-semibold text-ink-subtle uppercase">Unhealthy pods</h3>
               <DataTable
                 data={d.unhealthy_pods}
                 empty="Every pod is running and ready"
@@ -49,7 +49,7 @@ function Cluster({ name }: { name: string }) {
               />
             </div>
             <div>
-              <h3 className="mb-1 text-xs font-semibold text-zinc-500 uppercase">Workloads ({d.namespaces} namespaces)</h3>
+              <h3 className="mb-1 text-xs font-semibold text-ink-subtle uppercase">Workloads ({d.namespaces} namespaces)</h3>
               <DataTable
                 data={d.workloads}
                 columns={[
@@ -70,7 +70,7 @@ function Cluster({ name }: { name: string }) {
               />
             </div>
             <div>
-              <h3 className="mb-1 text-xs font-semibold text-zinc-500 uppercase">Warning events, last hour</h3>
+              <h3 className="mb-1 text-xs font-semibold text-ink-subtle uppercase">Warning events, last hour</h3>
               <DataTable
                 data={d.events}
                 empty="No warnings"
@@ -79,7 +79,7 @@ function Cluster({ name }: { name: string }) {
                   { accessorKey: "namespace", header: "Namespace" },
                   { accessorKey: "object", header: "Object" },
                   { accessorKey: "reason", header: "Reason" },
-                  { accessorKey: "message", header: "Message", cell: ({ row }) => <span className="text-xs">{row.original.message}</span> },
+                  { accessorKey: "message", header: "Message", cell: ({ row }) => <span className="block min-w-64 text-xs whitespace-normal">{row.original.message}</span> },
                   { accessorKey: "count", header: "Count" },
                 ]}
               />

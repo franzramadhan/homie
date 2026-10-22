@@ -28,26 +28,26 @@ function Layout() {
   ];
   return (
     <div className="mx-auto max-w-7xl px-4 py-4">
-      <header className="mb-5 flex flex-wrap items-center gap-x-6 gap-y-2">
-        <Link to="/" className="text-lg font-semibold tracking-tight">
+      <header className="mb-5 flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-hairline">
+        <Link to="/" className="py-2 text-xl font-semibold tracking-[-0.01em]">
           homie
         </Link>
-        <nav className="flex flex-wrap gap-1 text-sm">
+        <nav className="flex flex-wrap gap-4 text-sm">
           {nav
             .filter(([, , on]) => on)
             .map(([to, label]) => (
               <Link
                 key={to}
                 to={to}
-                className="rounded px-2 py-1 text-zinc-600 hover:bg-zinc-200 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                activeProps={{ className: "bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100" }}
+                className="-mb-px border-b-2 border-transparent py-2.5 text-ink-subtle hover:text-ink"
+                activeProps={{ className: "border-accent! text-ink" }}
                 activeOptions={{ exact: true }}
               >
                 {label}
               </Link>
             ))}
         </nav>
-        <div className="ml-auto flex items-center gap-3 text-xs text-zinc-500">
+        <div className="ml-auto flex items-center gap-3 text-xs text-ink-subtle">
           {m?.quiet && (
             <Badge tone={m.quiet.active ? "quiet" : "muted"}>
               quiet hours {m.quiet.window}
@@ -57,7 +57,7 @@ function Layout() {
           {m?.user && <span>{m.user}</span>}
           {m?.auth && (
             <button
-              className="underline"
+              className="underline decoration-ink-faint underline-offset-2 hover:text-ink"
               onClick={() => act("/auth/logout").finally(() => (window.location.href = "/login"))}
             >
               log out
@@ -66,7 +66,7 @@ function Layout() {
           {m && <span>v{m.version}</span>}
         </div>
       </header>
-      {meta.error ? <p className="text-rose-600">Cannot reach Homie: {meta.error.message}</p> : <Outlet />}
+      {meta.error ? <p className="text-bad">Cannot reach Homie: {meta.error.message}</p> : <Outlet />}
     </div>
   );
 }

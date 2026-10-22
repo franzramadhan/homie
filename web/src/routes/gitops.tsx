@@ -49,7 +49,7 @@ function Cluster({ name }: { name: string }) {
     >
       {(d) => (
         <div className="space-y-2">
-          {status && <p className="rounded bg-zinc-100 px-2 py-1 text-sm dark:bg-zinc-900" role="status">{status}</p>}
+          {status && <p className="rounded-control bg-surface-2 px-2 py-1 text-sm" role="status">{status}</p>}
           <DataTable
             data={onlyProblems ? d.filter((i) => i.ready !== "True" || i.suspended) : d}
             columns={[
@@ -69,7 +69,7 @@ function Cluster({ name }: { name: string }) {
               },
               { id: "revision", accessorFn: (i) => i.revision, header: "Revision", cell: ({ row }) => <code className="text-xs" title={row.original.revision}>{shortRevision(row.original.revision)}</code> },
               { id: "since", accessorFn: (i) => i.since, header: "Since", cell: ({ row }) => ago(row.original.since) },
-              { accessorKey: "message", header: "Message", cell: ({ row }) => <span className="line-clamp-2 block max-w-md text-xs text-zinc-500" title={row.original.message}>{row.original.message}</span> },
+              { accessorKey: "message", header: "Message", cell: ({ row }) => <span className="line-clamp-2 block max-w-md min-w-64 text-xs whitespace-normal text-ink-subtle" title={row.original.message}>{row.original.message}</span> },
             ]}
           />
           <Confirm

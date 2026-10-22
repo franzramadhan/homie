@@ -67,10 +67,10 @@ their tinted background in both themes:
 
 | Status | Text dark / light | Tint dark / light | Meaning |
 |---|---|---|---|
-| `ok` | `#4cc38a` / `#1a7f4b` | 12% / 10% of the text color | healthy, online, Ready |
-| `warn` | `#f0b44c` / `#9a6206` | same rule | degraded, stale, expiring |
+| `ok` | `#4cc38a` / `#157244` | 12% of the text color over `surface-1` | healthy, online, Ready |
+| `warn` | `#f0b44c` / `#8a5700` | same rule | degraded, stale, expiring |
 | `bad` | `#f2666a` / `#c4262b` | same rule | down, failed, firing |
-| `quiet` | `#8a8f98` / `#6b7079` | same rule | scheduled off (quiet hours) |
+| `quiet` | `#8a8f98` / `#5f646d` | same rule | scheduled off (quiet hours) |
 
 The accent is an indigo of Homie's own, deliberately not Linear's exact
 lavender: Homie borrows the structure, not the brand. The favicon moves from
@@ -137,6 +137,12 @@ points to it). This RFC explains why; `DESIGN.md` is the working reference.
 - **Rollout:** v0.2.0. UI only: no API, config or behavior change, so the
   e2e script must pass unchanged.
 - **Off switch:** revert the release; there is no runtime setting.
+
+## Changes during implementation
+
+- Light `ok`, `warn` and `quiet` were darkened (first values gave 4.28 to
+  4.34:1 as badge text); `web/scripts/contrast.mjs` checks every pair in CI.
+- Tints are one rule in both themes: 12% of the status color over `surface-1`.
 
 ## Decisions
 
