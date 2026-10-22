@@ -92,4 +92,25 @@ mod tests {
         assert!(Quiet::new("25:00-01:00", None).is_err());
         assert!(Quiet::new("23:30-06:00", Some("Not/AZone")).is_err());
     }
+
+    #[test]
+    fn parse_errors_and_system_zone() {
+        let err = |w: &str| Quiet::new(w, Some("UTC")).err().unwrap().to_string();
+        assert_eq!(
+            err("23:30"),
+            "quiet_hours.window must look like 23:30-06:00"
+        );
+        assert_eq!(err("2330-06:00"), "expected HH:MM");
+        assert_eq!(err("10:60-11:00"), "10:60 is not a time of day");
+        assert!(Quiet::new("aa:00-01:00", None).is_err());
+        assert!(Quiet::new("01:bb-02:00", None).is_err());
+
+        let q = Quiet::new(" 01:00 - 02:00 ", None).unwrap();
+        assert_eq!(q.window, " 01:00 - 02:00 ");
+        assert!(!q.timezone.is_empty());
+        let always = Quiet::new("00:00-23:59", Some("UTC")).unwrap();
+        assert_eq!(always.timezone, "UTC");
+        let now = Timestamp::now().to_zoned(TimeZone::UTC);
+        assert_eq!(always.active(), (now.hour(), now.minute()) != (23, 59));
+    }
 }

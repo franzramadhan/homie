@@ -174,4 +174,86 @@ mod tests {
             Some("plain_http")
         );
     }
+
+    fn tls(ca_file: Option<&str>, server_name: Option<&str>) -> Tls {
+        Tls {
+            tls_verify: true,
+            ca_file: ca_file.map(Into::into),
+            tls_server_name: server_name.map(Into::into),
+        }
+    }
+
+    #[tokio::test]
+    async fn target_errors_and_lookups() {
+        let e = target("https://x", &tls(Some("/nonexistent/ca.pem"), None))
+            .await
+            .err()
+            .unwrap();
+        assert!(
+            e.to_string().starts_with("reading /nonexistent/ca.pem: "),
+            "{e}"
+        );
+        // a bundle without certificates adds no roots
+        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/test-rsa.pem");
+        assert!(target("https://x", &tls(Some(fixture), None)).await.is_ok());
+
+        let t = target(
+            "http://localhost:3000/sub",
+            &tls(None, Some("grafana.example")),
+        )
+        .await
+        .unwrap();
+        assert_eq!(t.base.as_str(), "http://grafana.example:3000/sub");
+        assert_eq!(t.insecure, Some("plain_http"));
+        let e = target("https://homie.invalid", &tls(None, Some("x.example"))).await;
+        assert!(e.is_err());
+        let e = target("data:text/plain,x", &tls(None, Some("x.example")))
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(e.to_string(), "URL has no host");
+        assert!(target("not a url", &tls(None, None)).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn status_errors() {
+        use axum::{Router, http::StatusCode, routing::get};
+        let long = "x".repeat(300);
+        let url = crate::testkit::serve(
+            Router::new()
+                .route("/ok", get(|| async { "fine" }))
+                .route(
+                    "/denied",
+                    get(|| async { (StatusCode::UNAUTHORIZED, " no token \n") }),
+                )
+                .route("/empty", get(|| async { StatusCode::BAD_GATEWAY }))
+                .route(
+                    "/long",
+                    get(move || async move { (StatusCode::INTERNAL_SERVER_ERROR, long) }),
+                ),
+        )
+        .await;
+        let t = target(&url, &tls(None, None)).await.unwrap();
+        let fetch = |path: &str| t.client.get(join(&t.base, path)).send();
+        assert_eq!(
+            ok(fetch("/ok").await.unwrap())
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap(),
+            "fine"
+        );
+
+        let e = ok(fetch("/denied").await.unwrap()).await.unwrap_err();
+        assert_eq!(e.to_string(), "HTTP 401 Unauthorized: no token");
+        assert!(is_unauthorized(&e));
+        let e = ok(fetch("/empty").await.unwrap()).await.unwrap_err();
+        assert_eq!(e.to_string(), "HTTP 502 Bad Gateway");
+        assert!(!is_unauthorized(&e));
+        assert!(!is_unauthorized(&"plain".into()));
+        let e = ok(fetch("/long").await.unwrap()).await.unwrap_err();
+        let h = e.downcast_ref::<HttpError>().unwrap();
+        assert_eq!(h.body.len(), 200);
+    }
 }

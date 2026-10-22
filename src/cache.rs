@@ -230,4 +230,91 @@ mod tests {
         assert_eq!(after.data, Some(json!({"n": 1})));
         std::fs::remove_dir_all(dir).unwrap();
     }
+
+    fn tmp(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("homie-cache-{name}-{}", std::process::id()))
+    }
+
+    #[tokio::test]
+    async fn invalidate_wakes_subscribers() {
+        let cache = Cache::new(None).unwrap();
+        let mut rx = cache.subscribe();
+        assert!(!rx.has_changed().unwrap());
+        cache.invalidate("nothing:");
+        assert!(rx.has_changed().unwrap());
+        rx.mark_unchanged();
+        // without a snapshot file the loop has nothing to do
+        cache.persist_loop().await;
+    }
+
+    #[test]
+    fn unreadable_snapshots() {
+        let dir = tmp("garbage");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("snapshot.json"), "{not json").unwrap();
+        let cache = Cache::new(Some(dir.clone())).unwrap();
+        assert!(cache.entries.lock().unwrap().is_empty());
+        std::fs::remove_file(dir.join("snapshot.json")).unwrap();
+
+        std::fs::create_dir_all(dir.join("snapshot.json")).unwrap();
+        let e = Cache::new(Some(dir.clone())).err().unwrap().to_string();
+        assert!(e.starts_with("reading "), "{e}");
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        // state_dir below a regular file cannot be created
+        std::fs::write(&dir, "file").unwrap();
+        let e = Cache::new(Some(dir.join("sub"))).err().unwrap().to_string();
+        assert!(e.starts_with("state_dir "), "{e}");
+        std::fs::remove_file(dir).unwrap();
+    }
+
+    /// Runs `persist_loop` until its first (immediate) tick has taken the dirty flag.
+    async fn first_tick(cache: std::sync::Arc<Cache>) {
+        let task = tokio::spawn({
+            let cache = cache.clone();
+            async move { cache.persist_loop().await }
+        });
+        for _ in 0..200 {
+            if !cache.dirty.load(Ordering::Relaxed) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        // let the write finish
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn persist_loop_writes_snapshot() {
+        let dir = tmp("persist");
+        let cache = std::sync::Arc::new(Cache::new(Some(dir.clone())).unwrap());
+        cache
+            .get("pve:lab", Duration::from_secs(60), false, || async {
+                Ok(json!({"n": 2}))
+            })
+            .await;
+        first_tick(cache.clone()).await;
+        let path = dir.join("snapshot.json");
+        let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["pve:lab"]["data"], json!({"n": 2}));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        // a failed write is logged, the loop keeps going
+        let cache = std::sync::Arc::new(Cache::new(Some(dir.clone())).unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
+        cache
+            .get("k8s:x", Duration::from_secs(60), false, || async {
+                Ok(json!(1))
+            })
+            .await;
+        first_tick(cache.clone()).await;
+        assert!(!dir.exists());
+    }
 }
