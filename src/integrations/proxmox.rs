@@ -339,9 +339,15 @@ impl Proxmox {
             .filter(|n| n.online)
             .map(|n| n.name.clone())
             .collect();
+        // last 24 h only: older failures are history, and the nightly power
+        // schedule leaves "already running" errors every morning
+        let since = jiff::Timestamp::now().as_second() - 86_400;
         let tasks = join_all(online.iter().filter(|n| safe(n)).map(|node| async move {
             let list = self
-                .call(false, &format!("/nodes/{node}/tasks?errors=1&limit=10"))
+                .call(
+                    false,
+                    &format!("/nodes/{node}/tasks?errors=1&limit=10&since={since}"),
+                )
                 .await
                 .ok()?;
             Some(
