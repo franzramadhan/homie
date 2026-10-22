@@ -18,7 +18,7 @@ export type Meta = {
   refresh_seconds: number;
   quiet: { window: string; timezone: string; active: boolean } | null;
   proxmox: { name: string; quiet: boolean; ui_url: string; insecure: string | null }[];
-  kubernetes: { name: string; quiet: boolean; headlamp_url: string | null; forward_token: boolean; metrics: boolean }[];
+  kubernetes: { name: string; quiet: boolean; headlamp_url: string | null; forward_token: boolean; metrics: boolean; argocd_url: string | null }[];
   grafana: { name: string; quiet: boolean; url: string; insecure: string | null }[];
   openbao: { name: string; quiet: boolean; url: string; insecure: string | null }[];
   security: string[];
@@ -105,6 +105,22 @@ export type FluxItem = {
   revision: string;
   suspended: boolean;
   since: string;
+  link: string | null;
+};
+
+export type ArgoApp = {
+  namespace: string;
+  name: string;
+  project: string;
+  source: string;
+  target_revision: string;
+  destination: string;
+  sync: string;
+  health: string;
+  revision: string;
+  operation: string;
+  message: string;
+  reconciled_at: string;
   link: string | null;
 };
 

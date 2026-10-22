@@ -207,6 +207,9 @@ pub struct Kubernetes {
     /// Deep-link templates (RFC 0007); `headlamp_url` fills unset ones.
     #[serde(default)]
     pub links: LinkTemplates,
+    /// Argo CD UI base URL for deep links to Applications (RFC 0005)
+    #[serde(default)]
+    pub argocd_url: Option<String>,
     /// CloudNativePG: hours after which the last backup counts as stale (RFC 0011)
     #[serde(default = "default_backup_age")]
     pub cnpg_max_backup_age_hours: f64,
@@ -547,6 +550,9 @@ pub fn validate(cfg: &Config) -> Result<()> {
     for (name, k) in &cfg.kubernetes {
         if let Some(u) = &k.headlamp_url {
             check_url(&format!("kubernetes.{name}.headlamp_url"), u)?;
+        }
+        if let Some(u) = &k.argocd_url {
+            check_url(&format!("kubernetes.{name}.argocd_url"), u)?;
         }
         if let Some(m) = &k.metrics
             && !cfg.grafana.contains_key(&m.grafana)

@@ -22,6 +22,12 @@ rules:
   - apiGroups: [wgpolicyk8s.io, openreports.io]
     resources: ["*"]
     verbs: [get, list, watch]
+  - apiGroups: [argoproj.io]
+    resources: [applications]
+    verbs: [get, list, watch]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters, backups]
+    verbs: [get, list, watch]
 ---
 # Reconcile only adds an annotation, but RBAC cannot tell an annotation patch
 # from a spec patch: this role can patch Flux objects.
@@ -32,6 +38,10 @@ metadata:
 rules:
   - apiGroups: [source.toolkit.fluxcd.io, kustomize.toolkit.fluxcd.io, helm.toolkit.fluxcd.io]
     resources: ["*"]
+    verbs: [patch]
+  # Argo CD refresh is an annotation as well
+  - apiGroups: [argoproj.io]
+    resources: [applications]
     verbs: [patch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

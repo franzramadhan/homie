@@ -20,7 +20,7 @@ Every integration is optional. Configure only what your lab has.
 |---|---|---|
 | Hypervisor | Proxmox VE | One or more clusters, any node as endpoint, start, shutdown and reboot for guests |
 | Kubernetes | Any conformant cluster | k0s, k3s, RKE2, Talos, kind, minikube, managed clouds. Auth by kubeconfig, in-cluster ServiceAccount, or the user's forwarded OIDC token. |
-| GitOps | Flux v2 | Sources, Kustomizations, HelmReleases, reconcile |
+| GitOps | Flux v2, Argo CD | Flux sources, Kustomizations, HelmReleases with reconcile; Argo CD Applications with refresh |
 | Helm | Helm 3 release secrets | Chart, version and status. Values are never shown. |
 | Alerts and queries | Grafana (self-hosted or Grafana Cloud), any number of instances | Through the Grafana HTTP API with a Viewer token |
 | Security | Presets: Kyverno, Tetragon, Wazuh, debsecan | Tetragon and Wazuh read VictoriaLogs through Grafana |

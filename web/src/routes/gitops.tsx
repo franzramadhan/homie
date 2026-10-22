@@ -2,8 +2,8 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { act, useMeta, useQ, type FluxItem } from "../api";
-import { Badge, Button, Confirm, DataTable, Ext, Source, ago } from "../ui";
+import { act, useMeta, useQ, type ArgoApp, type FluxItem } from "../api";
+import { Badge, Button, Confirm, DataTable, Ext, Source, ago, type Tone } from "../ui";
 
 function shortRevision(r: string) {
   // "main@sha1:454db09a..." -> "main@454db09"
@@ -18,6 +18,7 @@ function Cluster({ name }: { name: string }) {
   const [target, setTarget] = useState<FluxItem | null>(null);
   const [withSource, setWithSource] = useState(true);
   const [status, setStatus] = useState("");
+  if (q.data?.data && q.data.data.length === 0) return null;
 
   async function reconcile(item: FluxItem) {
     setTarget(null);
@@ -95,6 +96,80 @@ function Cluster({ name }: { name: string }) {
   );
 }
 
+const syncTone = (s: string): Tone => (s === "Synced" ? "ok" : s === "OutOfSync" ? "warn" : "muted");
+const healthTone = (h: string): Tone =>
+  h === "Healthy" ? "ok" : h === "Progressing" ? "warn" : h === "Suspended" ? "quiet" : h === "Degraded" || h === "Missing" ? "bad" : "muted";
+
+function ArgoCd({ name, url }: { name: string; url: string | null }) {
+  const q = useQ<ArgoApp[]>("argocd", name);
+  const qc = useQueryClient();
+  const [target, setTarget] = useState<ArgoApp | null>(null);
+  const [hard, setHard] = useState(false);
+  const [status, setStatus] = useState("");
+  // clusters without Argo CD show nothing
+  if (q.data?.data && q.data.data.length === 0) return null;
+
+  async function refresh(app: ArgoApp) {
+    setTarget(null);
+    setStatus(`refreshing ${app.name}`);
+    try {
+      const r = await act<{ refreshed: string }>(`/api/act/argocd/${encodeURIComponent(name)}/refresh`, {
+        namespace: app.namespace,
+        name: app.name,
+        hard,
+      });
+      setStatus(`requested ${r.refreshed}`);
+    } catch (e) {
+      setStatus(`refresh failed: ${(e as Error).message}`);
+    }
+    qc.invalidateQueries({ queryKey: ["q", "argocd", name] });
+  }
+
+  return (
+    <Source title={`Argo CD ${name}`} query={q} right={url && <Ext href={url}>open Argo CD</Ext>}>
+      {(d) => (
+        <div className="space-y-2">
+          {status && (
+            <p className="rounded-control bg-surface-2 px-2 py-1 text-sm" role="status">
+              {status}
+            </p>
+          )}
+          <DataTable
+            data={d}
+            columns={[
+              { id: "act", header: "", enableSorting: false, cell: ({ row }) => <Button onClick={() => setTarget(row.original)}>Refresh</Button> },
+              { accessorKey: "name", header: "Application", cell: ({ row }) => <Ext href={row.original.link}>{row.original.name}</Ext> },
+              { accessorKey: "project", header: "Project" },
+              { accessorKey: "sync", header: "Sync", cell: ({ row }) => <Badge tone={syncTone(row.original.sync)}>{row.original.sync}</Badge> },
+              { accessorKey: "health", header: "Health", cell: ({ row }) => <Badge tone={healthTone(row.original.health)}>{row.original.health}</Badge> },
+              { id: "revision", accessorFn: (a) => a.revision, header: "Revision", cell: ({ row }) => <code className="text-xs" title={row.original.revision}>{row.original.revision.slice(0, 7)}</code> },
+              { accessorKey: "destination", header: "Destination" },
+              { id: "op", accessorFn: (a) => a.operation, header: "Last operation", cell: ({ row }) => (row.original.operation ? <Badge tone={row.original.operation === "Succeeded" ? "ok" : row.original.operation === "Running" ? "warn" : "bad"}>{row.original.operation}</Badge> : null) },
+              { accessorKey: "message", header: "Message", cell: ({ row }) => <span className="line-clamp-2 block max-w-md min-w-64 text-xs whitespace-normal text-ink-subtle" title={row.original.message}>{row.original.message}</span> },
+              { id: "at", accessorFn: (a) => a.reconciled_at, header: "Compared", cell: ({ row }) => ago(row.original.reconciled_at || null) },
+            ]}
+          />
+          <Confirm
+            open={target !== null}
+            title={`Refresh ${target?.name}?`}
+            body={
+              <>
+                Argo CD compares the application with git now instead of at the next poll. Nothing is synced.
+                <label className="mt-3 flex items-center gap-2">
+                  <input type="checkbox" checked={hard} onChange={(e) => setHard(e.target.checked)} /> hard refresh (also invalidates the manifest cache)
+                </label>
+              </>
+            }
+            confirmLabel="Refresh"
+            onConfirm={() => target && refresh(target)}
+            onClose={() => setTarget(null)}
+          />
+        </div>
+      )}
+    </Source>
+  );
+}
+
 export function GitOps() {
   const m = useMeta().data;
   if (!m) return null;
@@ -102,6 +177,9 @@ export function GitOps() {
     <div className="space-y-4">
       {m.kubernetes.map((k) => (
         <Cluster key={k.name} name={k.name} />
+      ))}
+      {m.kubernetes.map((k) => (
+        <ArgoCd key={`argo-${k.name}`} name={k.name} url={k.argocd_url} />
       ))}
     </div>
   );
