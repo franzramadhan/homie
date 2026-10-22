@@ -532,6 +532,7 @@ quiet_hosts = []
 # kubernetes_service_account = "homie/homie-demo"   # impersonated for Kubernetes reads
 
 [demo]                                 # optional: "Try the demo" on the login page
+# (and [local_login] role = "demo" gives the password user that role too)
 # role = "demo"
 # max_sessions = 200                   # one hour each
 

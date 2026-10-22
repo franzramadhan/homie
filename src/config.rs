@@ -156,6 +156,9 @@ pub struct LocalLogin {
     /// argon2 PHC string from `homie hash-password`
     #[serde(default)]
     pub password_hash: Option<Secret>,
+    /// a role for this user (RFC 0016), e.g. on a public demo instance
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 fn default_username() -> String {
@@ -707,6 +710,9 @@ pub fn validate(cfg: &Config) -> Result<()> {
     for r in cfg.auth.iter().flat_map(|a| a.roles.values()) {
         role_known("auth.roles", r)?;
     }
+    if let Some(r) = cfg.local_login.as_ref().and_then(|l| l.role.as_ref()) {
+        role_known("local_login.role", r)?;
+    }
     if let Some(q) = &cfg.quiet_hours {
         crate::quiet::Quiet::new(&q.window, q.timezone.as_deref())?;
     }
@@ -1026,6 +1032,7 @@ mod tests {
         cfg.local_login = Some(LocalLogin {
             username: "homie".into(),
             password_hash: None,
+            role: None,
         });
         assert!(validate(&cfg).is_err(), "no hash and no state_dir");
         cfg.state_dir = Some("/tmp/homie".into());

@@ -127,7 +127,12 @@ Deviations found while building (v0.6.0):
   Argo CD Applications by destination namespace.
 - Proxmox: storage and failed tasks are empty and power is off for a role.
 - `[[local_login.users]]` is not in v0.6.0: the demo button covers the demo,
-  and OIDC users get roles through `[auth] roles`.
+  and OIDC users get roles through `[auth] roles`. `[local_login] role`
+  gives the single local user a role, so a public demo instance has no
+  full-access login at all.
+- For a public demo, run a separate instance (same image) with only the
+  demo's integrations and a read-only Proxmox token: the role is the boundary
+  inside one instance, the separate pod limits what a compromise reaches.
 - The Helm chart and `deploy/kubernetes` do not create the role's
   ServiceAccount yet; the reference lab's manifests show the RBAC.
 
