@@ -5,54 +5,85 @@ import { useState } from "react";
 import { act, get, useMeta, useQ, type Guest, type PveOverview } from "../api";
 import { Badge, Bar, Button, Confirm, DataTable, Ext, Section, Source, bytes, duration, type Col } from "../ui";
 
-type Action = "start" | "shutdown" | "reboot";
+type Action = "start" | "shutdown" | "reboot" | "stop";
 
-function PowerActions({ cluster, guest, onStatus }: { cluster: string; guest: Guest; onStatus: (s: string) => void }) {
+type Status = { text: string; tone: "info" | "ok" | "bad" };
+
+// Guests with an action in flight, kept outside React so a table re-render
+// cannot re-enable the buttons halfway through a task.
+const inFlight = new Set<string>();
+
+const describe: Record<Action, string> = {
+  start: "Starts the guest.",
+  shutdown: "Asks the guest OS to shut down (ACPI, or the guest agent when enabled). A guest that ignores it keeps running: use Stop then.",
+  reboot: "Asks the guest OS to reboot.",
+  stop: "Hard power-off, like pulling the plug. Unsaved data in the guest is lost.",
+};
+
+function PowerActions({ cluster, guest, onStatus }: { cluster: string; guest: Guest; onStatus: (s: Status) => void }) {
   const qc = useQueryClient();
+  const key = `${cluster}/${guest.node}/${guest.vmid}`;
   const [pending, setPending] = useState<Action | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [, rerender] = useState(0);
+  const busy = inFlight.has(key);
   const running = guest.status === "running";
 
   async function run(action: Action, typed: string) {
     setPending(null);
-    setBusy(true);
-    onStatus(`${action} ${guest.name}: starting`);
+    inFlight.add(key);
+    rerender((n) => n + 1);
+    onStatus({ text: `${action} ${guest.name}: requested`, tone: "info" });
     try {
       const { upid } = await act<{ upid: string }>(`/api/act/pve/${encodeURIComponent(cluster)}/power`, {
         node: guest.node,
         vmid: guest.vmid,
         type: guest.type,
         action,
-        confirm: guest.protected ? typed : undefined,
+        confirm: typed || undefined,
       });
       const q = new URLSearchParams({ node: guest.node, upid });
       // poll the Proxmox task until it finishes (shutdown waits for the guest OS)
-      for (let i = 0; i < 120; i++) {
+      for (let i = 0; ; i++) {
         await new Promise((r) => setTimeout(r, 2000));
         const t = await get<{ status: string; exitstatus: string | null }>(`/api/act/pve/${encodeURIComponent(cluster)}/task?${q}`);
         if (t.status === "stopped") {
-          onStatus(`${action} ${guest.name}: ${t.exitstatus ?? "done"}`);
+          const ok = t.exitstatus === "OK";
+          onStatus({
+            text: ok
+              ? `${action} ${guest.name}: done`
+              : `${action} ${guest.name} failed: ${t.exitstatus ?? "unknown"}${action === "shutdown" ? ". The guest did not power off; use Stop for a hard power-off." : ""}`,
+            tone: ok ? "ok" : "bad",
+          });
           break;
         }
-        onStatus(`${action} ${guest.name}: running (${(i + 1) * 2}s)`);
+        if (i >= 300) {
+          onStatus({ text: `${action} ${guest.name}: still running after 10 minutes, check the Proxmox task log`, tone: "bad" });
+          break;
+        }
+        onStatus({ text: `${action} ${guest.name}: running (${(i + 1) * 2}s)`, tone: "info" });
       }
     } catch (e) {
-      onStatus(`${action} ${guest.name} failed: ${(e as Error).message}`);
+      onStatus({ text: `${action} ${guest.name} failed: ${(e as Error).message}`, tone: "bad" });
     } finally {
-      setBusy(false);
+      inFlight.delete(key);
+      rerender((n) => n + 1);
       qc.invalidateQueries({ queryKey: ["q", "pve", cluster] });
     }
   }
 
+  const needsName = pending === "stop" || guest.protected;
   return (
     <div className="flex gap-1">
       {running ? (
         <>
-          <Button disabled={busy} onClick={() => setPending("shutdown")} tone="danger">
+          <Button disabled={busy} onClick={() => setPending("shutdown")}>
             Shut down
           </Button>
           <Button disabled={busy} onClick={() => setPending("reboot")}>
             Reboot
+          </Button>
+          <Button disabled={busy} onClick={() => setPending("stop")} tone="danger">
+            Stop
           </Button>
         </>
       ) : (
@@ -65,12 +96,13 @@ function PowerActions({ cluster, guest, onStatus }: { cluster: string; guest: Gu
         title={`${pending ?? ""} ${guest.name}?`}
         body={
           <>
-            {guest.type === "qemu" ? "VM" : "Container"} {guest.vmid} on {guest.node}.
+            {guest.type === "qemu" ? "VM" : "Container"} {guest.vmid} on {guest.node}. {pending && describe[pending]}
             {guest.protected && " This guest is protected."}
-            {pending === "shutdown" && " A guest stopped here is not restarted by a nightly power schedule that only restarts what was running at stop time."}
+            {(pending === "shutdown" || pending === "stop") &&
+              " A guest stopped here is not restarted by a nightly power schedule that only restarts what was running at stop time."}
           </>
         }
-        typeToConfirm={guest.protected ? guest.name : undefined}
+        typeToConfirm={needsName ? guest.name : undefined}
         confirmLabel={pending ?? ""}
         onConfirm={(typed) => pending && run(pending, typed)}
         onClose={() => setPending(null)}
@@ -81,7 +113,7 @@ function PowerActions({ cluster, guest, onStatus }: { cluster: string; guest: Gu
 
 function Cluster({ name }: { name: string }) {
   const q = useQ<PveOverview>("pve", name);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState<Status | null>(null);
 
   return (
     <Source
@@ -156,7 +188,14 @@ function Cluster({ name }: { name: string }) {
                 </div>
               ))}
             </div>
-            {status && <p className="rounded bg-zinc-100 px-2 py-1 text-sm dark:bg-zinc-900" role="status">{status}</p>}
+            {status && (
+              <p
+                role="status"
+                className={`rounded px-2 py-1 text-sm ${status.tone === "bad" ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300" : status.tone === "ok" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" : "bg-zinc-100 dark:bg-zinc-900"}`}
+              >
+                {status.text}
+              </p>
+            )}
             <div>
               <h3 className="mb-1 text-xs font-semibold text-zinc-500 uppercase">Guests</h3>
               <DataTable columns={guestCols} data={d.guests.filter((g) => !g.template)} />

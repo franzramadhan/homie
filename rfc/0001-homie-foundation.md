@@ -58,8 +58,8 @@ cluster are down with it. Many homelabs also power off on a schedule, so
   last-known snapshot.
 - Changing desired state. Git stays the source of truth: Homie never edits
   manifests, values or VM config.
-- Flux suspend and resume, hard stop, consoles (noVNC, exec) and native log
-  search. These are later milestones.
+- Flux suspend and resume, consoles (noVNC, exec) and native log search.
+  These are later milestones.
 
 ## Proposal
 
@@ -246,9 +246,12 @@ always-on host and the healthchecks should never be dark.
   (one call returns every node, guest and storage with CPU, memory, disk,
   status and tags), `/cluster/ha/status/current`, and
   `/nodes/{node}/tasks?errors=1&limit=20` (recent failed tasks).
-- **Actions:** start, shutdown (ACPI, with timeout) and reboot, for VMs and
-  containers. Each action:
+- **Actions:** start, shutdown (ACPI or the guest agent), reboot and stop
+  (hard power-off), for VMs and containers. Each action:
   - needs a confirm dialog;
+  - is refused while the guest already has a running task (a second click
+    would only fail on the Proxmox lock);
+  - for stop, needs the guest name typed, on every guest;
   - needs the guest name typed when the guest has a tag listed in
     `protected_tags` (for example Kubernetes controllers: one down is fine,
     two loses etcd quorum);
@@ -681,7 +684,7 @@ because it has the fewest prerequisites.
     Kubernetes Dashboard, Rancher);
   - native log search (LogsQL and LogQL);
   - watch-based updates (SSE);
-  - hard stop and migrate for guests;
+  - migrate for guests;
   - status cards for OpenBao, CNPG and backups;
   - sparklines;
   - a Helm chart and a Homebrew tap.
