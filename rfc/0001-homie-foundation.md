@@ -625,7 +625,7 @@ because it has the fewest prerequisites.
 
 | # | Item | Done when |
 |---|---|---|
-| 1 | Scaffold: Cargo crate, `web/` (Vite, TanStack, Tailwind), `mise.toml`, `ci.yml` (fmt, clippy, test, web build), Dockerfile (`scratch`), `image.yml`, `release.yml` (binaries) | A `v0.0.1` tag publishes an image and four binaries, and `mise use github:franzramadhan/homie` installs one |
+| 1 | Scaffold: Cargo crate, `web/` (Vite, TanStack, Tailwind), `mise.toml`, `ci.yml` (fmt, clippy, test on pull requests), `build.yml` (binaries, image, release), Dockerfile (`scratch`) | A `v0.0.1` tag publishes an image and four binaries, and `mise use github:franzramadhan/homie` installs one |
 | 2 | Config: TOML + `HOMIE__` env layering, secret references (`env`, `file`, `cmd`), loopback guard, `allow_unauthenticated`, `homie check` (redacted config) | Bad config fails at start with a clear error. An env-only container starts. |
 | 3 | HTTP client options: `tls_verify`, `ca_file`, `tls_server_name`, plain `http://`, with start-up warnings | Fake-server tests pass for all five cases |
 | 4 | Query framework: named queries, TTL cache, stale fallback, in-memory last-known state, `snapshot.json` when `state_dir` is set, `quiet_hours` | A killed backend shows the last data with age. A quiet integration shows grey inside the window and red outside. |
