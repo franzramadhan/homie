@@ -1,10 +1,98 @@
 @import "tailwindcss";
 
+/* Design tokens (RFC 0002, DESIGN.md). Components use these names, never raw
+   shades. Light by default; dark follows the OS live. */
 :root {
   color-scheme: light dark;
+
+  --canvas: #f7f8f8;
+  --surface-1: #ffffff;
+  --surface-2: #f3f4f5;
+  --surface-3: #ebedef;
+  --hairline: #e2e4e7;
+  --hairline-strong: #cfd2d6;
+  --ink: #0b0c0d;
+  --ink-muted: #3c4048;
+  --ink-subtle: #6b7079;
+  --ink-faint: #9aa0a8;
+  --accent: #4f55d6;
+  --accent-hover: #3f45c2;
+  --on-accent: #ffffff;
+
+  --ok: #157244;
+  --warn: #8a5700;
+  --bad: #c4262b;
+  --quiet: #5f646d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #08090a;
+    --surface-1: #0f1011;
+    --surface-2: #141516;
+    --surface-3: #191a1b;
+    --hairline: #23252a;
+    --hairline-strong: #34343a;
+    --ink: #f7f8f8;
+    --ink-muted: #d0d6e0;
+    --ink-subtle: #8a8f98;
+    --ink-faint: #62666d;
+    --accent: #7c83f0;
+    --accent-hover: #9aa0ff;
+    --on-accent: #08090a;
+
+    --ok: #4cc38a;
+    --warn: #f0b44c;
+    --bad: #f2666a;
+    --quiet: #8a8f98;
+  }
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-hairline: var(--hairline);
+  --color-hairline-strong: var(--hairline-strong);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-subtle: var(--ink-subtle);
+  --color-ink-faint: var(--ink-faint);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-on-accent: var(--on-accent);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-quiet: var(--quiet);
+
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius-control: 6px;
+  --radius-card: 8px;
 }
 
 body {
-  @apply bg-zinc-50 text-zinc-900 antialiased dark:bg-zinc-900 dark:text-zinc-100;
-  font-family: ui-sans-serif, system-ui, sans-serif;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* one focus style everywhere */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a,
+  button,
+  input,
+  select,
+  tr {
+    transition: color 120ms, background-color 120ms, border-color 120ms;
+  }
 }

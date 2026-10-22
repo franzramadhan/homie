@@ -47,14 +47,14 @@ export function Login() {
 
   return (
     <main className="flex min-h-screen items-center justify-center px-4">
-      <div className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="w-full max-w-sm rounded-card border border-hairline bg-surface-1 p-6">
         <h1 className="mb-5 text-lg font-semibold tracking-tight">homie</h1>
         {options?.local && (
           <form onSubmit={submit} className="space-y-3">
             <label className="block text-sm">
               Username
               <input
-                className="mt-1 w-full rounded border border-zinc-300 bg-transparent px-2 py-1.5 dark:border-zinc-700"
+                className="mt-1 w-full rounded-control border border-hairline-strong bg-transparent px-2 py-1.5"
                 autoComplete="username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -63,7 +63,7 @@ export function Login() {
             <label className="block text-sm">
               Password
               <input
-                className="mt-1 w-full rounded border border-zinc-300 bg-transparent px-2 py-1.5 dark:border-zinc-700"
+                className="mt-1 w-full rounded-control border border-hairline-strong bg-transparent px-2 py-1.5"
                 type="password"
                 autoComplete="current-password"
                 autoFocus
@@ -74,23 +74,23 @@ export function Login() {
             <button
               type="submit"
               disabled={busy || !password}
-              className="w-full rounded bg-zinc-900 py-1.5 text-sm text-white disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900"
+              className="w-full rounded-control bg-accent py-1.5 text-sm text-on-accent hover:bg-accent-hover disabled:opacity-40"
             >
               {busy ? "Signing in" : "Sign in"}
             </button>
           </form>
         )}
-        {options?.local && options.oidc && <p className="my-4 text-center text-xs text-zinc-500">or</p>}
+        {options?.local && options.oidc && <p className="my-4 text-center text-xs text-ink-subtle">or</p>}
         {options?.oidc && (
           <a
             href="/auth/login"
-            className="block w-full rounded border border-zinc-300 py-1.5 text-center text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+            className="block w-full rounded-control border border-hairline-strong py-1.5 text-center text-sm hover:bg-surface-2"
           >
             Sign in with SSO
           </a>
         )}
         {error && (
-          <p className="mt-3 text-sm text-rose-600" role="alert">
+          <p className="mt-3 text-sm text-bad" role="alert">
             {error}
           </p>
         )}

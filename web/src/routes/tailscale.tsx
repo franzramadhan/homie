@@ -8,7 +8,7 @@ import { Badge, DataTable, Source, ago } from "../ui";
 const DAY = 86_400_000;
 
 function expiry(d: Device) {
-  if (!d.key_expiry) return <span className="text-xs text-zinc-500">never</span>;
+  if (!d.key_expiry) return <span className="text-xs text-ink-subtle">never</span>;
   const left = new Date(d.key_expiry).getTime() - Date.now();
   const tone = left < 0 ? "bad" : left < 14 * DAY ? "warn" : "muted";
   return <Badge tone={tone}>{left < 0 ? "expired" : `${Math.round(left / DAY)}d`}</Badge>;
@@ -26,7 +26,7 @@ export function Tailscale() {
       right={
         <select
           aria-label="Show"
-          className="rounded border border-zinc-300 bg-transparent px-1 py-0.5 dark:border-zinc-700"
+          className="rounded-control border border-hairline-strong bg-transparent px-1 py-0.5"
           value={filter}
           onChange={(e) => setFilter(e.target.value as typeof filter)}
         >
@@ -69,7 +69,7 @@ export function Tailscale() {
               },
               { accessorKey: "os", header: "OS" },
               { id: "ip", accessorFn: (d) => d.addresses[0] ?? "", header: "Address", cell: ({ row }) => <code className="text-xs">{row.original.addresses[0] ?? ""}</code> },
-              { id: "tags", accessorFn: (d) => d.tags.join(" "), header: "Tags", cell: ({ row }) => <span className="text-xs text-zinc-500">{row.original.tags.join(", ")}</span> },
+              { id: "tags", accessorFn: (d) => d.tags.join(" "), header: "Tags", cell: ({ row }) => <span className="text-xs whitespace-normal text-ink-subtle">{row.original.tags.join(", ")}</span> },
               { accessorKey: "user", header: "User", cell: ({ row }) => <span className="text-xs">{row.original.tags.length ? "" : row.original.user}</span> },
               {
                 id: "version",

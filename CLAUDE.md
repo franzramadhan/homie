@@ -37,6 +37,11 @@ and a missing `web/dist` only means the UI answers 503.
   refactors without visible behavior change; when unsure, treat it as a
   feature.
 
+## UI
+
+Read `DESIGN.md` before any UI change: tokens only (no raw Tailwind shades,
+no `dark:` variants), status colors only for status, one accent.
+
 ## Public repo hygiene
 
 This repository is public. Never commit lab identifiers: the tailnet name,

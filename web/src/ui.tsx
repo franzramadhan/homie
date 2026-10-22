@@ -22,15 +22,15 @@ import type { Envelope } from "./api";
 export type Tone = "ok" | "warn" | "bad" | "quiet" | "muted";
 
 const toneClass: Record<Tone, string> = {
-  ok: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
-  warn: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
-  bad: "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300",
-  quiet: "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-  muted: "bg-zinc-100 text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400",
+  ok: "bg-ok/12 text-ok",
+  warn: "bg-warn/12 text-warn",
+  bad: "bg-bad/12 text-bad",
+  quiet: "bg-quiet/12 text-quiet",
+  muted: "bg-surface-3 text-ink-subtle",
 };
 
 export function Badge({ tone, children }: { tone: Tone; children: ReactNode }) {
-  return <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium whitespace-nowrap ${toneClass[tone]}`}>{children}</span>;
+  return <span className={`inline-flex items-center rounded-control px-1.5 py-0.5 text-xs font-medium whitespace-nowrap ${toneClass[tone]}`}>{children}</span>;
 }
 
 export function ago(iso: string | null | undefined): string {
@@ -62,13 +62,13 @@ export function duration(seconds: number): string {
 /** A usage bar: amber above 80%, rose above 90%. */
 export function Bar({ value, max, label }: { value: number; max: number; label?: string }) {
   const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
-  const color = pct > 90 ? "bg-rose-500" : pct > 80 ? "bg-amber-500" : "bg-emerald-500";
+  const color = pct > 90 ? "bg-bad" : pct > 80 ? "bg-warn" : "bg-ok";
   return (
     <div className="flex min-w-28 items-center gap-2" title={label}>
-      <div className="h-1.5 flex-1 overflow-hidden rounded bg-zinc-200 dark:bg-zinc-800" role="meter" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-3" role="meter" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
         <div className={`h-full ${color}`} style={{ width: `${pct}%` }} />
       </div>
-      <span className="w-9 text-right text-xs tabular-nums text-zinc-500">{Math.round(pct)}%</span>
+      <span className="w-9 text-right text-xs tabular-nums text-ink-subtle">{Math.round(pct)}%</span>
     </div>
   );
 }
@@ -84,9 +84,9 @@ export function sourceTone(env: Envelope<unknown> | undefined): { tone: Tone; la
 
 export function Section({ title, right, children }: { title: ReactNode; right?: ReactNode; children: ReactNode }) {
   return (
-    <section className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+    <section className="rounded-card border border-hairline bg-surface-1 p-4">
       <header className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold">{title}</h2>
+        <h2 className="text-base font-semibold tracking-[-0.01em]">{title}</h2>
         <div className="flex flex-wrap items-center gap-2 text-xs">{right}</div>
       </header>
       {children}
@@ -118,9 +118,9 @@ export function Source<T>({
         </>
       }
     >
-      {query.error && <p className="text-sm text-rose-600">{query.error.message}</p>}
-      {env?.error && <p className={`mb-2 text-sm break-words ${env.quiet ? "text-zinc-500" : "text-rose-600"}`}>{env.quiet ? "Inside quiet hours: " : ""}{env.error}</p>}
-      {env?.data != null ? children(env.data) : !env?.error && query.isLoading && <p className="text-sm text-zinc-500">Loading</p>}
+      {query.error && <p className="text-sm text-bad">{query.error.message}</p>}
+      {env?.error && <p className={`mb-2 text-sm break-words ${env.quiet ? "text-ink-subtle" : "text-bad"}`}>{env.quiet ? "Inside quiet hours: " : ""}{env.error}</p>}
+      {env?.data != null ? children(env.data) : !env?.error && query.isLoading && <p className="text-sm text-ink-subtle">Loading</p>}
     </Section>
   );
 }
@@ -156,7 +156,7 @@ export function DataTable<T extends RowData>({ columns, data, filter = true, emp
     <div>
       {filter && data.length > 8 && (
         <input
-          className="mb-2 w-full max-w-xs rounded border border-zinc-300 bg-transparent px-2 py-1 text-sm dark:border-zinc-700"
+          className="mb-2 w-full max-w-xs rounded-control border border-hairline-strong bg-surface-2 px-2 py-1 text-sm placeholder:text-ink-faint"
           placeholder="Filter"
           aria-label="Filter rows"
           value={globalFilter}
@@ -164,16 +164,16 @@ export function DataTable<T extends RowData>({ columns, data, filter = true, emp
         />
       )}
       <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm">
+        <table className="w-full text-left text-[13px] tabular-nums">
           <thead>
             {table.getHeaderGroups().map((hg) => (
-              <tr key={hg.id} className="border-b border-zinc-200 text-xs text-zinc-500 dark:border-zinc-800">
+              <tr key={hg.id} className="sticky top-0 border-b border-hairline bg-surface-1 text-xs text-ink-subtle">
                 {hg.headers.map((h) => {
                   const sorted = h.column.getIsSorted();
                   return (
                     <th key={h.id} className="py-1.5 pr-3 font-medium whitespace-nowrap">
                       {h.column.getCanSort() ? (
-                        <button className="hover:text-zinc-900 dark:hover:text-zinc-100" onClick={h.column.getToggleSortingHandler()}>
+                        <button className="hover:text-ink" onClick={h.column.getToggleSortingHandler()}>
                           <table.FlexRender header={h} />
                           {sorted === "asc" ? " ▲" : sorted === "desc" ? " ▼" : ""}
                         </button>
@@ -188,9 +188,9 @@ export function DataTable<T extends RowData>({ columns, data, filter = true, emp
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.id} className="border-b border-zinc-100 align-top last:border-0 dark:border-zinc-900">
+              <tr key={r.id} className="border-b border-hairline align-top last:border-0 hover:bg-surface-2">
                 {r.getAllCells().map((c) => (
-                  <td key={c.id} className="py-1.5 pr-3">
+                  <td key={c.id} className="py-[7px] pr-3 whitespace-nowrap">
                     <table.FlexRender cell={c} />
                   </td>
                 ))}
@@ -198,7 +198,7 @@ export function DataTable<T extends RowData>({ columns, data, filter = true, emp
             ))}
           </tbody>
         </table>
-        {rows.length === 0 && <p className="py-2 text-sm text-zinc-500">{empty}</p>}
+        {rows.length === 0 && <p className="py-2 text-sm text-ink-subtle">{empty}</p>}
       </div>
     </div>
   );
@@ -209,7 +209,7 @@ export function DataTable<T extends RowData>({ columns, data, filter = true, emp
 export function Ext({ href, children }: { href: string | null | undefined; children: ReactNode }) {
   if (!href || !/^https?:\/\//i.test(href)) return <>{children}</>;
   return (
-    <a className="underline decoration-zinc-400 underline-offset-2 hover:decoration-zinc-900 dark:hover:decoration-zinc-100" href={href} target="_blank" rel="noreferrer">
+    <a className="underline decoration-ink-faint underline-offset-2 hover:decoration-ink" href={href} target="_blank" rel="noreferrer">
       {children}
     </a>
   );
@@ -218,10 +218,10 @@ export function Ext({ href, children }: { href: string | null | undefined; child
 export function Button({ children, onClick, disabled, tone = "default" }: { children: ReactNode; onClick: () => void; disabled?: boolean; tone?: "default" | "danger" }) {
   const c =
     tone === "danger"
-      ? "border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950"
-      : "border-zinc-300 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900";
+      ? "border-bad/40 text-bad hover:bg-bad/12"
+      : "border-hairline-strong text-ink-muted hover:bg-surface-2 hover:text-ink";
   return (
-    <button className={`rounded border px-2 py-0.5 text-xs disabled:opacity-50 ${c}`} onClick={onClick} disabled={disabled}>
+    <button className={`rounded-control border px-2 py-0.5 text-xs disabled:opacity-50 ${c}`} onClick={onClick} disabled={disabled}>
       {children}
     </button>
   );
@@ -261,7 +261,7 @@ export function Confirm({
   }, [open]);
   const ready = !typeToConfirm || typed === typeToConfirm;
   return (
-    <dialog ref={ref} onClose={onClose} className="m-auto w-[min(28rem,90vw)] rounded-lg border border-zinc-200 bg-white p-5 text-zinc-900 backdrop:bg-black/40 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
+    <dialog ref={ref} onClose={onClose} className="m-auto w-[min(28rem,90vw)] rounded-card border border-hairline bg-surface-1 p-5 text-ink backdrop:bg-black/50">
       <form
         method="dialog"
         onSubmit={(e) => {
@@ -270,18 +270,18 @@ export function Confirm({
         }}
       >
         <h3 className="mb-2 font-semibold">{title}</h3>
-        <div className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">{body}</div>
+        <div className="mb-4 text-sm text-ink-subtle">{body}</div>
         {typeToConfirm && (
           <label className="mb-4 block text-sm">
             Type <code className="font-mono">{typeToConfirm}</code> to confirm
-            <input autoFocus className="mt-1 w-full rounded border border-zinc-300 bg-transparent px-2 py-1 font-mono dark:border-zinc-700" value={typed} onChange={(e) => setTyped(e.target.value)} />
+            <input autoFocus className="mt-1 w-full rounded-control border border-hairline-strong bg-surface-2 px-2 py-1 font-mono" value={typed} onChange={(e) => setTyped(e.target.value)} />
           </label>
         )}
         <div className="flex justify-end gap-2">
-          <button type="button" className="rounded px-3 py-1 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-900" onClick={onClose}>
+          <button type="button" className="rounded-control px-3 py-1 text-sm hover:bg-surface-2" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" disabled={!ready} className="rounded bg-zinc-900 px-3 py-1 text-sm text-white disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900">
+          <button type="submit" disabled={!ready} className="rounded-control bg-accent px-3 py-1 text-sm text-on-accent hover:bg-accent-hover disabled:opacity-40">
             {confirmLabel}
           </button>
         </div>
