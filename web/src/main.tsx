@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Link, Outlet, RouterProvider, createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { act, useMeta } from "./api";
+import { act, useLiveStream, useMeta } from "./api";
 import "./index.css";
 import { GitOps } from "./routes/gitops";
 import { Login } from "./routes/login";
@@ -18,6 +18,7 @@ import { Badge } from "./ui";
 
 function Layout() {
   const meta = useMeta();
+  useLiveStream();
   const m = meta.data;
   const nav: [string, string, boolean][] = [
     ["/", "Overview", true],

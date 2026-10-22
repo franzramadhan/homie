@@ -26,6 +26,8 @@ pub struct Config {
     pub public_url: String,
     pub state_dir: Option<PathBuf>,
     pub refresh_seconds: u64,
+    /// Push query results over server-sent events (RFC 0009)
+    pub live_updates: bool,
     pub allow_unauthenticated: bool,
     pub quiet_hours: Option<QuietHours>,
     pub auth: Option<Auth>,
@@ -48,6 +50,7 @@ impl Default for Config {
             public_url: String::new(),
             state_dir: None,
             refresh_seconds: 15,
+            live_updates: false,
             allow_unauthenticated: false,
             quiet_hours: None,
             auth: None,

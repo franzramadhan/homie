@@ -28,6 +28,7 @@ pub async fn meta(State(state): State<Shared>, Extension(caller): Extension<Call
         "auth": state.auth.is_some(),
         "user": caller.email,
         "refresh_seconds": state.cfg.refresh_seconds,
+        "live_updates": state.cfg.live_updates,
         "quiet": quiet,
         "proxmox": lab.proxmox.values().map(|p| json!({
             "name": p.name, "quiet": p.quiet, "ui_url": p.ui_url, "insecure": p.insecure,
