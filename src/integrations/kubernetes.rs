@@ -26,7 +26,7 @@ pub struct Kube {
     pub quiet: bool,
     pub mode: KubeAuth,
     pub headlamp_url: Option<String>,
-    headlamp_cluster: String,
+    pub links: super::links::Links,
     base: Config,
     shared: Option<Client>,
 }
@@ -129,7 +129,11 @@ impl Kube {
                 .headlamp_url
                 .as_ref()
                 .map(|u| u.trim_end_matches('/').to_string()),
-            headlamp_cluster: cfg.headlamp_cluster.clone(),
+            links: super::links::Links::new(
+                &cfg.links,
+                cfg.headlamp_url.as_deref(),
+                &cfg.headlamp_cluster,
+            ),
             base,
             shared,
         })
@@ -154,16 +158,6 @@ impl Kube {
             HeaderValue::from_str(&format!("Bearer {token}"))?,
         ));
         Ok(Client::try_from(cfg)?)
-    }
-
-    /// Headlamp deep link, when `headlamp_url` is set.
-    pub fn link(&self, plural: &str, namespace: Option<&str>, name: &str) -> Option<String> {
-        let base = self.headlamp_url.as_ref()?;
-        let c = &self.headlamp_cluster;
-        Some(match namespace {
-            Some(ns) => format!("{base}/c/{c}/{plural}/{ns}/{name}"),
-            None => format!("{base}/c/{c}/{plural}/{name}"),
-        })
     }
 
     pub async fn overview(&self, client: Client) -> Result<Overview> {
@@ -234,7 +228,7 @@ impl Kube {
             let ns = pod.metadata.namespace.clone().unwrap_or_default();
             let name = pod.metadata.name.clone().unwrap_or_default();
             unhealthy_pods.push(PodRow {
-                link: self.link("pods", Some(&ns), &name),
+                link: self.links.pod(&ns, &name),
                 reason: waiting
                     .or_else(|| status.reason.clone())
                     .unwrap_or_else(|| {
@@ -287,7 +281,7 @@ impl Kube {
                         .map_or(0.0, |q| bytes(&q.0)),
                     cpu_requested: cpu_req,
                     mem_requested: mem_req,
-                    link: self.link("nodes", None, &name),
+                    link: self.links.node(&name),
                     name,
                 }
             })
@@ -304,7 +298,7 @@ impl Kube {
             let name = meta.name.clone().unwrap_or_default();
             workloads.push(Workload {
                 kind,
-                link: self.link(plural, Some(&ns), &name),
+                link: self.links.workload(kind, plural, &ns, &name),
                 namespace: ns,
                 name,
                 ready: ready.unwrap_or(0),

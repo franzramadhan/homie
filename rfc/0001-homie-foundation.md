@@ -467,8 +467,9 @@ quiet = false
 auth = "kubeconfig"                    # kubeconfig | in_cluster | forward_token
 kubeconfig = "~/.kube/config"
 context = ""                           # default: current context
-headlamp_url = ""                      # deep links for nodes, workloads and pods
-headlamp_cluster = "main"              # cluster name in Headlamp URLs
+headlamp_url = ""                      # fills the link templates for Headlamp
+headlamp_cluster = "main"              # {cluster} in link templates
+# [kubernetes.<name>.links]            # RFC 0007: node, pod, workload, flux URL templates
 quiet = false
 # forward_token takes the apiserver address and CA from `kubeconfig` when set,
 # else from the pod (in-cluster).

@@ -199,10 +199,25 @@ pub struct Kubernetes {
     pub context: Option<String>,
     #[serde(default)]
     pub headlamp_url: Option<String>,
+    /// `{cluster}` in link templates (Headlamp: "main" in-cluster)
     #[serde(default = "default_headlamp_cluster")]
     pub headlamp_cluster: String,
+    /// Deep-link templates (RFC 0007); `headlamp_url` fills unset ones.
+    #[serde(default)]
+    pub links: LinkTemplates,
     #[serde(default)]
     pub quiet: bool,
+}
+
+/// URL templates with `{cluster}`, `{namespace}`, `{name}`, `{kind}`,
+/// `{plural}`, and for Flux `{group}` (kustomize, helm, source).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LinkTemplates {
+    pub node: Option<String>,
+    pub pod: Option<String>,
+    pub workload: Option<String>,
+    pub flux: Option<String>,
 }
 
 fn default_headlamp_cluster() -> String {
@@ -478,6 +493,22 @@ pub fn validate(cfg: &Config) -> Result<()> {
     for (name, k) in &cfg.kubernetes {
         if let Some(u) = &k.headlamp_url {
             check_url(&format!("kubernetes.{name}.headlamp_url"), u)?;
+        }
+        let l = &k.links;
+        for (key, t) in [
+            ("node", &l.node),
+            ("pod", &l.pod),
+            ("workload", &l.workload),
+            ("flux", &l.flux),
+        ] {
+            if let Some(t) = t
+                && !(t.starts_with("http://") || t.starts_with("https://"))
+            {
+                return Err(format!(
+                    "kubernetes.{name}.links.{key} must start with http:// or https://"
+                )
+                .into());
+            }
         }
         if k.auth_mode() == KubeAuth::ForwardToken && cfg.auth.is_none() {
             return Err(format!("kubernetes.{name}: auth = \"forward_token\" needs [auth]").into());

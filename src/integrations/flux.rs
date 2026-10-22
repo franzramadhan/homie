@@ -40,6 +40,7 @@ pub struct Item {
     revision: String,
     suspended: bool,
     since: String,
+    link: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -52,6 +53,15 @@ pub struct ReconcileRequest {
 }
 
 /// Every Flux object. Kinds whose CRD is not installed are skipped.
+/// Every Flux object, with deep links from `links`.
+pub async fn list_linked(client: Client, links: &super::links::Links) -> Result<Vec<Item>> {
+    let mut items = list(client).await?;
+    for i in &mut items {
+        i.link = links.flux(&i.kind, &i.namespace, &i.name);
+    }
+    Ok(items)
+}
+
 pub async fn list(client: Client) -> Result<Vec<Item>> {
     let lists = join_all(KINDS.iter().map(|(_, _, kind)| {
         let client = client.clone();
@@ -98,6 +108,7 @@ fn item(kind: &str, o: DynamicObject) -> Item {
             .to_string(),
         suspended: o.data["spec"]["suspend"].as_bool().unwrap_or(false),
         since: text(&ready["lastTransitionTime"]),
+        link: None,
     }
 }
 

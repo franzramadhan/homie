@@ -25,7 +25,7 @@ Every integration is optional. Configure only what your lab has.
 | Alerts and queries | Grafana (self-hosted or Grafana Cloud), any number of instances | Through the Grafana HTTP API with a Viewer token |
 | Security | Presets: Kyverno, Tetragon, Wazuh, debsecan | Tetragon and Wazuh read VictoriaLogs through Grafana |
 | Outage signals | Tailscale API, healthchecks.io (hosted or self-hosted) | Useful from outside when the lab is down |
-| Deep links | Headlamp, Grafana, Proxmox UI | |
+| Deep links | Any Kubernetes UI by URL template (Headlamp built in), Grafana, Proxmox UI | |
 
 Behavior that suits a homelab:
 

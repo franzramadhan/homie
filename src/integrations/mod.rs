@@ -5,6 +5,7 @@ pub mod flux;
 pub mod grafana;
 pub mod helm;
 pub mod kubernetes;
+pub mod links;
 pub mod outage;
 pub mod proxmox;
 pub mod security;
@@ -187,7 +188,10 @@ impl Lab {
                 serde_json::to_value(k.overview(k.client(token)?).await?)?
             }
             "helm" => serde_json::to_value(helm::releases(self.kube(name)?.client(token)?).await?)?,
-            "flux" => serde_json::to_value(flux::list(self.kube(name)?.client(token)?).await?)?,
+            "flux" => {
+                let k = self.kube(name)?;
+                serde_json::to_value(flux::list_linked(k.client(token)?, &k.links).await?)?
+            }
             "alerts" => serde_json::to_value(self.grafana(name)?.alerts().await?)?,
             "security" => {
                 let s = &self.security;

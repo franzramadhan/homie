@@ -3,7 +3,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { act, useMeta, useQ, type FluxItem } from "../api";
-import { Badge, Button, Confirm, DataTable, Source, ago } from "../ui";
+import { Badge, Button, Confirm, DataTable, Ext, Source, ago } from "../ui";
 
 function shortRevision(r: string) {
   // "main@sha1:454db09a..." -> "main@454db09"
@@ -56,7 +56,7 @@ function Cluster({ name }: { name: string }) {
               { id: "act", header: "", enableSorting: false, cell: ({ row }) => <Button onClick={() => setTarget(row.original)}>Reconcile</Button> },
               { accessorKey: "kind", header: "Kind" },
               { accessorKey: "namespace", header: "Namespace", cell: ({ row }) => <span className="whitespace-nowrap">{row.original.namespace}</span> },
-              { accessorKey: "name", header: "Name" },
+              { accessorKey: "name", header: "Name", cell: ({ row }) => <Ext href={row.original.link}>{row.original.name}</Ext> },
               {
                 accessorKey: "ready",
                 header: "Ready",
