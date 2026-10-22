@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: homie
+  namespace: homie
+spec:
+  # one replica: sessions live in memory
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: homie
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: homie
+    spec:
+      serviceAccountName: homie
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: homie
+          # pin a release, ideally by digest: ghcr.io/franzramadhan/homie:<version>@sha256:...
+          image: ghcr.io/franzramadhan/homie:0.1.0
+          args: [serve]
+          env:
+            - name: HOMIE_CONFIG
+              value: /etc/homie/config.toml
+          envFrom:
+            # HOMIE__AUTH__CLIENT_SECRET and other secrets; optional so the
+            # pod starts and `homie` explains what is missing
+            - secretRef:
+                name: homie
+                optional: true
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/homie
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: homie-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: homie
+  namespace: homie
+spec:
+  selector:
+    app.kubernetes.io/name: homie
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

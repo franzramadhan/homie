@@ -1,0 +1,29 @@
+# Laptop profile: no login, loopback only, last-known state kept on disk so
+# the overview still shows something when the lab is down.
+# Copy to ~/.config/homie/config.toml, then run `homie check` and `homie serve`.
+listen = "127.0.0.1:7777"
+state_dir = "~/.local/state/homie"
+
+[quiet_hours]
+window = "23:30-06:00"
+timezone = "Asia/Jakarta"
+
+[proxmox.lab]
+endpoints = ["https://pve1.example.com:8006", "https://pve2.example.com:8006"]
+# macOS Keychain: security add-generic-password -s homie-pve -a homie -w 'user@pve!homie=<uuid>'
+token = { cmd = "security find-generic-password -s homie-pve -w" }
+# the cluster CA from /etc/pve/pve-root-ca.pem, if the nodes use the default certificate
+# ca_file = "~/.config/homie/pve-root-ca.pem"
+protected_tags = ["homie-protected"]
+
+[kubernetes.lab]
+kubeconfig = "~/.kube/config"
+# context = "lab"
+quiet = true
+
+[grafana.cloud]
+url = "https://example.grafana.net"
+token = { cmd = "security find-generic-password -s homie-grafana-cloud -w" }
+
+[healthchecks]
+api_key = { cmd = "security find-generic-password -s homie-healthchecks -w" }

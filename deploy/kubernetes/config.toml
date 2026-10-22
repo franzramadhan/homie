@@ -1,0 +1,27 @@
+# Homie in a cluster. Every key can be overridden by HOMIE__<SECTION>__<KEY>
+# from the Secret "homie", which is where secrets belong, for example:
+#
+#   HOMIE__PUBLIC_URL=https://homie.example.com
+#   HOMIE__AUTH__ISSUER=https://auth.example.com/application/o/homie/
+#   HOMIE__AUTH__CLIENT_ID=homie
+#   HOMIE__AUTH__CLIENT_SECRET=...
+#   HOMIE__AUTH__ALLOWED_EMAILS=[me@example.com]
+#   HOMIE__PROXMOX__LAB__TOKEN=homie@pve!k8s=...
+#
+# Without [auth] Homie refuses to listen on 0.0.0.0.
+listen = "0.0.0.0:8080"
+
+[kubernetes.this]
+# in_cluster: Homie's ServiceAccount with the roles in rbac.yaml.
+# forward_token: act as the logged-in user (the apiserver must trust the issuer).
+auth = "in_cluster"
+
+# [kubernetes.this] also takes headlamp_url = "https://headlamp.example.com"
+
+# [proxmox.lab]
+# endpoints = ["https://192.168.1.10:8006", "https://192.168.1.11:8006"]
+# token = { env = "PVE_TOKEN" }
+# ca_file = "/etc/homie/pve-root-ca.pem"
+
+# [security.kyverno]
+# kubernetes = "this"

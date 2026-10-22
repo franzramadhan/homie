@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Run Homie in the background on macOS, at login.
+
+  1. Replace REPLACE_ME with your user name, and the homie path with the output of `which homie`.
+  2. cp contrib/io.github.franzramadhan.homie.plist ~/Library/LaunchAgents/
+  3. launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.franzramadhan.homie.plist
+  Logs: ~/Library/Logs/homie.log. Stop: launchctl bootout gui/$(id -u)/io.github.franzramadhan.homie
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.github.franzramadhan.homie</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/REPLACE_ME/.local/share/mise/shims/homie</string>
+    <string>serve</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- `cmd` secrets such as `security find-generic-password` need a PATH -->
+    <key>PATH</key>
+    <string>/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/REPLACE_ME/Library/Logs/homie.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/REPLACE_ME/Library/Logs/homie.log</string>
+</dict>
+</plist>
