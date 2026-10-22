@@ -66,6 +66,9 @@ comma, colon, parentheses or a new sentence.
 - Dev image for an end-to-end test: `gh workflow run build.yml --ref <branch>`
   builds only the Linux binaries and pushes `ghcr.io/franzramadhan/homie:dev-<short sha>`,
   no release.
+- `.github/workflows/cleanup.yml` runs weekly: deletes stale image versions
+  (main, sha-*, rc tags, dev-* older than 14 days, unreferenced untagged
+  manifests). Release tags are kept. Manual runs default to a dry run.
 - Versioning: `v0.MINOR.PATCH` only. 0.x is alpha (said in the README); no
   v1 until the user decides. No `-rc` suffixes for now. Releases are not
   marked pre-release: mise's `github:` backend and `releases/latest` skip
