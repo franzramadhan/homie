@@ -3,6 +3,7 @@
 
 pub mod argocd;
 pub mod flux;
+pub mod github;
 pub mod grafana;
 pub mod helm;
 pub mod kubernetes;
@@ -33,6 +34,7 @@ pub struct Lab {
     pub security: Security,
     pub logs: crate::config::Logs,
     pub tailscale: Option<outage::Tailscale>,
+    pub github: Option<github::GitHub>,
     pub healthchecks: Option<outage::Healthchecks>,
     pub quiet: Option<Quiet>,
 }
@@ -55,6 +57,7 @@ impl Lab {
             security: cfg.security.clone(),
             logs: cfg.logs.clone(),
             tailscale: None,
+            github: None,
             healthchecks: None,
             quiet: cfg
                 .quiet_hours
@@ -84,6 +87,9 @@ impl Lab {
                     .await
                     .map_err(|e| format!("tailscale: {e}"))?,
             );
+        }
+        if let Some(g) = &cfg.github {
+            lab.github = Some(github::GitHub::new(g).await?);
         }
         if let Some(h) = &cfg.healthchecks {
             lab.healthchecks = Some(outage::Healthchecks::new(h).await?);
@@ -168,6 +174,7 @@ impl Lab {
                 (secs(60), quiet, per_user)
             }
             "tailscale" => (secs(30), false, false),
+            "github" => (secs(60), self.github.as_ref()?.quiet, false),
             "healthchecks" => (secs(60), self.healthchecks.as_ref()?.quiet, false),
             _ => return None,
         };
@@ -268,6 +275,13 @@ impl Lab {
                 };
                 serde_json::to_value(table)?
             }
+            "github" => serde_json::to_value(
+                self.github
+                    .as_ref()
+                    .ok_or("github is not configured")?
+                    .workflows()
+                    .await?,
+            )?,
             "tailscale" => serde_json::to_value(
                 self.tailscale
                     .as_ref()

@@ -943,6 +943,7 @@ dependencies = [
  "mime_guess",
  "openidconnect",
  "reqwest",
+ "ring",
  "rust-embed",
  "rustls",
  "serde",

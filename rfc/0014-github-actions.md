@@ -101,6 +101,20 @@ from a laptop even when the lab's SSO is down.
   right state, commit and links.
 - **Rollout:** optional section; nothing changes without `[github]`.
 
+## Changes during implementation
+
+- The app finds its installation per repository owner
+  (`/users/{owner}/installation`, then `/orgs/{owner}/installation`) and
+  caches the installation token for 55 minutes.
+- Each watched workflow fails on its own (its error shows on its card) and
+  does not hide the others; the query only fails when all of them do.
+- `homie check` reads every watched workflow.
+- The picker routes are `/github/login`, `/github/callback`,
+  `/api/github/repos` and `/api/github/workflows`, behind the Homie session;
+  GitHub user tokens are kept per Homie user in memory.
+- Verified with a fine-grained token against the reference lab's
+  `plan.yaml` and `apply.yaml`; the app path is verified once the app exists.
+
 ## Decisions
 
 1. Shared list in the config, not per user.

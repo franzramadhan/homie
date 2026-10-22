@@ -2,7 +2,7 @@
 
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import { useMeta, useQ, type Alerts, type ArgoApp, type BaoHealth, type Check, type PgCluster, type Device, type Envelope, type FluxItem, type K8sOverview, type PveOverview, type SecurityTable } from "../api";
+import { useMeta, useQ, workflowHealth, type Alerts, type ArgoApp, type GhWorkflow, type BaoHealth, type Check, type PgCluster, type Device, type Envelope, type FluxItem, type K8sOverview, type PveOverview, type SecurityTable } from "../api";
 import { Badge, sourceTone, type Tone } from "../ui";
 
 function Card<T>({ title, to, env, summary }: { title: string; to?: string; env: Envelope<T> | undefined; summary: (d: T) => { tone: Tone; lines: ReactNode[] } }) {
@@ -234,6 +234,30 @@ function CnpgCard({ name }: { name: string }) {
   );
 }
 
+function WorkflowsCard() {
+  const q = useQ<GhWorkflow[]>("github", "_");
+  return (
+    <Card
+      title="Workflows"
+      to="/workflows"
+      env={q.data}
+      summary={(d) => {
+        const states = d.map((w) => ({ w, h: workflowHealth(w) }));
+        const failed = states.filter((s) => s.h === "failed" || s.w.error);
+        const stuck = states.filter((s) => s.h === "stuck");
+        return {
+          tone: failed.length ? "bad" : stuck.length ? "warn" : "ok",
+          lines: [
+            `${states.filter((s) => s.h === "ok").length}/${d.length} workflows: last run succeeded`,
+            ...failed.map((s) => `failed: ${s.w.name}`),
+            ...stuck.map((s) => `queued over 10 min: ${s.w.name}`),
+          ],
+        };
+      }}
+    />
+  );
+}
+
 function HealthchecksCard() {
   const q = useQ<Check[]>("healthchecks", "_");
   return (
@@ -286,6 +310,7 @@ export function Overview() {
         <SecurityCard key={s} preset={s} />
       ))}
       {m.tailscale && <TailscaleCard />}
+      {m.github && <WorkflowsCard />}
       {m.healthchecks && <HealthchecksCard />}
     </div>
   );
