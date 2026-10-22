@@ -1,0 +1,22 @@
+# A LAN box without login: the port is published on the host's loopback only.
+# Put an auth proxy in front (or use [auth]) before publishing it any wider.
+services:
+  homie:
+    image: ghcr.io/franzramadhan/homie:0.1.0
+    command: [serve]
+    ports:
+      - "127.0.0.1:7777:7777"
+    environment:
+      HOMIE_CONFIG: /etc/homie/config.toml
+      # inside the container Homie must listen on all interfaces
+      HOMIE__LISTEN: 0.0.0.0:7777
+      HOMIE__ALLOW_UNAUTHENTICATED: "true"
+      HOMIE__STATE_DIR: /state
+      PVE_TOKEN: ${PVE_TOKEN}
+    volumes:
+      - ./config.toml:/etc/homie/config.toml:ro
+      - homie-state:/state
+    read_only: true
+    restart: unless-stopped
+volumes:
+  homie-state:

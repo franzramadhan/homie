@@ -5,6 +5,22 @@ security findings). Rust backend with an embedded TanStack SPA. The design
 and the milestones are in [rfc/0001-homie-foundation.md](rfc/0001-homie-foundation.md).
 `AGENTS.md` is a symlink to this file: edit `CLAUDE.md` only.
 
+## Layout
+
+| Path | Contents |
+|---|---|
+| `src/config.rs`, `secret.rs`, `http.rs`, `quiet.rs`, `cache.rs` | config layering, secret references, per-integration TLS, quiet hours, query cache and snapshot |
+| `src/integrations/` | one module per domain: `proxmox`, `kubernetes`, `helm`, `flux`, `grafana`, `security` (presets), `outage` (Tailscale, healthchecks); `mod.rs` builds them and serves named queries |
+| `src/auth.rs` | OIDC login and server-side sessions |
+| `src/server/` | `api` (meta, queries, actions), `guard` (Host, CSRF, session), `login`, `assets` (embedded UI) |
+| `src/check.rs` | `homie check` |
+| `web/` | Vite + React + TanStack Router/Query/Table SPA; `src/api.ts` mirrors the Rust JSON shapes |
+| `deploy/kubernetes`, `contrib/`, `examples/` | kustomize base, launchd/systemd units, example configs (tested by `config::tests::examples_load`) |
+
+Build the UI before a release build: the binary embeds `web/dist`
+(`cd web && bun install && bun run build`). Debug builds read it from disk,
+and a missing `web/dist` only means the UI answers 503.
+
 ## Product rules
 
 - Generic first. Every integration is optional and configurable through the

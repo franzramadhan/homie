@@ -1,0 +1,27 @@
+# Cluster or LAN server behind any OIDC provider (Authentik, Keycloak,
+# Authelia, Pocket ID, Zitadel, Google, Cloudflare Access, ...).
+# Register a client with redirect URI <public_url>/auth/callback.
+listen = "0.0.0.0:8080"
+public_url = "https://homie.example.com"
+
+[auth]
+issuer = "https://auth.example.com/application/o/homie/"
+client_id = "homie"
+client_secret = { env = "OIDC_CLIENT_SECRET" }
+# offline_access lets sessions outlive the ID token (ask the provider for refresh tokens)
+scopes = ["openid", "email", "profile", "offline_access"]
+allowed_emails = ["me@example.com"]
+# groups_claim = "groups"
+# allowed_groups = ["homelab-admins"]
+
+[kubernetes.this]
+auth = "in_cluster"
+headlamp_url = "https://headlamp.example.com"
+
+[proxmox.lab]
+endpoints = ["https://192.168.1.10:8006", "https://192.168.1.11:8006"]
+token = { env = "PVE_TOKEN" }
+tls_verify = false   # self-signed default certificate; prefer ca_file
+
+[security.kyverno]
+kubernetes = "this"

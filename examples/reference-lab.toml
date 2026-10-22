@@ -1,0 +1,65 @@
+# The author's lab: Cloudflare Access (Google) as the OIDC provider, Homie as
+# a Tailscale Ingress, k0s trusting the same issuer (forward_token), two
+# Grafanas, and VMs powered off overnight.
+listen = "0.0.0.0:8080"
+public_url = "https://homie.<tailnet>.ts.net"
+
+[quiet_hours]
+window = "23:30-06:00"
+timezone = "Asia/Jakarta"
+
+[auth]
+issuer = "https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client-id>"
+client_id = { env = "OIDC_CLIENT_ID" }
+client_secret = { env = "OIDC_CLIENT_SECRET" }
+allowed_emails = ["<email>"]
+
+[kubernetes.homelab]
+auth = "forward_token"
+headlamp_url = "https://headlamp.<tailnet>.ts.net"
+quiet = true
+
+# Pods are not on the tailnet: connect to the LAN IPs, verify the tailnet
+# certificate each node serves on :8006.
+[proxmox.lab]
+endpoints = [
+  { url = "https://192.168.1.101:8006", tls_server_name = "pve-01.<tailnet>.ts.net" },
+  { url = "https://192.168.1.102:8006", tls_server_name = "pve-02.<tailnet>.ts.net" },
+  { url = "https://192.168.1.103:8006", tls_server_name = "pve-03.<tailnet>.ts.net" },
+]
+token = { env = "PVE_TOKEN" }
+protected_tags = ["homie-protected"]
+ui_url = "https://pve-01.<tailnet>.ts.net:8006"
+
+[grafana.lab]
+url = "http://grafana.monitoring.svc"
+token = { env = "GRAFANA_LAB_TOKEN" }
+quiet = true
+
+[grafana.cloud]
+url = "https://<stack>.grafana.net"
+token = { env = "GRAFANA_CLOUD_TOKEN" }
+
+[security.kyverno]
+kubernetes = "homelab"
+
+[security.tetragon]
+grafana = "lab"
+datasource = "vlogs"
+
+[security.wazuh]
+grafana = "lab"
+datasource = "vlogs"
+
+[security.debsecan]
+grafana = "cloud"
+datasource = "grafanacloud-prom"
+
+[tailscale]
+oauth_client_id = { env = "TS_OAUTH_CLIENT_ID" }
+oauth_client_secret = { env = "TS_OAUTH_CLIENT_SECRET" }
+hosts = ["pve-*", "k0s-*"]
+quiet_hosts = ["k0s-*"]
+
+[healthchecks]
+api_key = { env = "HC_API_KEY" }

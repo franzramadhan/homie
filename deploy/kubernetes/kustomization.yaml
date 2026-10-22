@@ -1,0 +1,17 @@
+# Homie in a cluster: kubectl apply -k deploy/kubernetes
+# Login settings come from the Secret "homie" (see config.toml), and exposure
+# (Ingress, Gateway API HTTPRoute, Tailscale Ingress) is up to you.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - rbac.yaml
+  - deployment.yaml
+  # Optional: Helm release view. Needs list on all Secrets, which RBAC cannot
+  # narrow to Helm's own. Homie never returns values or manifests.
+  # - rbac-helm.yaml
+configMapGenerator:
+  - name: homie-config
+    namespace: homie
+    files:
+      - config.toml

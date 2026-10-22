@@ -1,0 +1,16 @@
+# Run Homie as a systemd user service on Linux.
+#   cp contrib/homie.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now homie
+#   journalctl --user -u homie -f
+[Unit]
+Description=Homie homelab dashboard
+After=network-online.target
+
+[Service]
+# `which homie`, for example ~/.local/share/mise/shims/homie
+ExecStart=%h/.local/share/mise/shims/homie serve
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

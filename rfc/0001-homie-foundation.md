@@ -314,8 +314,9 @@ stores behind it (those are often not routed outside the cluster).
   rules) per instance. Firing and pending alerts are merged into one list,
   each tagged with its instance.
 - **Queries:** `GET /api/datasources/proxy/uid/<uid>/...` runs PromQL
-  (Prometheus, Mimir, VictoriaMetrics), LogQL (Loki) or LogsQL
-  (VictoriaLogs) for the security presets below.
+  (Prometheus, Mimir, VictoriaMetrics) or LogsQL (VictoriaLogs) for the
+  security presets below. LogQL (Loki) variants come with overridable
+  queries (see Later).
 - **Links:** dashboard and Explore deep links, with query and time range
   prefilled.
 - **No iframes.** Many SSO front doors refuse framing, a Grafana on another
@@ -333,8 +334,8 @@ for another tool (Falco, Trivy Operator, CrowdSec) is a small change.
 | Preset | Source | Default query |
 |---|---|---|
 | `kyverno` | a `[kubernetes.*]` entry | `PolicyReport` / `ClusterPolicyReport`: fail and warn counts per policy and namespace. The CRD group (`wgpolicyk8s.io/v1alpha2` or `openreports.io/v1alpha1`) is discovered at start. |
-| `tetragon` | Grafana + VictoriaLogs or Loki datasource | Policy hits and `KPROBE_ACTION_SIGKILL` events, last 24 h, by policy, namespace and binary |
-| `wazuh` | Grafana + VictoriaLogs or Loki datasource | Alerts with `rule.level >= min_level` (default 7), last 24 h, by agent and rule |
+| `tetragon` | Grafana + VictoriaLogs datasource | Policy hits and `KPROBE_ACTION_SIGKILL` events, last 24 h, by policy, namespace and binary |
+| `wazuh` | Grafana + VictoriaLogs datasource | Alerts with `rule.level >= min_level` (default 7), last 24 h, by agent and rule |
 | `debsecan` | Grafana + Prometheus-compatible datasource | `debsecan_vulnerabilities` (fixable and high urgency) per host, and days since `debsecan_last_run_timestamp_seconds` |
 
 Each row links to the matching Grafana Explore query.
@@ -395,8 +396,8 @@ by environment alone.
   | `{ file = "path" }` | `{ file = "/run/secrets/pve-token" }` | mounted Secret files, Docker secrets |
   | `{ cmd = "..." }` | `{ cmd = "security find-generic-password -s homie-pve -w" }` | macOS Keychain, `pass`, `secret-tool`, `op read` |
 
-  A plain string inside the TOML file logs a warning, because files get
-  committed. `cmd` runs at start, and again after a 401 from that backend.
+  Prefer a reference over a plain string in a file that may get committed.
+  `cmd` runs at start, and again after a 401 from that backend.
 
 `homie check` loads the config the same way `homie serve` does. It prints
 the effective config with secrets redacted, then tests each integration
@@ -438,24 +439,30 @@ quiet = false
 auth = "kubeconfig"                    # kubeconfig | in_cluster | forward_token
 kubeconfig = "~/.kube/config"
 context = ""                           # default: current context
-server = ""                            # forward_token: apiserver URL (default: in-cluster)
-headlamp_url = ""
+headlamp_url = ""                      # deep links for nodes, workloads and pods
+headlamp_cluster = "main"              # cluster name in Headlamp URLs
 quiet = false
+# forward_token takes the apiserver address and CA from `kubeconfig` when set,
+# else from the pod (in-cluster).
 
 [grafana.<name>]                       # optional, repeatable
 url = "https://grafana.example.com"
 token = { env = "GRAFANA_TOKEN" }
 tls_verify = true
+ca_file = ""
+tls_server_name = ""
 quiet = false
 
 [security.kyverno]
 kubernetes = "<name>"
 [security.tetragon]
 grafana = "<name>"
-datasource = "<uid>"
+datasource = "<uid>"                   # VictoriaLogs
+filter = "k8s.container.name:export-stdout"   # LogsQL selecting Tetragon's export
 [security.wazuh]
 grafana = "<name>"
-datasource = "<uid>"
+datasource = "<uid>"                   # VictoriaLogs
+filter = "k8s.namespace.name:wazuh k8s.container.name:alerts"
 min_level = 7
 [security.debsecan]
 grafana = "<name>"
@@ -483,7 +490,10 @@ quiet = false
 | `msg=insecure integration=<name> reason=tls_verify_off\|plain_http\|unauthenticated` | At start, once per weakened setting |
 | `GET /healthz` | Liveness, no backend calls |
 
-Logs are logfmt on stdout. There is no `/metrics` in v0.1.0.
+Logs are `key=value` lines on stdout (color only on a terminal; `RUST_LOG`
+sets the level). There is no `/metrics` in v0.1.0. `homie check` prints the
+effective config as JSON with secrets shown only by their source
+(`env:NAME`, `file:/path`, `cmd:...`, `<redacted>`).
 
 ### Distribution
 

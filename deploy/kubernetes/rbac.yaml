@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: homie
+  namespace: homie
+---
+# Read-only view of what the Workloads, GitOps and Security pages show.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: homie-reader
+rules:
+  - apiGroups: [""]
+    resources: [nodes, namespaces, pods, events]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets]
+    verbs: [get, list, watch]
+  - apiGroups: [source.toolkit.fluxcd.io, kustomize.toolkit.fluxcd.io, helm.toolkit.fluxcd.io]
+    resources: ["*"]
+    verbs: [get, list, watch]
+  - apiGroups: [wgpolicyk8s.io, openreports.io]
+    resources: ["*"]
+    verbs: [get, list, watch]
+---
+# Reconcile only adds an annotation, but RBAC cannot tell an annotation patch
+# from a spec patch: this role can patch Flux objects.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: homie-flux
+rules:
+  - apiGroups: [source.toolkit.fluxcd.io, kustomize.toolkit.fluxcd.io, helm.toolkit.fluxcd.io]
+    resources: ["*"]
+    verbs: [patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: homie-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: homie-reader
+subjects:
+  - kind: ServiceAccount
+    name: homie
+    namespace: homie
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: homie-flux
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: homie-flux
+subjects:
+  - kind: ServiceAccount
+    name: homie
+    namespace: homie
