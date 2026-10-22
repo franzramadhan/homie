@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| draft | 2026-10-22 | - | v0.1.0 |
+| implemented | 2026-10-22 | #2 | v0.1.0 |
 
 > Homie is one small binary that shows a whole homelab on one page: Proxmox
 > hosts and guests, Kubernetes, Flux, alerts and security findings. It allows
