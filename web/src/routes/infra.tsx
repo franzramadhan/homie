@@ -2,8 +2,8 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { act, get, useMeta, useQ, type Guest, type PveOverview } from "../api";
-import { Badge, Bar, Button, Confirm, DataTable, Ext, Section, Source, bytes, duration, type Col } from "../ui";
+import { act, get, useMeta, useQ, type Guest, type PveOverview, type Sparks } from "../api";
+import { Badge, Bar, Button, Confirm, DataTable, Ext, Section, Source, Spark, bytes, duration, type Col } from "../ui";
 
 type Action = "start" | "shutdown" | "reboot" | "stop";
 
@@ -113,6 +113,7 @@ function PowerActions({ cluster, guest, onStatus }: { cluster: string; guest: Gu
 
 function Cluster({ name }: { name: string }) {
   const q = useQ<PveOverview>("pve", name);
+  const sparks = useQ<Sparks>("spark-pve", name).data?.data;
   const [status, setStatus] = useState<Status | null>(null);
 
   return (
@@ -146,12 +147,29 @@ function Cluster({ name }: { name: string }) {
             header: "Status",
             cell: ({ row }) => <Badge tone={row.original.status === "running" ? "ok" : "muted"}>{row.original.status}</Badge>,
           },
-          { id: "cpu", accessorFn: (g) => g.cpu, header: "CPU", cell: ({ row }) => (row.original.status === "running" ? <Bar value={row.original.cpu} max={1} /> : null) },
+          {
+            id: "cpu",
+            accessorFn: (g) => g.cpu,
+            header: "CPU",
+            cell: ({ row }) =>
+              row.original.status === "running" ? (
+                <span className="flex items-center gap-2">
+                  <Bar value={row.original.cpu} max={1} />
+                  <Spark values={sparks?.guests?.[row.original.vmid]?.cpu} max={1} label="CPU" />
+                </span>
+              ) : null,
+          },
           {
             id: "mem",
             accessorFn: (g) => (g.maxmem ? g.mem / g.maxmem : 0),
             header: "Memory",
-            cell: ({ row }) => (row.original.status === "running" ? <Bar value={row.original.mem} max={row.original.maxmem} label={`${bytes(row.original.mem)} / ${bytes(row.original.maxmem)}`} /> : null),
+            cell: ({ row }) =>
+              row.original.status === "running" ? (
+                <span className="flex items-center gap-2">
+                  <Bar value={row.original.mem} max={row.original.maxmem} label={`${bytes(row.original.mem)} / ${bytes(row.original.maxmem)}`} />
+                  <Spark values={sparks?.guests?.[row.original.vmid]?.mem} max={1} label="Memory" />
+                </span>
+              ) : null,
           },
           { id: "uptime", accessorFn: (g) => g.uptime, header: "Uptime", cell: ({ row }) => duration(row.original.uptime) },
           { id: "tags", accessorFn: (g) => g.tags.join(" "), header: "Tags", cell: ({ row }) => <span className="text-xs whitespace-normal text-ink-subtle">{row.original.tags.join(", ")}</span> },
@@ -180,8 +198,8 @@ function Cluster({ name }: { name: string }) {
                   </div>
                   {n.online && (
                     <div className="space-y-1 text-xs">
-                      <div className="flex items-center gap-2"><span className="w-12 text-ink-subtle">CPU</span><Bar value={n.cpu} max={1} label={`${n.maxcpu} cores`} /></div>
-                      <div className="flex items-center gap-2"><span className="w-12 text-ink-subtle">Memory</span><Bar value={n.mem} max={n.maxmem} label={`${bytes(n.mem)} / ${bytes(n.maxmem)}`} /></div>
+                      <div className="flex items-center gap-2"><span className="w-12 text-ink-subtle">CPU</span><Bar value={n.cpu} max={1} label={`${n.maxcpu} cores`} /><Spark values={sparks?.nodes[n.name]?.cpu} max={1} label="CPU" /></div>
+                      <div className="flex items-center gap-2"><span className="w-12 text-ink-subtle">Memory</span><Bar value={n.mem} max={n.maxmem} label={`${bytes(n.mem)} / ${bytes(n.maxmem)}`} /><Spark values={sparks?.nodes[n.name]?.mem} max={1} label="Memory" /></div>
                       <div className="flex items-center gap-2"><span className="w-12 text-ink-subtle">Root</span><Bar value={n.disk} max={n.maxdisk} label={`${bytes(n.disk)} / ${bytes(n.maxdisk)}`} /></div>
                     </div>
                   )}

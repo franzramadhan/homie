@@ -205,8 +205,28 @@ pub struct Kubernetes {
     /// Deep-link templates (RFC 0007); `headlamp_url` fills unset ones.
     #[serde(default)]
     pub links: LinkTemplates,
+    /// Node CPU and memory history for sparklines (RFC 0012)
+    #[serde(default)]
+    pub metrics: Option<NodeMetrics>,
     #[serde(default)]
     pub quiet: bool,
+}
+
+/// PromQL range queries, one series per node, for sparklines.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NodeMetrics {
+    pub grafana: String,
+    pub datasource: String,
+    pub cpu: String,
+    pub memory: String,
+    /// label holding the node name in both series
+    #[serde(default = "default_node_label")]
+    pub node_label: String,
+}
+
+fn default_node_label() -> String {
+    "node".into()
 }
 
 /// URL templates with `{cluster}`, `{namespace}`, `{name}`, `{kind}`,
@@ -493,6 +513,15 @@ pub fn validate(cfg: &Config) -> Result<()> {
     for (name, k) in &cfg.kubernetes {
         if let Some(u) = &k.headlamp_url {
             check_url(&format!("kubernetes.{name}.headlamp_url"), u)?;
+        }
+        if let Some(m) = &k.metrics
+            && !cfg.grafana.contains_key(&m.grafana)
+        {
+            return Err(format!(
+                "kubernetes.{name}.metrics.grafana: no [grafana.{}]",
+                m.grafana
+            )
+            .into());
         }
         let l = &k.links;
         for (key, t) in [

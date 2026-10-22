@@ -9,6 +9,7 @@ pub mod links;
 pub mod outage;
 pub mod proxmox;
 pub mod security;
+pub mod sparks;
 
 use std::{collections::BTreeMap, time::Duration};
 
@@ -127,6 +128,12 @@ impl Lab {
         let secs = |s| Duration::from_secs(s);
         let (ttl, quiet, per_user) = match kind {
             "pve" => (secs(10), self.proxmox.get(name)?.quiet, false),
+            "spark-pve" => (secs(60), self.proxmox.get(name)?.quiet, false),
+            "spark-k8s" => {
+                let k = self.kubernetes.get(name)?;
+                k.metrics.as_ref()?;
+                (secs(60), k.quiet, false)
+            }
             "k8s" | "flux" => {
                 let k = self.kubernetes.get(name)?;
                 (secs(10), k.quiet, k.forwards_token())
@@ -183,6 +190,15 @@ impl Lab {
         let token = caller.id_token.as_deref();
         let v = match kind {
             "pve" => serde_json::to_value(self.proxmox[name].overview().await?)?,
+            "spark-pve" => serde_json::to_value(sparks::proxmox(&self.proxmox[name]).await?)?,
+            "spark-k8s" => {
+                let m = self
+                    .kube(name)?
+                    .metrics
+                    .as_ref()
+                    .ok_or("no metrics configured")?;
+                serde_json::to_value(sparks::kubernetes(self.grafana(&m.grafana)?, m).await?)?
+            }
             "k8s" => {
                 let k = self.kube(name)?;
                 serde_json::to_value(k.overview(k.client(token)?).await?)?

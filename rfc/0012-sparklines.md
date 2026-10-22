@@ -16,11 +16,18 @@ climbing or steady.
 
 - Proxmox: `GET /nodes/{node}/rrddata?timeframe=hour` and the guest
   equivalent (no Grafana needed), averaged to 30 points.
-- Kubernetes nodes: optional, through a configured Prometheus-compatible
-  datasource (`node_cpu_seconds_total`, `node_memory_*`).
+- Kubernetes nodes: optional, `[kubernetes.<name>.metrics]` with `grafana`,
+  `datasource`, `cpu` and `memory` (PromQL returning one series per node)
+  and `node_label` (default `node`). Metric names differ per collector
+  (node_exporter, OpenTelemetry), so there are no built-in queries. Example
+  for the OpenTelemetry kubeletstats receiver:
+  `sum by (k8s_node_name) (k8s_node_cpu_usage)` with `node_label =
+  "k8s_node_name"`.
 - Rendered as inline SVG polylines (no chart library), colored by the
   current status, with a tooltip of min, max and last.
-- Fetched lazily per visible table, cached 60 s.
+- Named queries `spark-pve/<name>` and `spark-k8s/<name>`, cached 60 s;
+  Kubernetes series scale to their own range (neutral color), Proxmox
+  series are ratios colored like the meters.
 
 ## Alternatives
 

@@ -126,6 +126,61 @@ impl Grafana {
         })
     }
 
+    /// Range PromQL query over the last `seconds`, one point per `step`.
+    /// Returns each series' labels and values.
+    pub async fn promql_range(
+        &self,
+        datasource: &str,
+        query: &str,
+        seconds: i64,
+        step: i64,
+    ) -> Result<Vec<(serde_json::Map<String, Value>, Vec<f64>)>> {
+        let path = format!(
+            "/api/datasources/proxy/uid/{}/api/v1/query_range",
+            enc(datasource)
+        );
+        let end = jiff::Timestamp::now().as_second();
+        let (start, end, step) = (
+            (end - seconds).to_string(),
+            end.to_string(),
+            step.to_string(),
+        );
+        let body: Value = self
+            .get(
+                &path,
+                &[
+                    ("query", query),
+                    ("start", &start),
+                    ("end", &end),
+                    ("step", &step),
+                ],
+            )
+            .await?
+            .json()
+            .await?;
+        if body["status"] != "success" {
+            return Err(format!(
+                "query failed: {}",
+                body["error"].as_str().unwrap_or("unknown error")
+            )
+            .into());
+        }
+        Ok(body["data"]["result"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|r| {
+                let values = r["values"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|p| p[1].as_str()?.parse().ok())
+                    .collect();
+                (r["metric"].as_object().cloned().unwrap_or_default(), values)
+            })
+            .collect())
+    }
+
     /// Instant PromQL query through a Prometheus-compatible datasource.
     pub async fn promql(&self, datasource: &str, query: &str) -> Result<Vec<Sample>> {
         let path = format!(

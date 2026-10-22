@@ -468,6 +468,11 @@ impl Proxmox {
         })
     }
 
+    /// A read for other modules (sparklines); same failover as the overview.
+    pub async fn get(&self, path: &str) -> Result<Value> {
+        self.call(false, path).await
+    }
+
     pub async fn probe(&self) -> Result<String> {
         let version = self.call(false, "/version").await?;
         let perms = self.call(false, "/access/permissions").await?;

@@ -33,7 +33,7 @@ pub async fn meta(State(state): State<Shared>, Extension(caller): Extension<Call
             "name": p.name, "quiet": p.quiet, "ui_url": p.ui_url, "insecure": p.insecure,
         })).collect::<Vec<_>>(),
         "kubernetes": lab.kubernetes.values().map(|k| json!({
-            "name": k.name, "quiet": k.quiet, "headlamp_url": k.headlamp_url, "forward_token": k.forwards_token(),
+            "name": k.name, "quiet": k.quiet, "headlamp_url": k.headlamp_url, "forward_token": k.forwards_token(), "metrics": k.metrics.is_some(),
         })).collect::<Vec<_>>(),
         "grafana": lab.grafana.values().map(|g| json!({
             "name": g.name, "quiet": g.quiet, "url": g.url, "insecure": g.insecure,
