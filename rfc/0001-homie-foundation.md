@@ -503,6 +503,10 @@ min_level = 7
 grafana = "<name>"
 datasource = "<uid>"
 
+[logs]                                 # optional, RFC 0008
+max_rows = 1000
+# [[logs.datasources]]                 # label, grafana, datasource, type (victorialogs | loki), pod_query, node_query
+
 [tailscale]                            # optional
 tailnet = "-"
 api_key = { env = "TS_API_KEY" }       # or oauth_client_id + oauth_client_secret

@@ -6,6 +6,7 @@ import { act, useMeta } from "./api";
 import "./index.css";
 import { GitOps } from "./routes/gitops";
 import { Login } from "./routes/login";
+import { Logs } from "./routes/logs";
 import { Infra } from "./routes/infra";
 import { Observability } from "./routes/observability";
 import { Overview } from "./routes/overview";
@@ -23,6 +24,7 @@ function Layout() {
     ["/workloads", "Workloads", !!m?.kubernetes.length],
     ["/gitops", "GitOps", !!m?.kubernetes.length],
     ["/observability", "Alerts", !!m?.grafana.length],
+    ["/logs", "Logs", !!m?.logs.length],
     ["/security", "Security", !!m?.security.length],
     ["/tailscale", "Tailscale", !!m?.tailscale],
   ];
@@ -81,6 +83,7 @@ const router = createRouter({
     page("/gitops", GitOps),
     page("/observability", Observability),
     page("/security", Security),
+    page("/logs", Logs),
     page("/tailscale", Tailscale),
   ]),
 });

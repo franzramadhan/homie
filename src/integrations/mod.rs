@@ -7,6 +7,7 @@ pub mod grafana;
 pub mod helm;
 pub mod kubernetes;
 pub mod links;
+pub mod logs;
 pub mod outage;
 pub mod proxmox;
 pub mod security;
@@ -30,6 +31,7 @@ pub struct Lab {
     pub grafana: BTreeMap<String, grafana::Grafana>,
     pub openbao: BTreeMap<String, services::OpenBao>,
     pub security: Security,
+    pub logs: crate::config::Logs,
     pub tailscale: Option<outage::Tailscale>,
     pub healthchecks: Option<outage::Healthchecks>,
     pub quiet: Option<Quiet>,
@@ -51,6 +53,7 @@ impl Lab {
             grafana: BTreeMap::new(),
             openbao: BTreeMap::new(),
             security: cfg.security.clone(),
+            logs: cfg.logs.clone(),
             tailscale: None,
             healthchecks: None,
             quiet: cfg
@@ -296,5 +299,19 @@ impl Lab {
         .into_iter()
         .filter_map(|(n, on)| on.then_some(n))
         .collect()
+    }
+}
+
+impl Lab {
+    /// Runs a log search against a configured source (RFC 0008).
+    pub async fn search_logs(&self, req: &logs::SearchRequest) -> Result<impl serde::Serialize> {
+        let src = self
+            .logs
+            .datasources
+            .iter()
+            .find(|s| s.label == req.source)
+            .ok_or_else(|| format!("no log source {:?}", req.source))?;
+        let limit = logs::validate(req, self.logs.max_rows)?;
+        logs::search(self.grafana(&src.grafana)?, src, req, limit).await
     }
 }

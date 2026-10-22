@@ -32,6 +32,7 @@ pub fn router(state: Shared) -> Router {
         .route("/api/act/pve/{name}/task", get(api::pve_task))
         .route("/api/act/flux/{name}/reconcile", post(api::flux_reconcile))
         .route("/api/act/argocd/{name}/refresh", post(api::argocd_refresh))
+        .route("/api/logs", post(api::search_logs))
         .route("/auth/logout", post(login::logout))
         .layer(from_fn_with_state(state.clone(), guard::session));
     Router::new()
