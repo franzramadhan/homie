@@ -51,7 +51,9 @@ comma, colon, parentheses or a new sentence.
 ## CI and releases
 
 - `.github/workflows/ci.yml` runs on pull requests only: `cargo fmt --check`,
-  `cargo clippy -D warnings`, `cargo test`.
+  `cargo clippy -D warnings`, `cargo test` when Rust code changed (`src/`,
+  `examples/`, Cargo files, toolchain), the web build when `web/` changed.
+  Docs-only PRs skip both (skipped required checks count as passing).
 - `.github/workflows/build.yml` runs on `v*` tags only: native per-target
   binaries, the multi-arch `scratch` image from the Linux binaries
   (`ghcr.io/franzramadhan/homie`), and a GitHub release with the tarballs and
