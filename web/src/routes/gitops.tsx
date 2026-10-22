@@ -13,6 +13,7 @@ function shortRevision(r: string) {
 
 function Cluster({ name }: { name: string }) {
   const q = useQ<FluxItem[]>("flux", name);
+  const readOnly = !!useMeta().data?.role;
   const qc = useQueryClient();
   const [onlyProblems, setOnlyProblems] = useState(false);
   const [target, setTarget] = useState<FluxItem | null>(null);
@@ -54,7 +55,9 @@ function Cluster({ name }: { name: string }) {
           <DataTable
             data={onlyProblems ? d.filter((i) => i.ready !== "True" || i.suspended) : d}
             columns={[
-              { id: "act", header: "", enableSorting: false, cell: ({ row }) => <Button onClick={() => setTarget(row.original)}>Reconcile</Button> },
+              ...(readOnly
+                ? []
+                : [{ id: "act", header: "", enableSorting: false, cell: ({ row }: { row: { original: FluxItem } }) => <Button onClick={() => setTarget(row.original)}>Reconcile</Button> }]),
               { accessorKey: "kind", header: "Kind" },
               { accessorKey: "namespace", header: "Namespace", cell: ({ row }) => <span className="whitespace-nowrap">{row.original.namespace}</span> },
               { accessorKey: "name", header: "Name", cell: ({ row }) => <Ext href={row.original.link}>{row.original.name}</Ext> },
@@ -101,6 +104,7 @@ const healthTone = (h: string): Tone =>
   h === "Healthy" ? "ok" : h === "Progressing" ? "warn" : h === "Suspended" ? "quiet" : h === "Degraded" || h === "Missing" ? "bad" : "muted";
 
 function ArgoCd({ name, url }: { name: string; url: string | null }) {
+  const readOnly = !!useMeta().data?.role;
   const q = useQ<ArgoApp[]>("argocd", name);
   const qc = useQueryClient();
   const [target, setTarget] = useState<ArgoApp | null>(null);
@@ -137,7 +141,9 @@ function ArgoCd({ name, url }: { name: string; url: string | null }) {
           <DataTable
             data={d}
             columns={[
-              { id: "act", header: "", enableSorting: false, cell: ({ row }) => <Button onClick={() => setTarget(row.original)}>Refresh</Button> },
+              ...(readOnly
+                ? []
+                : [{ id: "act", header: "", enableSorting: false, cell: ({ row }: { row: { original: ArgoApp } }) => <Button onClick={() => setTarget(row.original)}>Refresh</Button> }]),
               { accessorKey: "name", header: "Application", cell: ({ row }) => <Ext href={row.original.link}>{row.original.name}</Ext> },
               { accessorKey: "project", header: "Project" },
               { accessorKey: "sync", header: "Sync", cell: ({ row }) => <Badge tone={syncTone(row.original.sync)}>{row.original.sync}</Badge> },

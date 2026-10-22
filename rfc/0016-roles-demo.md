@@ -80,8 +80,8 @@ security findings, the tailnet).
 
 | Key | Default | |
 |---|---|---|
-| `[roles.<name>] pages, actions, namespaces, proxmox_tags, kubernetes_service_account` | none | a role; users without one have full access |
-| `[[local_login.users]] username, password_hash, role` | the single `[local_login]` user | several local users |
+| `[roles.<name>] pages, namespaces, proxmox_tags, kubernetes_service_account` | none | a role; users without one have full access |
+| `[auth] roles = { "<email>" = "<role>" }` | none | roles for OIDC users |
 | `[demo] role, max_sessions` | off | the passwordless demo button |
 
 ### Logs and metrics
@@ -108,3 +108,31 @@ security findings, the tailnet).
   namespaced RoleBinding (a pod outside the allow-list never appears).
 - **Rollout:** v0.6.0; no role configured = today's behavior.
 - **Off switch:** remove `[demo]` (no demo button) or the role.
+
+## Implementation notes
+
+Deviations found while building (v0.6.0):
+
+- Roles never run actions: there is no `actions` key, every route other than
+  `GET /api/meta`, `GET /api/q/*`, `GET /api/stream`, `POST /auth/logout`
+  (and `POST /api/logs` with the `logs` page) answers 403 for a role, and a
+  session whose role left the config is refused, never given full access.
+- Pages: `infra`, `workloads`, `gitops`, `alerts`, `logs`, `security`,
+  `tailscale`, `workflows`, `services` (OpenBao, CNPG), `outage`
+  (healthchecks). Pages other than the first three are not filtered further.
+- Helm releases are hidden for roles: they are read from Secrets.
+- Flux: a Kustomization is shown when every namespaced object in its
+  `status.inventory` is in an allowed namespace; a HelmRelease by
+  `spec.targetNamespace`, else its own namespace; sources are hidden.
+  Argo CD Applications by destination namespace.
+- Proxmox: storage and failed tasks are empty and power is off for a role.
+- `[[local_login.users]]` is not in v0.6.0: the demo button covers the demo,
+  and OIDC users get roles through `[auth] roles`.
+- The Helm chart and `deploy/kubernetes` do not create the role's
+  ServiceAccount yet; the reference lab's manifests show the RBAC.
+
+Tested in kind: the demo session sees only its namespace's workloads and is
+refused alerts, Helm, actions, logs and the GitHub picker (each logged as
+`msg="denied"`); with a namespace in the role but no RoleBinding for the
+ServiceAccount, the apiserver refuses the list and Homie returns an error,
+not data.

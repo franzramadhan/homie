@@ -455,6 +455,7 @@ email_claim = "email"
 groups_claim = ""                      # e.g. "groups"
 allowed_emails = []
 allowed_groups = []
+roles = {}                             # RFC 0016: { "<email>" = "<role>" }
 
 [proxmox.<name>]                       # optional, repeatable
 endpoints = ["https://pve1.example.com:8006"]  # or { url, tls_verify, ca_file, tls_server_name }
@@ -523,6 +524,16 @@ quiet_hosts = []
 # client_id, client_secret             # optional: the sign-in picker
 # [[github.watch]]                     # repo = "owner/name", workflow = "apply.yaml"
 # store = "auto"                       # picker saves: auto, configmap, file, off (RFC 0015)
+
+[roles.demo]                           # optional, RFC 0016: a read-only view
+# pages = ["infra", "workloads", "gitops"]
+# namespaces = ["apps"]                # explicit names, no globs
+# proxmox_tags = ["demo"]              # guests shown only with one of these tags
+# kubernetes_service_account = "homie/homie-demo"   # impersonated for Kubernetes reads
+
+[demo]                                 # optional: "Try the demo" on the login page
+# role = "demo"
+# max_sessions = 200                   # one hour each
 
 [healthchecks]                         # optional
 url = "https://healthchecks.io"

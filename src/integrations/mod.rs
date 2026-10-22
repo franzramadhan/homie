@@ -38,6 +38,7 @@ pub struct Lab {
     pub github: Option<github::GitHub>,
     pub healthchecks: Option<outage::Healthchecks>,
     pub quiet: Option<Quiet>,
+    pub roles: BTreeMap<String, std::sync::Arc<crate::config::Role>>,
 }
 
 /// The caller of a query: who they are and, in forward_token mode, the ID
@@ -46,6 +47,14 @@ pub struct Lab {
 pub struct Caller {
     pub email: Option<String>,
     pub id_token: Option<String>,
+    /// a read-only role (RFC 0016); `None` is full access
+    pub role: Option<RoleRef>,
+}
+
+#[derive(Clone)]
+pub struct RoleRef {
+    pub name: String,
+    pub role: std::sync::Arc<crate::config::Role>,
 }
 
 impl Lab {
@@ -65,6 +74,11 @@ impl Lab {
                 .as_ref()
                 .map(|q| Quiet::new(&q.window, q.timezone.as_deref()))
                 .transpose()?,
+            roles: cfg
+                .roles
+                .iter()
+                .map(|(k, v)| (k.clone(), std::sync::Arc::new(v.clone())))
+                .collect(),
         };
         for (name, c) in &cfg.proxmox {
             lab.proxmox
@@ -142,6 +156,11 @@ impl Lab {
         name: &str,
         caller: &Caller,
     ) -> Option<Envelope> {
+        if let Some(r) = &caller.role
+            && !crate::roles::allows(&r.role, kind)
+        {
+            return None;
+        }
         let quiet_now = self.quiet_active();
         let secs = |s| Duration::from_secs(s);
         let (ttl, quiet, per_user) = match kind {
@@ -179,17 +198,44 @@ impl Lab {
             "healthchecks" => (secs(60), self.healthchecks.as_ref()?.quiet, false),
             _ => return None,
         };
-        let key = match (per_user, &caller.email) {
-            (true, Some(email)) => format!("{kind}:{name}:{email}"),
+        let key = match (&caller.role, per_user, &caller.email) {
+            // a role reads with its own identity: its own cache entries
+            (Some(r), _, _) => format!("{kind}:{name}:role:{}", r.name),
+            (None, true, Some(email)) => format!("{kind}:{name}:{email}"),
             _ => format!("{kind}:{name}"),
         };
-        Some(
-            cache
-                .get(&key, ttl, quiet && quiet_now, || {
-                    self.fetch(kind, name, caller, quiet_now)
-                })
-                .await,
-        )
+        let mut env = cache
+            .get(&key, ttl, quiet && quiet_now, || {
+                self.fetch(kind, name, caller, quiet_now)
+            })
+            .await;
+        if let Some(r) = &caller.role {
+            // guest sparklines follow the guests the role sees
+            let pve = match kind {
+                "spark-pve" => Box::pin(self.query(cache, "pve", name, caller))
+                    .await
+                    .and_then(|e| e.data),
+                _ => None,
+            };
+            env.data = env
+                .data
+                .map(|d| crate::roles::filter(&r.role, kind, d, pve.as_ref()));
+        }
+        Some(env)
+    }
+
+    /// The Kubernetes client for a caller: a role's impersonated
+    /// ServiceAccount, else the shared client or the user's token.
+    fn kube_client(&self, k: &kubernetes::Kube, caller: &Caller) -> Result<kube::Client> {
+        match &caller.role {
+            Some(r) => k.impersonating(
+                r.role
+                    .kubernetes_service_account
+                    .as_deref()
+                    .ok_or("this role has no kubernetes_service_account")?,
+            ),
+            None => k.client(caller.id_token.as_deref()),
+        }
     }
 
     /// The quiet flag and per-user caching of the integration behind a preset.
@@ -229,12 +275,15 @@ impl Lab {
             }
             "k8s" => {
                 let k = self.kube(name)?;
-                serde_json::to_value(k.overview(k.client(token)?).await?)?
+                let namespaces = caller.role.as_ref().map(|r| r.role.namespaces.as_slice());
+                serde_json::to_value(k.overview(self.kube_client(k, caller)?, namespaces).await?)?
             }
             "helm" => serde_json::to_value(helm::releases(self.kube(name)?.client(token)?).await?)?,
             "flux" => {
                 let k = self.kube(name)?;
-                serde_json::to_value(flux::list_linked(k.client(token)?, &k.links).await?)?
+                serde_json::to_value(
+                    flux::list_linked(self.kube_client(k, caller)?, &k.links).await?,
+                )?
             }
             "alerts" => serde_json::to_value(self.grafana(name)?.alerts().await?)?,
             "openbao" => {
@@ -244,13 +293,14 @@ impl Lab {
             "argocd" => {
                 let k = self.kube(name)?;
                 serde_json::to_value(
-                    argocd::list(k.client(token)?, k.argocd_url.as_deref()).await?,
+                    argocd::list(self.kube_client(k, caller)?, k.argocd_url.as_deref()).await?,
                 )?
             }
             "cnpg" => {
                 let k = self.kube(name)?;
                 serde_json::to_value(
-                    services::cnpg(k.client(token)?, k.cnpg_max_backup_age_hours).await?,
+                    services::cnpg(self.kube_client(k, caller)?, k.cnpg_max_backup_age_hours)
+                        .await?,
                 )?
             }
             "security" => {
@@ -258,7 +308,8 @@ impl Lab {
                 let table = match name {
                     "kyverno" => {
                         let p = s.kyverno.as_ref().ok_or("kyverno is not configured")?;
-                        security::kyverno(self.kube(&p.kubernetes)?.client(token)?).await?
+                        let k = self.kube(&p.kubernetes)?;
+                        security::kyverno(self.kube_client(k, caller)?).await?
                     }
                     "tetragon" => {
                         let p = s.tetragon.as_ref().ok_or("tetragon is not configured")?;

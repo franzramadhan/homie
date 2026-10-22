@@ -41,6 +41,9 @@ pub struct Item {
     suspended: bool,
     since: String,
     link: Option<String>,
+    /// where it deploys (RFC 0016 role filtering): a Kustomization's
+    /// inventory, a HelmRelease's target; empty for sources
+    namespaces: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -109,7 +112,34 @@ fn item(kind: &str, o: DynamicObject) -> Item {
         suspended: o.data["spec"]["suspend"].as_bool().unwrap_or(false),
         since: text(&ready["lastTransitionTime"]),
         link: None,
+        namespaces: deploys_into(kind, &o),
     }
+}
+
+/// Namespaces an object deploys into. Inventory ids are
+/// `namespace_name_group_kind`; cluster-scoped entries have no namespace.
+fn deploys_into(kind: &str, o: &DynamicObject) -> Vec<String> {
+    let own = o.metadata.namespace.clone().unwrap_or_default();
+    let mut ns: Vec<String> = match kind {
+        "Kustomization" => o.data["status"]["inventory"]["entries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e["id"].as_str()?.split('_').next())
+            .filter(|n| !n.is_empty())
+            .map(String::from)
+            .collect(),
+        "HelmRelease" => vec![
+            o.data["spec"]["targetNamespace"]
+                .as_str()
+                .map(String::from)
+                .unwrap_or(own),
+        ],
+        _ => Vec::new(),
+    };
+    ns.sort();
+    ns.dedup();
+    ns
 }
 
 /// DNS-1123 names only: these go into API paths.

@@ -112,6 +112,7 @@ function PowerActions({ cluster, guest, onStatus }: { cluster: string; guest: Gu
 }
 
 function Cluster({ name }: { name: string }) {
+  const m = useMeta().data;
   const q = useQ<PveOverview>("pve", name);
   const sparks = useQ<Sparks>("spark-pve", name).data?.data;
   const [status, setStatus] = useState<Status | null>(null);
@@ -187,7 +188,7 @@ function Cluster({ name }: { name: string }) {
             <p className="text-sm text-ink-subtle">
               {d.cluster.name ? `Cluster ${d.cluster.name}, ` : ""}
               {d.cluster.quorate === null ? "standalone node" : d.cluster.quorate ? "quorate" : "NOT quorate"}, {d.cluster.nodes_online}/{d.cluster.nodes_total || d.nodes.length} nodes online
-              {!d.can_power && ". Power actions are off: the token has no VM.PowerMgmt."}
+              {!d.can_power && (m?.role ? ". Read-only view." : ". Power actions are off: the token has no VM.PowerMgmt.")}
             </p>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {d.nodes.map((n) => (
