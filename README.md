@@ -118,7 +118,8 @@ distributions are expected to work. Reports are welcome.
 
 ## Status
 
-v0.1.0 in progress. See [RFC 0001](rfc/0001-homie-foundation.md) for the
+Alpha. Every 0.x release is a pre-release and may change config keys or
+behavior between versions. See [RFC 0001](rfc/0001-homie-foundation.md) for the
 design and the milestone.
 
 ## License

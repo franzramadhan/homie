@@ -49,11 +49,10 @@ comma, colon, parentheses or a new sentence.
   binaries, the multi-arch `scratch` image from the Linux binaries
   (`ghcr.io/franzramadhan/homie`), and a GitHub release with the tarballs and
   `SHA256SUMS`. Merges to `main` publish nothing.
+- Versioning: `v0.MINOR.PATCH` only. Every 0.x release is alpha (GitHub
+  pre-release); no v1 until the user decides. No `-rc` suffixes for now.
 - Release: bump `version` in `Cargo.toml`, merge, then tag `v<version>`.
   The build fails when the tag and `Cargo.toml` disagree.
-- Test in the lab first with a pre-release: set `version = "X.Y.Z-rc.N"`,
-  tag `vX.Y.Z-rc.N`. The image gets only that exact tag (no `X.Y`, no
-  `latest`) and the GitHub release is marked pre-release.
 - Rust is pinned in `rust-toolchain.toml`. Bump it there.
 
 ## GitHub Actions
