@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-22 | #16 | v0.2.0 |
+| implemented | 2026-10-22 | #16 | v0.2.0 |
 
 > Show Argo CD Applications (sync, health, revision) on the GitOps page and
 > allow a refresh, for labs that run Argo CD instead of (or with) Flux.

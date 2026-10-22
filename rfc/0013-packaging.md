@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-22 | #16 | v0.2.0 |
+| implemented | 2026-10-22 | #16 | v0.2.0 |
 
 > Install Homie with `helm install` and `brew install`, published by the
 > release workflow.

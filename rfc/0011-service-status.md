@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-22 | #16 | v0.2.0 |
+| implemented | 2026-10-22 | #16 | v0.2.0 |
 
 > Status cards for the services a lab depends on: secret stores, database
 > clusters and backups.
