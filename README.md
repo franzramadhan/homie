@@ -9,6 +9,15 @@ One page for the whole homelab: hypervisor hosts and guests, Kubernetes
 workloads, GitOps state, alerts and security findings, with a few safe
 actions and deep links to the specialist UIs for everything else.
 
+**Live demo: [homie-demo.franzramadhan.dev](https://homie-demo.franzramadhan.dev)**
+(click "Try the demo"). It is the author's lab, read-only: a demo role limited
+to the Infrastructure, Workloads and GitOps pages, three namespaces and the
+guests tagged `demo`. The lab sleeps from 23:30 to 06:00 WIB (UTC+7).
+
+![Homie: overview, Proxmox guests, Kubernetes workloads, Flux, alerts and log search](docs/demo.gif)
+
+<sub>A full instance (some fields blurred). The demo shows fewer pages.</sub>
+
 Homie is a single Rust binary with the web UI embedded. It has no database.
 It runs:
 
@@ -38,6 +47,13 @@ Behavior that suits a homelab:
 
 - **Quiet hours.** Parts of the lab that are powered off on a schedule show
   as "scheduled off", not as an outage.
+- **Live updates.** Results are pushed over server-sent events; Kubernetes
+  and Flux changes show up within seconds, polling is the fallback.
+- **Roles.** A read-only view limited to some pages, explicit namespaces and
+  tagged Proxmox guests, enforced by Kubernetes RBAC as well. It powers the
+  public demo and its passwordless "Try the demo" button.
+- **Watched workflows without a restart.** Pick GitHub workflows in the UI;
+  the list is saved in a ConfigMap (in a cluster) or a file.
 - **TLS options per integration.** Verify against a custom CA, verify
   against another name than the address, skip verification, or use plain
   HTTP. The last two are opt-in and flagged in the UI and the logs.
@@ -117,6 +133,9 @@ key reference is in [RFC 0001](rfc/0001-homie-foundation.md#configuration).
   first start), `[auth]` for any OIDC provider, or both on one login page.
   Without either, Homie only listens on loopback unless you set
   `allow_unauthenticated = true`.
+- Roles and a public demo: `[roles.<name>]` and `[demo]`, see
+  [RFC 0016](rfc/0016-roles-demo.md). Run a public demo as its own instance
+  with read-only credentials only.
 
 ## Develop
 
@@ -135,9 +154,9 @@ distributions are expected to work. Reports are welcome.
 
 ## Status
 
-Alpha. Every 0.x release is a pre-release and may change config keys or
-behavior between versions. See [RFC 0001](rfc/0001-homie-foundation.md) for the
-design and the milestone.
+Alpha: 0.x releases may change config keys or behavior between versions.
+The design is in [RFC 0001](rfc/0001-homie-foundation.md); every feature since
+has its own RFC in [`rfc/`](rfc/), listed in the [roadmap](ROADMAP.md).
 
 ## License
 
