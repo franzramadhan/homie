@@ -488,9 +488,372 @@ pub fn bytes(q: &str) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::{json, list, serve};
+    use axum::{
+        Json, Router,
+        extract::Path,
+        http::{HeaderMap, StatusCode},
+        routing::get,
+    };
+    use serde_json::{Value, json};
+
+    fn ago(minutes: i64) -> String {
+        (jiff::Timestamp::now() - jiff::SignedDuration::from_mins(minutes)).to_string()
+    }
+
+    fn version(git: &str) -> Value {
+        json!({"major": "1", "minor": "32", "gitVersion": git, "gitCommit": "", "gitTreeState": "",
+               "buildDate": "", "goVersion": "", "compiler": "", "platform": ""})
+    }
+
+    /// A kubeconfig file for the fake API server at `url`.
+    fn kubeconfig(url: &str) -> std::path::PathBuf {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("homie-kube-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("config-{n}.yaml"));
+        std::fs::write(
+            &path,
+            format!(
+                "apiVersion: v1\nkind: Config\ncurrent-context: lab\n\
+                 clusters: [{{name: lab, cluster: {{server: '{url}'}}}}]\n\
+                 users: [{{name: homie, user: {{token: static}}}}]\n\
+                 contexts: [{{name: lab, context: {{cluster: lab, user: homie}}}}]\n"
+            ),
+        )
+        .unwrap();
+        path
+    }
+
+    async fn kube(url: &str, auth: &str) -> Kube {
+        let cfg: config::Kubernetes = serde_json::from_value(json!({
+            "auth": auth,
+            "kubeconfig": kubeconfig(url),
+            "headlamp_url": "https://headlamp.example/",
+        }))
+        .unwrap();
+        Kube::new("lab", &cfg).await.unwrap()
+    }
+
+    fn pod(name: &str, node: Option<&str>, status: Value) -> Value {
+        json!({"metadata": {"name": name, "namespace": "apps"},
+               "spec": {"nodeName": node, "containers": [{"name": "c",
+                   "resources": {"requests": {"cpu": "250m", "memory": "128Mi"}}}]},
+               "status": status})
+    }
+
+    fn ready(phase: &str) -> Value {
+        json!({"phase": phase, "conditions": [{"type": "Ready", "status": "True"}]})
+    }
+
+    fn restarted(minutes_ago: i64, restarts: i32) -> Value {
+        let mut s = ready("Running");
+        s["containerStatuses"] = json!([{"name": "c", "ready": true, "restartCount": restarts,
+            "image": "", "imageID": "",
+            "lastState": {"terminated": {"exitCode": 1, "finishedAt": ago(minutes_ago)}}}]);
+        s
+    }
+
+    fn event(name: &str, times: Value) -> Value {
+        let mut e = json!({"metadata": {"name": name, "namespace": "apps"},
+                           "involvedObject": {"kind": "Pod", "name": name},
+                           "reason": "BackOff", "message": "restarting"});
+        e.as_object_mut()
+            .unwrap()
+            .extend(times.as_object().unwrap().clone());
+        e
+    }
+
+    fn cluster(events: Vec<Value>) -> Router {
+        let pods = json!([
+            pod("ok", Some("n1"), ready("Running")),
+            pod("job", Some("n1"), json!({"phase": "Succeeded"})),
+            pod("crash", Some("n1"), json!({"phase": "Running", "containerStatuses": [{"name": "c",
+                "ready": false, "restartCount": 5, "image": "", "imageID": "",
+                "state": {"waiting": {"reason": "CrashLoopBackOff"}}}]})),
+            pod("restarted", Some("n2"), restarted(10, 2)),
+            pod("old-restart", Some("n2"), restarted(120, 1)),
+            pod("evicted", Some("n2"), json!({"phase": "Failed", "reason": "Evicted"})),
+            pod("pending", None, json!({"phase": "Pending"})),
+            {"metadata": {"name": "no-status"}},
+        ]);
+        let nodes = json!([
+            {"metadata": {"name": "n2"}},
+            {"metadata": {"name": "n1", "labels": {"node-role.kubernetes.io/control-plane": ""}},
+             "spec": {"unschedulable": true},
+             "status": {"allocatable": {"cpu": "4", "memory": "8Gi"},
+                        "conditions": [{"type": "Ready", "status": "True"}],
+                        "nodeInfo": {"kubeletVersion": "v1.32.0", "architecture": "", "bootID": "",
+                            "containerRuntimeVersion": "", "kernelVersion": "", "kubeProxyVersion": "",
+                            "machineID": "", "operatingSystem": "", "osImage": "", "systemUUID": ""}}},
+        ]);
+        let deployments = json!([{"metadata": {"name": "web", "namespace": "b"},
+            "spec": {"replicas": 2, "selector": {}, "template": {}}, "status": {"readyReplicas": 1}}]);
+        let daemonsets = json!([{"metadata": {"name": "agent", "namespace": "a"},
+            "status": {"numberReady": 3, "desiredNumberScheduled": 3,
+                       "currentNumberScheduled": 3, "numberMisscheduled": 0}}]);
+        let namespaces = json!([{"metadata": {"name": "a"}}, {"metadata": {"name": "b"}}, {"metadata": {"name": "c"}}]);
+        json("/api/v1/nodes", list("Node", nodes))
+            .merge(json("/api/v1/pods", list("Pod", pods)))
+            .merge(json(
+                "/apis/apps/v1/deployments",
+                list("Deployment", deployments),
+            ))
+            .merge(json(
+                "/apis/apps/v1/statefulsets",
+                list(
+                    "StatefulSet",
+                    json!([{"metadata": {"name": "db", "namespace": "a"}}]),
+                ),
+            ))
+            .merge(json(
+                "/apis/apps/v1/daemonsets",
+                list("DaemonSet", daemonsets),
+            ))
+            .merge(json("/api/v1/events", list("Event", json!(events))))
+            .merge(json("/api/v1/namespaces", list("Namespace", namespaces)))
+    }
+
+    #[tokio::test]
+    async fn overview_of_the_whole_cluster() {
+        let events = vec![
+            event("older", json!({"eventTime": ago(30)})),
+            event("newest", json!({"lastTimestamp": ago(5), "count": 4})),
+            event(
+                "created",
+                json!({"metadata": {"name": "created", "namespace": "apps", "creationTimestamp": ago(20)}}),
+            ),
+            event("stale", json!({"lastTimestamp": ago(90)})),
+            event("timeless", json!({})),
+        ];
+        let url = serve(cluster(events)).await;
+        let k = kube(&url, "kubeconfig").await;
+        let o = k.overview(k.client(None).unwrap(), None).await.unwrap();
+
+        assert_eq!(o.namespaces, 3);
+        let names: Vec<_> = o.nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, ["n1", "n2"]);
+        let n1 = &o.nodes[0];
+        assert!(n1.ready && n1.unschedulable);
+        assert_eq!(n1.roles, ["control-plane"]);
+        assert_eq!(n1.version, "v1.32.0");
+        assert_eq!(
+            (n1.cpu_allocatable, n1.mem_allocatable),
+            (4.0, 8.0 * 1073741824.0)
+        );
+        // ok and crash; the finished Job pod requests nothing
+        assert_eq!(
+            (n1.cpu_requested, n1.mem_requested),
+            (0.5, 2.0 * 134217728.0)
+        );
+        assert_eq!(
+            n1.link.as_deref(),
+            Some("https://headlamp.example/c/main/nodes/n1")
+        );
+        // both restarted pods run there; the failed one requests nothing
+        assert!(!o.nodes[1].ready);
+        assert_eq!(o.nodes[1].cpu_requested, 0.5);
+
+        let pods: Vec<_> = o
+            .unhealthy_pods
+            .iter()
+            .map(|p| (p.name.as_str(), p.reason.as_str(), p.restarts))
+            .collect();
+        assert_eq!(
+            pods,
+            [
+                ("crash", "CrashLoopBackOff", 5),
+                ("restarted", "Restarted", 2),
+                ("evicted", "Evicted", 0),
+                ("pending", "NotReady", 0),
+            ]
+        );
+        assert_eq!(
+            o.unhealthy_pods[0].link.as_deref(),
+            Some("https://headlamp.example/c/main/pods/apps/crash")
+        );
+
+        let workloads: Vec<_> = o
+            .workloads
+            .iter()
+            .map(|w| {
+                (
+                    w.kind,
+                    w.namespace.as_str(),
+                    w.name.as_str(),
+                    w.ready,
+                    w.desired,
+                )
+            })
+            .collect();
+        assert_eq!(
+            workloads,
+            [
+                ("DaemonSet", "a", "agent", 3, 3),
+                ("StatefulSet", "a", "db", 0, 1),
+                ("Deployment", "b", "web", 1, 2),
+            ]
+        );
+        assert_eq!(
+            o.workloads[2].link.as_deref(),
+            Some("https://headlamp.example/c/main/deployments/b/web")
+        );
+
+        let events: Vec<_> = o
+            .events
+            .iter()
+            .map(|e| (e.object.as_str(), e.count))
+            .collect();
+        assert_eq!(
+            events,
+            [("Pod/newest", 4), ("Pod/created", 1), ("Pod/older", 1)]
+        );
+    }
+
+    #[tokio::test]
+    async fn keeps_the_newest_fifty_events() {
+        let events = (0..55)
+            .map(|i| event(&format!("e{i}"), json!({"lastTimestamp": ago(i)})))
+            .collect();
+        let url = serve(cluster(events)).await;
+        let k = kube(&url, "kubeconfig").await;
+        let o = k.overview(k.client(None).unwrap(), None).await.unwrap();
+        assert_eq!(o.events.len(), 50);
+        assert_eq!(o.events[0].object, "Pod/e0");
+        assert_eq!(o.events[49].object, "Pod/e49");
+    }
+
+    #[tokio::test]
+    async fn overview_of_some_namespaces() {
+        async fn namespaced(Path((ns, plural)): Path<(String, String)>) -> Json<Value> {
+            let meta = json!({"name": format!("{plural}-{ns}"), "namespace": ns});
+            let item = match plural.as_str() {
+                "pods" => {
+                    json!({"metadata": meta, "spec": {"containers": []}, "status": {"phase": "Pending"}})
+                }
+                "events" => return Json(list("Event", json!([]))),
+                _ => json!({"metadata": meta}),
+            };
+            Json(list("Item", json!([item])))
+        }
+        let app = json("/api/v1/nodes", list("Node", json!([])))
+            .route("/api/v1/namespaces/{ns}/{plural}", get(namespaced))
+            .route("/apis/apps/v1/namespaces/{ns}/{plural}", get(namespaced));
+        let url = serve(app).await;
+        let k = kube(&url, "kubeconfig").await;
+        let ns = ["a".to_string(), "b".to_string()];
+        let o = k
+            .overview(k.client(None).unwrap(), Some(&ns))
+            .await
+            .unwrap();
+        assert_eq!(o.namespaces, 2);
+        assert_eq!(o.workloads.len(), 6);
+        let pods: Vec<_> = o.unhealthy_pods.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(pods, ["pods-a", "pods-b"]);
+    }
+
+    #[tokio::test]
+    async fn overview_fails_when_a_list_fails() {
+        let url = serve(json("/api/v1/nodes", list("Node", json!([])))).await;
+        let k = kube(&url, "kubeconfig").await;
+        assert!(k.overview(k.client(None).unwrap(), None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn client_modes() {
+        let echo = |header: &'static str| {
+            get(move |h: HeaderMap| async move {
+                let v = h
+                    .get(header)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("none");
+                Json(version(v))
+            })
+        };
+        let url = serve(Router::new().route("/version", echo("authorization"))).await;
+
+        let shared = kube(&url, "kubeconfig").await;
+        assert!(!shared.forwards_token());
+        assert_eq!(
+            shared.headlamp_url.as_deref(),
+            Some("https://headlamp.example")
+        );
+        let v = shared.client(None).unwrap().apiserver_version().await;
+        assert_eq!(v.unwrap().git_version, "Bearer static");
+
+        let user = kube(&url, "forward_token").await;
+        assert!(user.forwards_token());
+        assert!(user.client(None).is_err());
+        let v = user
+            .client(Some("id-token"))
+            .unwrap()
+            .apiserver_version()
+            .await;
+        assert_eq!(v.unwrap().git_version, "Bearer id-token");
+
+        let url = serve(Router::new().route("/version", echo("impersonate-user"))).await;
+        let k = kube(&url, "kubeconfig").await;
+        assert!(k.impersonating("no-slash").is_err());
+        let v = k
+            .impersonating("team-a/viewer")
+            .unwrap()
+            .apiserver_version()
+            .await;
+        assert_eq!(
+            v.unwrap().git_version,
+            "system:serviceaccount:team-a:viewer"
+        );
+    }
+
+    #[tokio::test]
+    async fn new_reports_config_errors() {
+        let cfg = |v: Value| serde_json::from_value::<config::Kubernetes>(v).unwrap();
+        let missing =
+            cfg(json!({"auth": "kubeconfig", "kubeconfig": "/nonexistent/homie/kubeconfig"}));
+        let e = Kube::new("lab", &missing).await.err().unwrap().to_string();
+        assert!(e.starts_with("kubernetes.lab:"), "{e}");
+        // outside a pod there is no ServiceAccount to read
+        for auth in ["in_cluster", "forward_token"] {
+            assert!(Kube::new("lab", &cfg(json!({"auth": auth}))).await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn probe_reports_access() {
+        let version_ok =
+            || Router::new().route("/version", get(|| async { Json(version("v1.32.0")) }));
+        let namespaces = json("/api/v1/namespaces", list("Namespace", json!([])));
+
+        let url = serve(version_ok().merge(namespaces)).await;
+        let msg = kube(&url, "kubeconfig").await.probe().await.unwrap();
+        assert_eq!(msg, "Kubernetes v1.32.0, can list namespaces");
+
+        let url = serve(version_ok()).await;
+        let msg = kube(&url, "kubeconfig").await.probe().await.unwrap();
+        assert_eq!(msg, "Kubernetes v1.32.0, cannot list namespaces");
+        let msg = kube(&url, "forward_token").await.probe().await.unwrap();
+        assert!(
+            msg.ends_with("user access is checked at login (forward_token)"),
+            "{msg}"
+        );
+
+        let refused =
+            |code: StatusCode| Router::new().route("/version", get(move || async move { code }));
+        let url = serve(refused(StatusCode::UNAUTHORIZED)).await;
+        let msg = kube(&url, "forward_token").await.probe().await.unwrap();
+        assert!(
+            msg.starts_with("API answers (anonymous access refused)"),
+            "{msg}"
+        );
+        let url = serve(refused(StatusCode::INTERNAL_SERVER_ERROR)).await;
+        assert!(kube(&url, "kubeconfig").await.probe().await.is_err());
+        assert!(kube(&url, "forward_token").await.probe().await.is_err());
+    }
 
     #[test]
     fn quantities() {
+        assert_eq!(cpu("500u"), 0.0005);
         assert_eq!(cpu("250m"), 0.25);
         assert_eq!(cpu("2"), 2.0);
         assert_eq!(cpu("1500000n"), 0.0015);
