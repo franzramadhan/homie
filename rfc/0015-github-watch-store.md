@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-22 | #35 | v0.5.0 |
+| implemented | 2026-10-22 | #36 | v0.5.0 |
 
 > The workflow picker saves the watch list itself, so adding or removing a
 > watched workflow takes effect at once, with no config edit and no restart.
