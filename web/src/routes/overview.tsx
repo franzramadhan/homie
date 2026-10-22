@@ -2,7 +2,7 @@
 
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import { useMeta, useQ, type Alerts, type BaoHealth, type Check, type PgCluster, type Device, type Envelope, type FluxItem, type K8sOverview, type PveOverview, type SecurityTable } from "../api";
+import { useMeta, useQ, type Alerts, type ArgoApp, type BaoHealth, type Check, type PgCluster, type Device, type Envelope, type FluxItem, type K8sOverview, type PveOverview, type SecurityTable } from "../api";
 import { Badge, sourceTone, type Tone } from "../ui";
 
 function Card<T>({ title, to, env, summary }: { title: string; to?: string; env: Envelope<T> | undefined; summary: (d: T) => { tone: Tone; lines: ReactNode[] } }) {
@@ -94,6 +94,8 @@ function K8sCard({ name }: { name: string }) {
 
 function FluxCard({ name }: { name: string }) {
   const q = useQ<FluxItem[]>("flux", name);
+  // clusters without Flux show nothing
+  if (q.data?.data && q.data.data.length === 0) return null;
   return (
     <Card
       title={`Flux ${name}`}
@@ -108,6 +110,29 @@ function FluxCard({ name }: { name: string }) {
             `${d.length - failing.length}/${d.length} objects ready`,
             failing.length ? `failing: ${failing.slice(0, 3).map((i) => i.name).join(", ")}` : "nothing failing",
             `${suspended} suspended`,
+          ],
+        };
+      }}
+    />
+  );
+}
+
+function ArgoCard({ name }: { name: string }) {
+  const q = useQ<ArgoApp[]>("argocd", name);
+  if (q.data?.data && q.data.data.length === 0) return null;
+  return (
+    <Card
+      title={`Argo CD ${name}`}
+      to="/gitops"
+      env={q.data}
+      summary={(d) => {
+        const bad = d.filter((a) => a.health === "Degraded" || a.health === "Missing");
+        const out = d.filter((a) => a.sync === "OutOfSync");
+        return {
+          tone: bad.length ? "bad" : out.length ? "warn" : "ok",
+          lines: [
+            `${d.length - out.length}/${d.length} applications synced`,
+            bad.length ? `degraded: ${bad.slice(0, 3).map((a) => a.name).join(", ")}` : "none degraded",
           ],
         };
       }}
@@ -244,6 +269,9 @@ export function Overview() {
       ))}
       {m.kubernetes.map((k) => (
         <FluxCard key={k.name} name={k.name} />
+      ))}
+      {m.kubernetes.map((k) => (
+        <ArgoCard key={`argo-${k.name}`} name={k.name} />
       ))}
       {m.grafana.map((g) => (
         <AlertsCard key={g.name} name={g.name} />

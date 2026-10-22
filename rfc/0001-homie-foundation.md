@@ -472,6 +472,7 @@ headlamp_cluster = "main"              # {cluster} in link templates
 # [kubernetes.<name>.links]            # RFC 0007: node, pod, workload, flux URL templates
 # [kubernetes.<name>.metrics]          # RFC 0012: grafana, datasource, cpu, memory, node_label
 # cnpg_max_backup_age_hours = 26       # RFC 0011: older last backup is amber
+# argocd_url = ""                      # RFC 0005: deep links to Argo CD Applications
 
 # [openbao.<name>]                     # RFC 0011: url + TLS options, quiet; unauthenticated health
 quiet = false

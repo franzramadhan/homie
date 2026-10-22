@@ -27,6 +27,17 @@ The GitOps page knows only Flux.
 |---|---|---|
 | `kubernetes.<name>.argocd_url` | - | deep links to Applications |
 
+## Changes during implementation
+
+- Overview card and GitOps section appear only where Applications exist
+  (Flux sections now do the same).
+- `deploy/kubernetes/rbac.yaml`: read on `applications.argoproj.io` (and
+  CloudNativePG `clusters`, `backups` for RFC 0011), patch on Applications for
+  refresh.
+- Tested against a kind cluster with the Argo CD v3.5.6 Application CRD:
+  single- and multi-source apps, degraded and failed operations, normal and
+  hard refresh (annotation verified on the object), invalid names refused.
+
 ## Alternatives
 
 | Option | Why not |

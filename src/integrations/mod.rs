@@ -1,6 +1,7 @@
 //! Every configured integration, built once at start, and the named queries
 //! the API serves from them.
 
+pub mod argocd;
 pub mod flux;
 pub mod grafana;
 pub mod helm;
@@ -151,9 +152,13 @@ impl Lab {
             }
             "alerts" => (secs(30), self.grafana.get(name)?.quiet, false),
             "openbao" => (secs(30), self.openbao.get(name)?.quiet, false),
-            "cnpg" => {
+            "cnpg" | "argocd" => {
                 let k = self.kubernetes.get(name)?;
-                (secs(30), k.quiet, k.forwards_token())
+                (
+                    secs(if kind == "argocd" { 10 } else { 30 }),
+                    k.quiet,
+                    k.forwards_token(),
+                )
             }
             "security" => {
                 let (quiet, per_user) = self.preset_owner(name)?;
@@ -224,6 +229,12 @@ impl Lab {
             "openbao" => {
                 let b = self.openbao.get(name).ok_or("no such openbao")?;
                 serde_json::to_value(b.health().await?)?
+            }
+            "argocd" => {
+                let k = self.kube(name)?;
+                serde_json::to_value(
+                    argocd::list(k.client(token)?, k.argocd_url.as_deref()).await?,
+                )?
             }
             "cnpg" => {
                 let k = self.kube(name)?;

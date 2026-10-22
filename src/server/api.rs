@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::Shared;
-use crate::integrations::{Caller, flux, proxmox::PowerRequest};
+use crate::integrations::{Caller, argocd, flux, proxmox::PowerRequest};
 
 fn error(status: StatusCode, msg: impl ToString) -> Response {
     (status, Json(json!({ "error": msg.to_string() }))).into_response()
@@ -33,7 +33,7 @@ pub async fn meta(State(state): State<Shared>, Extension(caller): Extension<Call
             "name": p.name, "quiet": p.quiet, "ui_url": p.ui_url, "insecure": p.insecure,
         })).collect::<Vec<_>>(),
         "kubernetes": lab.kubernetes.values().map(|k| json!({
-            "name": k.name, "quiet": k.quiet, "headlamp_url": k.headlamp_url, "forward_token": k.forwards_token(), "metrics": k.metrics.is_some(),
+            "name": k.name, "quiet": k.quiet, "headlamp_url": k.headlamp_url, "forward_token": k.forwards_token(), "metrics": k.metrics.is_some(), "argocd_url": k.argocd_url,
         })).collect::<Vec<_>>(),
         "grafana": lab.grafana.values().map(|g| json!({
             "name": g.name, "quiet": g.quiet, "url": g.url, "insecure": g.insecure,
@@ -139,6 +139,32 @@ pub async fn flux_reconcile(
     state.cache.invalidate(&format!("flux:{name}"));
     match result {
         Ok(done) => Json(json!({ "reconciled": done })).into_response(),
+        Err(e) => error(StatusCode::BAD_REQUEST, e),
+    }
+}
+
+pub async fn argocd_refresh(
+    State(state): State<Shared>,
+    Extension(caller): Extension<Caller>,
+    Path(name): Path<String>,
+    Json(req): Json<argocd::RefreshRequest>,
+) -> Response {
+    let Some(kube) = state.lab.kubernetes.get(&name) else {
+        return error(StatusCode::NOT_FOUND, "no such cluster");
+    };
+    let result = match kube.client(caller.id_token.as_deref()) {
+        Ok(client) => argocd::refresh(client, &req).await,
+        Err(e) => Err(e),
+    };
+    log_action(
+        "argocd.refresh",
+        &caller,
+        &format!("{name}/{}/{}", req.namespace, req.name),
+        &result,
+    );
+    state.cache.invalidate(&format!("argocd:{name}"));
+    match result {
+        Ok(done) => Json(json!({ "refreshed": done })).into_response(),
         Err(e) => error(StatusCode::BAD_REQUEST, e),
     }
 }
