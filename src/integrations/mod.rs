@@ -14,6 +14,7 @@ pub mod proxmox;
 pub mod security;
 pub mod services;
 pub mod sparks;
+pub mod watch_store;
 
 use std::{collections::BTreeMap, time::Duration};
 
@@ -89,7 +90,7 @@ impl Lab {
             );
         }
         if let Some(g) = &cfg.github {
-            lab.github = Some(github::GitHub::new(g).await?);
+            lab.github = Some(github::GitHub::new(g, cfg.state_dir.as_deref()).await?);
         }
         if let Some(h) = &cfg.healthchecks {
             lab.healthchecks = Some(outage::Healthchecks::new(h).await?);

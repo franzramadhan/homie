@@ -25,6 +25,8 @@ rbac:
   actions: true
   # list Secrets for the Helm releases view (Homie never returns values)
   helmReleases: false
+  # save the workflow picker's watch list in a ConfigMap (RFC 0015)
+  githubWatch: true
 
 serviceAccount:
   create: true

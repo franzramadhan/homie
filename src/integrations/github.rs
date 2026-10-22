@@ -21,7 +21,11 @@ use crate::{
 
 pub struct GitHub {
     pub quiet: bool,
-    pub watch: Vec<config::Watch>,
+    /// from the config file: read-only in the UI
+    config_watch: Vec<config::Watch>,
+    /// saved by the picker (RFC 0015)
+    saved: std::sync::RwLock<Vec<config::Watch>>,
+    pub store: super::watch_store::Store,
     pub helper: bool,
     target: Target,
     cred: Cred,
@@ -40,6 +44,8 @@ enum Cred {
 pub struct Workflow {
     repo: String,
     workflow: String,
+    /// "config" or "saved"
+    source: &'static str,
     name: String,
     link: String,
     runs: Vec<Run>,
@@ -139,7 +145,7 @@ fn run(r: &Value, repo_url: &str) -> Run {
 }
 
 impl GitHub {
-    pub async fn new(cfg: &config::GitHub) -> Result<Self> {
+    pub async fn new(cfg: &config::GitHub, state_dir: Option<&std::path::Path>) -> Result<Self> {
         let tls = config::Tls {
             tls_verify: true,
             ca_file: None,
@@ -169,9 +175,18 @@ impl GitHub {
             resolve(&cfg.client_id).await?,
             resolve(&cfg.client_secret).await?,
         );
+        let store = super::watch_store::Store::new(cfg.store, state_dir)
+            .await
+            .map_err(|e| format!("github.store: {e}"))?;
+        let saved = store
+            .load()
+            .await
+            .map_err(|e| format!("github.store: {e}"))?;
         Ok(Self {
             quiet: cfg.quiet,
-            watch: cfg.watch.clone(),
+            config_watch: cfg.watch.clone(),
+            saved: std::sync::RwLock::new(saved),
+            store,
             helper: client_id.is_some() && client_secret.is_some(),
             target,
             cred,
@@ -257,12 +272,76 @@ impl GitHub {
         Ok(token)
     }
 
-    async fn workflow(&self, w: &config::Watch) -> Workflow {
+    /// Config watches, then saved ones not already in the config.
+    pub fn watch(&self) -> Vec<(config::Watch, &'static str)> {
+        let mut all: Vec<_> = self
+            .config_watch
+            .iter()
+            .map(|w| (w.clone(), "config"))
+            .collect();
+        for w in self.saved.read().unwrap().iter() {
+            if !self.config_watch.contains(w) {
+                all.push((w.clone(), "saved"));
+            }
+        }
+        all
+    }
+
+    /// Sets the saved watches of `repo` to `workflows` (config ones are
+    /// skipped) and persists the list. Returns (added, removed).
+    pub async fn save_repo(
+        &self,
+        repo: &str,
+        workflows: &[String],
+    ) -> Result<(Vec<String>, Vec<String>)> {
+        let mut next: Vec<config::Watch> = self
+            .saved
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|w| w.repo != repo)
+            .cloned()
+            .collect();
+        let before: Vec<String> = self
+            .saved
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|w| w.repo == repo)
+            .map(|w| w.workflow.clone())
+            .collect();
+        let mine: Vec<config::Watch> = workflows
+            .iter()
+            .map(|f| config::Watch {
+                repo: repo.to_string(),
+                workflow: f.clone(),
+            })
+            .filter(|w| !self.config_watch.contains(w))
+            .collect();
+        let added = mine
+            .iter()
+            .filter(|w| !before.contains(&w.workflow))
+            .map(|w| w.workflow.clone())
+            .collect();
+        let removed = before
+            .iter()
+            .filter(|f| !mine.iter().any(|w| &w.workflow == *f))
+            .cloned()
+            .collect();
+        next.extend(mine);
+        // ponytail: last writer wins between two Homie replicas; Homie runs one (in-memory sessions)
+        self.store.save(&next).await?;
+        *self.saved.write().unwrap() = next;
+        Ok((added, removed))
+    }
+
+    async fn workflow(&self, w: &config::Watch, source: &'static str) -> Workflow {
         let (owner, _) = w.repo.split_once('/').unwrap_or((&w.repo, ""));
         let repo_url = format!("https://github.com/{}", w.repo);
         let mut out = Workflow {
             repo: w.repo.clone(),
             workflow: w.workflow.clone(),
+            source,
             name: w.workflow.clone(),
             link: format!("{repo_url}/actions/workflows/{}", w.workflow),
             runs: Vec::new(),
@@ -303,7 +382,8 @@ impl GitHub {
 
     /// Every watched workflow. One failing workflow does not hide the others.
     pub async fn workflows(&self) -> Result<Vec<Workflow>> {
-        let all = join_all(self.watch.iter().map(|w| self.workflow(w))).await;
+        let watch = self.watch();
+        let all = join_all(watch.iter().map(|(w, s)| self.workflow(w, s))).await;
         if !all.is_empty() && all.iter().all(|w| w.error.is_some()) {
             return Err(all[0].error.clone().unwrap_or_default().into());
         }
@@ -433,6 +513,49 @@ mod tests {
 
     // a throwaway 2048-bit test key, never used anywhere else
     const TEST_KEY: &str = include_str!("../../tests/fixtures/test-rsa.pem");
+
+    #[tokio::test]
+    async fn saved_watches_merge_with_config() {
+        let dir = std::env::temp_dir().join(format!("homie-gh-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let w = |f: &str| config::Watch {
+            repo: "o/r".into(),
+            workflow: f.into(),
+        };
+        let cfg = config::GitHub {
+            app_id: None,
+            private_key: None,
+            token: Some(crate::secret::Secret::Plain("t".into())),
+            client_id: None,
+            client_secret: None,
+            watch: vec![w("plan.yml")],
+            api_url: "https://api.github.com".into(),
+            quiet: false,
+            store: config::WatchStore::File,
+        };
+        let gh = GitHub::new(&cfg, Some(&dir)).await.unwrap();
+        let names = |gh: &GitHub| {
+            gh.watch()
+                .into_iter()
+                .map(|(w, s)| format!("{}:{s}", w.workflow))
+                .collect::<Vec<_>>()
+        };
+        // the config one is not saved again
+        let (added, removed) = gh
+            .save_repo("o/r", &["plan.yml".into(), "ci.yml".into()])
+            .await
+            .unwrap();
+        assert_eq!((added, removed), (vec!["ci.yml".to_string()], vec![]));
+        assert_eq!(names(&gh), ["plan.yml:config", "ci.yml:saved"]);
+        // a restart reads the saved list back
+        let again = GitHub::new(&cfg, Some(&dir)).await.unwrap();
+        assert_eq!(names(&again), ["plan.yml:config", "ci.yml:saved"]);
+        // unticking removes saved ones only
+        let (_, removed) = again.save_repo("o/r", &[]).await.unwrap();
+        assert_eq!(removed, ["ci.yml"]);
+        assert_eq!(names(&again), ["plan.yml:config"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn signs_a_verifiable_jwt() {

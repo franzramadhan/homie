@@ -26,12 +26,15 @@ on a remote host or in a cluster, a two-click change becomes a deploy.
 - Where saved watches live, picked automatically:
   - in a cluster (in-cluster or `forward_token` config): a ConfigMap
     `homie-github-watch` in Homie's namespace, written with Homie's own
-    ServiceAccount (RBAC: `get`, `create`, `update` on that one name);
+    ServiceAccount (RBAC: `get` and `update` on that one name; `create` on
+    ConfigMaps in the namespace, since RBAC cannot limit `create` to a name);
   - elsewhere, with `state_dir` set: `state_dir/github-watch.json` (0600);
   - neither: no Save button, the picker prints lines to paste (today's
     behavior).
 - Any logged-in user may change the saved list (Homie has no roles). The
-  write needs the CSRF header like every action.
+  write needs the CSRF header like every action, and a GitHub sign-in that
+  sees each added workflow: nobody adds a repository they cannot read
+  themselves through the app's shared token.
 - The ConfigMap is not in Git, so Flux leaves it alone; deleting it resets
   the saved list.
 
@@ -41,8 +44,8 @@ on a remote host or in a cluster, a two-click change becomes a deploy.
 |---|---|---|
 | `[github] store` | `"auto"` | `"auto"`, `"configmap"`, `"file"` or `"off"` (paste-only, as in RFC 0014) |
 
-The Helm chart and `deploy/kubernetes` get the Role and RoleBinding for the
-ConfigMap.
+The Helm chart (`rbac.githubWatch`, default on) and `deploy/kubernetes`
+get the Role and RoleBinding for the ConfigMap.
 
 ### Logs and metrics
 

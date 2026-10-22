@@ -47,7 +47,7 @@ pub async fn meta(State(state): State<Shared>, Extension(caller): Extension<Call
         })).collect::<Vec<_>>(),
         "security": lab.presets(),
         "tailscale": lab.tailscale.is_some(),
-        "github": lab.github.as_ref().map(|g| json!({ "watch": g.watch.len(), "helper": g.helper })),
+        "github": lab.github.as_ref().map(|g| json!({ "watch": g.watch().len(), "helper": g.helper, "store": g.store.name() })),
         "healthchecks": lab.healthchecks.as_ref().map(|h| json!({ "url": h.url })),
     }))
     .into_response()
@@ -64,7 +64,12 @@ pub async fn query(
     }
 }
 
-fn log_action(action: &str, caller: &Caller, target: &str, result: &Result<String, crate::Error>) {
+pub(super) fn log_action(
+    action: &str,
+    caller: &Caller,
+    target: &str,
+    result: &Result<String, crate::Error>,
+) {
     let user = caller.email.as_deref().unwrap_or("local");
     match result {
         Ok(detail) => {
