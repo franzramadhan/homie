@@ -83,6 +83,19 @@ datasource = "grafanacloud-logs"
 type = "loki"
 node_query = '{instance="{node}"}'
 
+# Terraform runs of the infra repo, read with a GitHub App (Actions: read)
+[github]
+app_id = 0
+private_key = { env = "GITHUB_APP_PRIVATE_KEY" }
+
+[[github.watch]]
+repo = "<org>/infrastructure"
+workflow = "plan.yaml"
+
+[[github.watch]]
+repo = "<org>/infrastructure"
+workflow = "apply.yaml"
+
 [tailscale]
 oauth_client_id = { env = "TS_OAUTH_CLIENT_ID" }
 oauth_client_secret = { env = "TS_OAUTH_CLIENT_SECRET" }

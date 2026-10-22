@@ -81,6 +81,23 @@ pub async fn run(cfg: Config) -> Result<()> {
             }),
         ));
     }
+    if let Some(g) = &lab.github {
+        probes.push((
+            "github".into(),
+            Box::pin(async move {
+                let flows = g.workflows().await?;
+                let broken: Vec<String> = flows
+                    .iter()
+                    .filter_map(|w| Some(format!("{}: {}", w.label(), w.err()?)))
+                    .collect();
+                if broken.is_empty() {
+                    Ok(format!("{} watched workflows readable", flows.len()))
+                } else {
+                    Err(broken.join("; ").into())
+                }
+            }),
+        ));
+    }
     if let Some(h) = &lab.healthchecks {
         probes.push((
             "healthchecks".into(),

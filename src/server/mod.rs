@@ -2,6 +2,7 @@
 
 mod api;
 mod assets;
+mod github;
 mod guard;
 mod login;
 
@@ -20,6 +21,10 @@ pub struct AppState {
     pub lab: Lab,
     pub cache: Cache,
     pub auth: Option<Auth>,
+    /// GitHub picker helper: user tokens per Homie user, pending OAuth states
+    pub github_users: std::sync::Mutex<std::collections::HashMap<String, String>>,
+    pub github_states:
+        std::sync::Mutex<std::collections::HashMap<String, (String, std::time::Instant)>>,
 }
 
 pub type Shared = Arc<AppState>;
@@ -33,6 +38,10 @@ pub fn router(state: Shared) -> Router {
         .route("/api/act/flux/{name}/reconcile", post(api::flux_reconcile))
         .route("/api/act/argocd/{name}/refresh", post(api::argocd_refresh))
         .route("/api/logs", post(api::search_logs))
+        .route("/api/github/repos", get(github::repos))
+        .route("/api/github/workflows", get(github::workflows))
+        .route("/github/login", get(github::login))
+        .route("/github/callback", get(github::callback))
         .route("/auth/logout", post(login::logout))
         .layer(from_fn_with_state(state.clone(), guard::session));
     Router::new()
@@ -68,6 +77,8 @@ pub async fn run(cfg: Config) -> Result<()> {
         lab,
         cache,
         auth,
+        github_users: Default::default(),
+        github_states: Default::default(),
     });
     let persist = state.clone();
     tokio::spawn(async move { persist.cache.persist_loop().await });

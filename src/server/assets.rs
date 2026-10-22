@@ -14,7 +14,7 @@ struct Assets;
 
 pub async fn serve(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
-    if path.starts_with("api/") || path.starts_with("auth/") {
+    if path.starts_with("api/") || path.starts_with("auth/") || path.starts_with("github/") {
         return (StatusCode::NOT_FOUND, "not found").into_response();
     }
     let (name, file) = match Assets::get(path).filter(|_| !path.is_empty()) {

@@ -46,6 +46,7 @@ pub async fn meta(State(state): State<Shared>, Extension(caller): Extension<Call
         })).collect::<Vec<_>>(),
         "security": lab.presets(),
         "tailscale": lab.tailscale.is_some(),
+        "github": lab.github.as_ref().map(|g| json!({ "watch": g.watch.len(), "helper": g.helper })),
         "healthchecks": lab.healthchecks.as_ref().map(|h| json!({ "url": h.url })),
     }))
     .into_response()

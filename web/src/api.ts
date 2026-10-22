@@ -24,6 +24,7 @@ export type Meta = {
   logs: { label: string; type: "victorialogs" | "loki"; pod_query: string | null; node_query: string | null }[];
   security: string[];
   tailscale: boolean;
+  github: { watch: number; helper: boolean } | null;
   healthchecks: { url: string } | null;
 };
 
@@ -170,6 +171,31 @@ export type PgCluster = {
   backup_age_hours: number | null;
   backup_stale: boolean;
 };
+
+export type GhRun = {
+  number: number;
+  title: string;
+  status: string;
+  conclusion: string | null;
+  event: string;
+  branch: string;
+  actor: string;
+  started: string;
+  seconds: number | null;
+  sha: string;
+  commit_link: string;
+  link: string;
+};
+export type GhWorkflow = { repo: string; workflow: string; name: string; link: string; runs: GhRun[]; error: string | null };
+
+/** The run that decides health: the newest completed one, and whether a run waits too long. */
+export function workflowHealth(w: GhWorkflow): "failed" | "stuck" | "ok" | "unknown" {
+  const queued = w.runs.find((r) => r.status === "queued" || r.status === "waiting" || r.status === "pending");
+  if (queued && Date.now() - new Date(queued.started).getTime() > 10 * 60_000) return "stuck";
+  const last = w.runs.find((r) => r.status === "completed" && r.conclusion !== "skipped" && r.conclusion !== "cancelled");
+  if (!last) return "unknown";
+  return last.conclusion === "success" ? "ok" : "failed";
+}
 
 export type LogRow = { time: string; message: string; labels: string };
 

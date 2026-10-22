@@ -12,6 +12,7 @@ import { Observability } from "./routes/observability";
 import { Overview } from "./routes/overview";
 import { Security } from "./routes/security";
 import { Tailscale } from "./routes/tailscale";
+import { Workflows } from "./routes/workflows";
 import { Workloads } from "./routes/workloads";
 import { Badge } from "./ui";
 
@@ -23,6 +24,7 @@ function Layout() {
     ["/infra", "Infrastructure", !!m?.proxmox.length],
     ["/workloads", "Workloads", !!m?.kubernetes.length],
     ["/gitops", "GitOps", !!m?.kubernetes.length],
+    ["/workflows", "Workflows", !!m?.github],
     ["/observability", "Alerts", !!m?.grafana.length],
     ["/logs", "Logs", !!m?.logs.length],
     ["/security", "Security", !!m?.security.length],
@@ -81,6 +83,7 @@ const router = createRouter({
     page("/infra", Infra),
     page("/workloads", Workloads),
     page("/gitops", GitOps),
+    page("/workflows", Workflows),
     page("/observability", Observability),
     page("/security", Security),
     page("/logs", Logs),

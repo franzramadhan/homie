@@ -513,6 +513,13 @@ api_key = { env = "TS_API_KEY" }       # or oauth_client_id + oauth_client_secre
 hosts = ["*"]                          # watched: counted on the overview
 quiet_hosts = []
 
+[github]                               # optional, RFC 0014
+# app_id = 123456                      # GitHub App (Actions: read), installation tokens
+# private_key = { file = "~/.config/homie/github-app.pem" }
+# token = { env = "GITHUB_TOKEN" }     # or a fine-grained token
+# client_id, client_secret             # optional: the sign-in picker
+# [[github.watch]]                     # repo = "owner/name", workflow = "apply.yaml"
+
 [healthchecks]                         # optional
 url = "https://healthchecks.io"
 api_key = { env = "HC_API_KEY" }

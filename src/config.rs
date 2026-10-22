@@ -37,6 +37,7 @@ pub struct Config {
     pub security: Security,
     pub logs: Logs,
     pub tailscale: Option<Tailscale>,
+    pub github: Option<GitHub>,
     pub healthchecks: Option<Healthchecks>,
 }
 
@@ -58,6 +59,7 @@ impl Default for Config {
             security: Security::default(),
             logs: Logs::default(),
             tailscale: None,
+            github: None,
             healthchecks: None,
         }
     }
@@ -412,6 +414,44 @@ fn default_hosts() -> Vec<String> {
     vec!["*".into()]
 }
 
+/// GitHub Actions workflow runs for a shared watch list (RFC 0014).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitHub {
+    #[serde(default)]
+    pub app_id: Option<u64>,
+    /// the GitHub App's PEM private key
+    #[serde(default)]
+    pub private_key: Option<Secret>,
+    /// a fine-grained token instead of the app
+    #[serde(default)]
+    pub token: Option<Secret>,
+    /// the app's user authorization, for the picking helper only
+    #[serde(default)]
+    pub client_id: Option<Secret>,
+    #[serde(default)]
+    pub client_secret: Option<Secret>,
+    #[serde(default)]
+    pub watch: Vec<Watch>,
+    #[serde(default = "default_github_api")]
+    pub api_url: String,
+    #[serde(default)]
+    pub quiet: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Watch {
+    /// owner/name
+    pub repo: String,
+    /// workflow file name (terraform-apply.yml) or numeric id
+    pub workflow: String,
+}
+
+fn default_github_api() -> String {
+    "https://api.github.com".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Healthchecks {
@@ -669,6 +709,28 @@ pub fn validate(cfg: &Config) -> Result<()> {
             return Err(
                 "tailscale: set api_key, or oauth_client_id and oauth_client_secret".into(),
             );
+        }
+    }
+    if let Some(g) = &cfg.github {
+        if !(g.app_id.is_some() && g.private_key.is_some()) && g.token.is_none() {
+            return Err("github: set app_id and private_key, or token".into());
+        }
+        check_url("github.api_url", &g.api_url)?;
+        for w in &g.watch {
+            if !crate::integrations::github::valid_repo(&w.repo) {
+                return Err(format!("github.watch: {:?} must be owner/name", w.repo).into());
+            }
+            let ok = !w.workflow.is_empty()
+                && w.workflow
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
+            if !ok {
+                return Err(format!(
+                    "github.watch: workflow {:?} must be a file name or id",
+                    w.workflow
+                )
+                .into());
+            }
         }
     }
     if let Some(h) = &cfg.healthchecks {
