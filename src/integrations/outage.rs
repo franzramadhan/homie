@@ -33,9 +33,22 @@ enum TsAuth {
 #[derive(Serialize)]
 pub struct Device {
     name: String,
+    hostname: String,
     online: bool,
     last_seen: String,
     os: String,
+    addresses: Vec<String>,
+    tags: Vec<String>,
+    user: String,
+    client_version: String,
+    update_available: bool,
+    /// node key expiry; None when expiry is disabled
+    key_expiry: Option<String>,
+    /// shared into this tailnet from another one
+    external: bool,
+    /// matches `hosts`: counted on the overview and in alerts
+    watched: bool,
+    /// matches `quiet_hosts` while quiet hours are on
     quiet: bool,
 }
 
@@ -49,6 +62,12 @@ pub fn glob(pattern: &str, s: &str) -> bool {
             };
             (0..=tail.len()).any(|i| tail.is_char_boundary(i) && glob(rest, &tail[i..]))
         }
+    }
+}
+
+impl Device {
+    pub fn is_watched(&self) -> bool {
+        self.watched
     }
 }
 
@@ -128,6 +147,7 @@ impl Tailscale {
             .await?;
         let body: Value = http::ok(resp).await?.json().await?;
         let now = jiff::Timestamp::now();
+        let text = |v: &Value| v.as_str().unwrap_or_default().to_string();
         let mut devices: Vec<Device> = body["devices"]
             .as_array()
             .into_iter()
@@ -135,17 +155,36 @@ impl Tailscale {
             .filter_map(|d| {
                 // short name only: the tailnet domain stays out of the UI
                 let name = d["name"].as_str()?.split('.').next()?.to_string();
-                if !self.hosts.iter().any(|p| glob(p, &name)) {
-                    return None;
-                }
-                let last_seen = d["lastSeen"].as_str().unwrap_or_default().to_string();
+                let last_seen = text(&d["lastSeen"]);
                 let recent = last_seen
                     .parse::<jiff::Timestamp>()
                     .is_ok_and(|t| now.duration_since(t) < jiff::SignedDuration::from_mins(5));
+                let strings = |v: &Value| -> Vec<String> {
+                    v.as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                };
                 Some(Device {
                     online: d["connectedToControl"].as_bool().unwrap_or(recent),
+                    watched: self.hosts.iter().any(|p| glob(p, &name)),
                     quiet: quiet_active && self.quiet_hosts.iter().any(|p| glob(p, &name)),
-                    os: d["os"].as_str().unwrap_or_default().to_string(),
+                    hostname: text(&d["hostname"]),
+                    os: text(&d["os"]),
+                    addresses: strings(&d["addresses"]),
+                    tags: strings(&d["tags"]),
+                    user: text(&d["user"]),
+                    client_version: text(&d["clientVersion"])
+                        .split('-')
+                        .next()
+                        .unwrap_or_default()
+                        .to_string(),
+                    update_available: d["updateAvailable"].as_bool().unwrap_or(false),
+                    key_expiry: (!d["keyExpiryDisabled"].as_bool().unwrap_or(false))
+                        .then(|| text(&d["expires"]))
+                        .filter(|e| !e.is_empty() && !e.starts_with("0001")),
+                    external: d["isExternal"].as_bool().unwrap_or(false),
                     name,
                     last_seen,
                 })

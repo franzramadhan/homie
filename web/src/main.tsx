@@ -10,6 +10,7 @@ import { Infra } from "./routes/infra";
 import { Observability } from "./routes/observability";
 import { Overview } from "./routes/overview";
 import { Security } from "./routes/security";
+import { Tailscale } from "./routes/tailscale";
 import { Workloads } from "./routes/workloads";
 import { Badge } from "./ui";
 
@@ -23,6 +24,7 @@ function Layout() {
     ["/gitops", "GitOps", !!m?.kubernetes.length],
     ["/observability", "Alerts", !!m?.grafana.length],
     ["/security", "Security", !!m?.security.length],
+    ["/tailscale", "Tailscale", !!m?.tailscale],
   ];
   return (
     <div className="mx-auto max-w-7xl px-4 py-4">
@@ -79,6 +81,7 @@ const router = createRouter({
     page("/gitops", GitOps),
     page("/observability", Observability),
     page("/security", Security),
+    page("/tailscale", Tailscale),
   ]),
 });
 

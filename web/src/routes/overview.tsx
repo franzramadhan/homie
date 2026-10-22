@@ -152,17 +152,21 @@ function TailscaleCard() {
   const q = useQ<Device[]>("tailscale", "_");
   return (
     <Card
-      title="Tailscale devices"
+      title="Tailscale"
+      to="/tailscale"
       env={q.data}
-      summary={(d) => {
+      summary={(all) => {
+        // only watched hosts (config `hosts`) count toward health
+        const d = all.filter((x) => x.watched);
         const off = d.filter((x) => !x.online);
         const loud = off.filter((x) => !x.quiet);
         return {
           tone: loud.length ? "bad" : "ok",
           lines: [
-            `${d.length - off.length}/${d.length} online`,
+            `${d.length - off.length}/${d.length} watched hosts online`,
             ...loud.map((x) => `offline: ${x.name} (seen ${new Date(x.last_seen).toLocaleString()})`),
             ...(off.length > loud.length ? [`${off.length - loud.length} scheduled off`] : []),
+            `${all.filter((x) => x.online).length}/${all.length} devices online in the tailnet`,
           ],
         };
       }}
