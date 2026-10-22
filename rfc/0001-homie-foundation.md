@@ -701,20 +701,11 @@ because it has the fewest prerequisites.
 
 ### Later (not v0.1.0)
 
-- **v0.2.0:**
-  - Flux suspend and resume as an opt-in (`flux.allow_suspend`), for clusters
-    where git does not own `spec.suspend`;
-  - overridable security queries, plus more presets (Falco, Trivy Operator,
-    CrowdSec);
-  - Argo CD (applications, sync and health status, refresh) next to Flux;
-  - Prometheus Alertmanager as an alert source, for labs without Grafana;
-  - configurable deep-link templates for other Kubernetes UIs (Lens,
-    Kubernetes Dashboard, Rancher);
-  - native log search (LogsQL and LogQL);
-  - watch-based updates (SSE);
-  - migrate for guests;
-  - status cards for OpenBao, CNPG and backups;
-  - sparklines;
-  - a Helm chart and a Homebrew tap.
+Each item has its own RFC; see the [roadmap](../ROADMAP.md).
+
+- **v0.2.0:** design system (RFC 0002), Argo CD (0005), deep-link templates
+  (0007), log search (0008), live updates (0009), service status cards
+  (0011), sparklines (0012), Helm chart and Homebrew tap (0013). Rejected:
+  0003, 0004, 0006, 0010.
 - **v0.3.0:** console links or embeds (noVNC, exec), per-user Proxmox tickets
-  through an OpenID realm, notifications.
+  through an OpenID realm, notifications. RFCs not written yet.
