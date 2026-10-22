@@ -452,6 +452,7 @@ tls_verify = true
 ca_file = ""
 tls_server_name = ""
 quiet = false
+ignore_alerts = ["Watchdog"]           # never listed, e.g. an always-firing heartbeat
 
 [security.kyverno]
 kubernetes = "<name>"

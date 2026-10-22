@@ -19,6 +19,7 @@ pub struct Grafana {
     pub insecure: Option<&'static str>,
     target: Target,
     token: SecretCell,
+    ignore: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -57,6 +58,7 @@ impl Grafana {
                 .await
                 .map_err(|e| format!("grafana.{name}.token: {e}"))?,
             target,
+            ignore: cfg.ignore_alerts.clone(),
         })
     }
 
@@ -116,6 +118,7 @@ impl Grafana {
                 })
             })
             .collect();
+        alerts.retain(|a| !self.ignore.contains(&a.name));
         alerts.sort_by(|a, b| (a.state != "firing", &a.name).cmp(&(b.state != "firing", &b.name)));
         Ok(Alerts {
             alerts,
