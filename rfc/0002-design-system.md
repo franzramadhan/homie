@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| draft | 2026-10-22 | - | v0.2.0 |
+| accepted | 2026-10-22 | #14 | v0.2.0 |
 
 > Give Homie one deliberate visual language: a dense, dark-first dashboard
 > whose only loud colors are the status colors. The structure is inspired by
@@ -138,8 +138,10 @@ points to it). This RFC explains why; `DESIGN.md` is the working reference.
   e2e script must pass unchanged.
 - **Off switch:** revert the release; there is no runtime setting.
 
-## Open questions
+## Decisions
 
-1. Accent hue: the indigo above, or another hue entirely?
-2. Row density: 32 px rows, or 36 px for touch screens?
-3. A manual light/dark toggle later (stored per browser), or OS only for good?
+Accepted 2026-10-22 with the proposed defaults:
+
+1. Accent: the indigo above.
+2. Rows about 32 px.
+3. Theme follows the OS only; a manual toggle needs its own RFC.
