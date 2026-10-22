@@ -471,6 +471,9 @@ headlamp_url = ""                      # fills the link templates for Headlamp
 headlamp_cluster = "main"              # {cluster} in link templates
 # [kubernetes.<name>.links]            # RFC 0007: node, pod, workload, flux URL templates
 # [kubernetes.<name>.metrics]          # RFC 0012: grafana, datasource, cpu, memory, node_label
+# cnpg_max_backup_age_hours = 26       # RFC 0011: older last backup is amber
+
+# [openbao.<name>]                     # RFC 0011: url + TLS options, quiet; unauthenticated health
 quiet = false
 # forward_token takes the apiserver address and CA from `kubeconfig` when set,
 # else from the pod (in-cluster).

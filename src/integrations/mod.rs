@@ -9,6 +9,7 @@ pub mod links;
 pub mod outage;
 pub mod proxmox;
 pub mod security;
+pub mod services;
 pub mod sparks;
 
 use std::{collections::BTreeMap, time::Duration};
@@ -26,6 +27,7 @@ pub struct Lab {
     pub proxmox: BTreeMap<String, proxmox::Proxmox>,
     pub kubernetes: BTreeMap<String, kubernetes::Kube>,
     pub grafana: BTreeMap<String, grafana::Grafana>,
+    pub openbao: BTreeMap<String, services::OpenBao>,
     pub security: Security,
     pub tailscale: Option<outage::Tailscale>,
     pub healthchecks: Option<outage::Healthchecks>,
@@ -46,6 +48,7 @@ impl Lab {
             proxmox: BTreeMap::new(),
             kubernetes: BTreeMap::new(),
             grafana: BTreeMap::new(),
+            openbao: BTreeMap::new(),
             security: cfg.security.clone(),
             tailscale: None,
             healthchecks: None,
@@ -66,6 +69,10 @@ impl Lab {
         for (name, c) in &cfg.grafana {
             lab.grafana
                 .insert(name.clone(), grafana::Grafana::new(name, c).await?);
+        }
+        for (name, c) in &cfg.openbao {
+            lab.openbao
+                .insert(name.clone(), services::OpenBao::new(name, c).await?);
         }
         if let Some(t) = &cfg.tailscale {
             lab.tailscale = Some(
@@ -143,6 +150,11 @@ impl Lab {
                 (secs(60), k.quiet, k.forwards_token())
             }
             "alerts" => (secs(30), self.grafana.get(name)?.quiet, false),
+            "openbao" => (secs(30), self.openbao.get(name)?.quiet, false),
+            "cnpg" => {
+                let k = self.kubernetes.get(name)?;
+                (secs(30), k.quiet, k.forwards_token())
+            }
             "security" => {
                 let (quiet, per_user) = self.preset_owner(name)?;
                 (secs(60), quiet, per_user)
@@ -209,6 +221,16 @@ impl Lab {
                 serde_json::to_value(flux::list_linked(k.client(token)?, &k.links).await?)?
             }
             "alerts" => serde_json::to_value(self.grafana(name)?.alerts().await?)?,
+            "openbao" => {
+                let b = self.openbao.get(name).ok_or("no such openbao")?;
+                serde_json::to_value(b.health().await?)?
+            }
+            "cnpg" => {
+                let k = self.kube(name)?;
+                serde_json::to_value(
+                    services::cnpg(k.client(token)?, k.cnpg_max_backup_age_hours).await?,
+                )?
+            }
             "security" => {
                 let s = &self.security;
                 let table = match name {

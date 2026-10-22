@@ -38,6 +38,9 @@ pub async fn meta(State(state): State<Shared>, Extension(caller): Extension<Call
         "grafana": lab.grafana.values().map(|g| json!({
             "name": g.name, "quiet": g.quiet, "url": g.url, "insecure": g.insecure,
         })).collect::<Vec<_>>(),
+        "openbao": lab.openbao.values().map(|b| json!({
+            "name": b.name, "quiet": b.quiet, "url": b.url, "insecure": b.insecure,
+        })).collect::<Vec<_>>(),
         "security": lab.presets(),
         "tailscale": lab.tailscale.is_some(),
         "healthchecks": lab.healthchecks.as_ref().map(|h| json!({ "url": h.url })),

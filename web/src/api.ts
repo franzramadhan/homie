@@ -20,6 +20,7 @@ export type Meta = {
   proxmox: { name: string; quiet: boolean; ui_url: string; insecure: string | null }[];
   kubernetes: { name: string; quiet: boolean; headlamp_url: string | null; forward_token: boolean; metrics: boolean }[];
   grafana: { name: string; quiet: boolean; url: string; insecure: string | null }[];
+  openbao: { name: string; quiet: boolean; url: string; insecure: string | null }[];
   security: string[];
   tailscale: boolean;
   healthchecks: { url: string } | null;
@@ -137,6 +138,21 @@ export type Device = {
   quiet: boolean;
 };
 export type Check = { name: string; status: string; last_ping: string | null; next_ping: string | null };
+
+export type BaoHealth = { state: string; initialized: boolean; sealed: boolean; version: string; cluster_name: string };
+export type PgCluster = {
+  namespace: string;
+  name: string;
+  phase: string;
+  healthy: boolean;
+  instances: number;
+  ready: number;
+  primary: string;
+  archiving: boolean;
+  last_backup: string | null;
+  backup_age_hours: number | null;
+  backup_stale: boolean;
+};
 
 export type Series = { cpu: number[]; mem: number[] };
 export type Sparks = { nodes: Record<string, Series>; guests?: Record<string, Series> };

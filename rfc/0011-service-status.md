@@ -27,7 +27,18 @@ running are only visible in Grafana or by asking each tool.
 | Key | Default | |
 |---|---|---|
 | `openbao.<name>.url` | - | OpenBao or Vault address (TLS options apply) |
-| `kubernetes.<name>.cnpg.max_backup_age` | `26h` | amber threshold |
+| `kubernetes.<name>.cnpg_max_backup_age_hours` | `26` | amber threshold |
+
+## Changes during implementation
+
+- Backups made through a CloudNativePG plugin (Barman Cloud) leave
+  `status.lastSuccessfulBackup` empty, so the backup age comes from the
+  newest `Backup` object in phase `completed` (`status.stoppedAt`), with
+  `lastSuccessfulBackup` as the fallback. A cluster without WAL archiving
+  (`ContinuousArchiving` not True) is amber too.
+- The threshold is `kubernetes.<name>.cnpg_max_backup_age_hours` (number,
+  default 26) instead of a duration string.
+- CloudNativePG cards appear automatically where the CRD exists.
 
 ## Alternatives
 
