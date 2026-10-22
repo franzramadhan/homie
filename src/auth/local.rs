@@ -191,6 +191,7 @@ mod tests {
         config::LocalLogin {
             username: "homie".into(),
             password_hash: hash.map(crate::secret::Secret::Plain),
+            role: None,
         }
     }
 

@@ -27,6 +27,7 @@ pub struct Auth {
     /// OIDC email to role (RFC 0016)
     roles: std::collections::BTreeMap<String, String>,
     pub demo: Option<crate::config::Demo>,
+    local_role: Option<String>,
     // ponytail: sessions live in memory; one replica, a restart means one re-login
     sessions: Mutex<HashMap<String, Session>>,
 }
@@ -74,6 +75,7 @@ impl Auth {
                 .map(|a| a.roles.clone())
                 .unwrap_or_default(),
             demo: cfg.demo.clone(),
+            local_role: cfg.local_login.as_ref().and_then(|l| l.role.clone()),
             sessions: Mutex::new(HashMap::new()),
         }))
     }
@@ -142,7 +144,7 @@ impl Auth {
             id_exp: i64::MAX,
             refresh: None,
             created: Instant::now(),
-            role: None,
+            role: self.local_role.clone(),
             demo: false,
         }))
     }
@@ -265,6 +267,7 @@ mod tests {
                 role: "demo".into(),
                 max_sessions: 2,
             }),
+            local_role: None,
             sessions: Mutex::new(HashMap::new()),
         };
         let first = auth.demo_login().unwrap();
