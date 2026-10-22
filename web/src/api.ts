@@ -104,6 +104,7 @@ export type FluxItem = {
   revision: string;
   suspended: boolean;
   since: string;
+  link: string | null;
 };
 
 export type Alerts = {
