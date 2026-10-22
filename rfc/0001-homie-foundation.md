@@ -63,6 +63,21 @@ cluster are down with it. Many homelabs also power off on a schedule, so
 
 ## Proposal
 
+### Compatibility
+
+Homie uses only stable, public APIs, so it is not tied to the reference lab:
+
+| Integration | Expected to work with | Tested with |
+|---|---|---|
+| Kubernetes | Any conformant distribution (k0s, k3s, RKE2, Talos, kind, minikube, EKS, GKE, AKS) | k0s 1.36 |
+| Flux | Flux v2 GA APIs (`source/v1`, `kustomize/v1`, `helm/v2`) | Flux 2.9 |
+| Proxmox VE | 8.x and 9.x | 9.2 |
+| Grafana | Self-hosted 10+ and Grafana Cloud | 13, Grafana Cloud |
+| OIDC | Any provider with discovery | Cloudflare Access |
+
+Flux is the only GitOps tool and Grafana the only alert source in v0.1.0.
+Argo CD and a direct Prometheus Alertmanager source are listed under Later.
+
 ### Architecture
 
 ```mermaid
@@ -311,7 +326,9 @@ stores behind it (those are often not routed outside the cluster).
 
 Each preset is optional and points at an integration that already exists.
 The datasource uid is configurable. The query is built in for v0.1.0 and
-becomes overridable later.
+becomes overridable later. The first four presets cover what the reference
+lab runs. A preset is only a named query plus a table layout, so adding one
+for another tool (Falco, Trivy Operator, CrowdSec) is a small change.
 
 | Preset | Source | Default query |
 |---|---|---|
@@ -647,6 +664,10 @@ because it has the fewest prerequisites.
     where git does not own `spec.suspend`;
   - overridable security queries, plus more presets (Falco, Trivy Operator,
     CrowdSec);
+  - Argo CD (applications, sync and health status, refresh) next to Flux;
+  - Prometheus Alertmanager as an alert source, for labs without Grafana;
+  - configurable deep-link templates for other Kubernetes UIs (Lens,
+    Kubernetes Dashboard, Rancher);
   - native log search (LogsQL and LogQL);
   - watch-based updates (SSE);
   - hard stop and migrate for guests;
