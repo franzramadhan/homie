@@ -28,7 +28,14 @@ and a missing `web/dist` only means the UI answers 503.
   (Cloudflare Access, Tailscale, k0s, VictoriaMetrics/Logs) is the reference
   deployment: it belongs in `examples/` and the RFC's reference section,
   never in defaults or required config.
-- Design changes go through an RFC in `rfc/` (copy `0000-template.md`).
+- RFC first for every new feature: write `rfc/NNNN-<topic>.md` from
+  `0000-template.md` (status `draft`) in a PR of its own, discuss it, and
+  start the implementation only after the maintainer explicitly accepts it
+  (status `accepted`). Implementation PRs link the RFC; deviations found
+  while building go back into the RFC. After the release: status
+  `implemented`. Not needed for bug fixes, docs, CI, dependency bumps or
+  refactors without visible behavior change; when unsure, treat it as a
+  feature.
 
 ## Public repo hygiene
 
