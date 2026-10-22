@@ -215,6 +215,13 @@ pub struct Grafana {
     pub tls_server_name: Option<String>,
     #[serde(default)]
     pub quiet: bool,
+    /// Alert names never listed, such as an always-firing heartbeat.
+    #[serde(default = "default_ignore_alerts")]
+    pub ignore_alerts: Vec<String>,
+}
+
+fn default_ignore_alerts() -> Vec<String> {
+    vec!["Watchdog".into()]
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
