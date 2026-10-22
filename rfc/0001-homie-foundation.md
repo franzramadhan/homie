@@ -434,6 +434,7 @@ listen = "127.0.0.1:7777"
 public_url = "http://127.0.0.1:7777"   # required with [auth]; OIDC redirect is public_url/auth/callback
 state_dir = ""                         # set to keep snapshot.json, e.g. "~/.local/state/homie"
 refresh_seconds = 15
+live_updates = false                   # push query results over SSE (RFC 0009)
 allow_unauthenticated = false          # only for loopback-published containers or an auth proxy
 
 [quiet_hours]                          # optional
