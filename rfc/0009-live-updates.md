@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| draft | 2026-10-22 | - | v0.2.0 |
+| accepted | 2026-10-22 | #16 | v0.2.0 |
 
 > Push changes to the browser as they happen (server-sent events), so an
 > action's effect and a new failure show up without waiting for the next poll.
@@ -35,6 +35,8 @@ lags, and many open tabs multiply backend calls.
 - **Tests:** watch reconnect, per-session teardown, fallback to polling.
 - **Rollout:** behind `live_updates = true` first, default after one release.
 
-## Open questions
+## Decisions
 
-1. Memory budget for per-user watches in `forward_token` mode?
+Accepted 2026-10-22 with the proposed defaults:
+
+1. The memory budget for per-user watches is measured during the build and written back here.

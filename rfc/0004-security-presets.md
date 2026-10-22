@@ -2,8 +2,10 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| draft | 2026-10-22 | - | v0.2.0 |
+| rejected | 2026-10-22 | #16 | - |
 
+> Rejected 2026-10-22: not planned. Kept for the record.
+>
 > Make security presets configurable (own query, Loki or VictoriaLogs) and
 > add presets for Falco, Trivy Operator and CrowdSec, plus fully custom
 > presets.

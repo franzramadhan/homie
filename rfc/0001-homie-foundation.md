@@ -703,10 +703,9 @@ because it has the fewest prerequisites.
 
 Each item has its own RFC; see the [roadmap](../ROADMAP.md).
 
-- **v0.2.0:** design system (RFC 0002), Flux suspend and resume (0003),
-  security presets (0004), Argo CD (0005), Alertmanager (0006), deep-link
-  templates (0007), log search (0008), live updates (0009), guest migration
-  (0010), service status cards (0011), sparklines (0012), Helm chart and
-  Homebrew tap (0013).
+- **v0.2.0:** design system (RFC 0002), Argo CD (0005), deep-link templates
+  (0007), log search (0008), live updates (0009), service status cards
+  (0011), sparklines (0012), Helm chart and Homebrew tap (0013). Rejected:
+  0003, 0004, 0006, 0010.
 - **v0.3.0:** console links or embeds (noVNC, exec), per-user Proxmox tickets
   through an OpenID realm, notifications. RFCs not written yet.

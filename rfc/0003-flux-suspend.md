@@ -2,8 +2,10 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| draft | 2026-10-22 | - | v0.2.0 |
+| rejected | 2026-10-22 | #16 | - |
 
+> Rejected 2026-10-22: not planned. Kept for the record.
+>
 > Let Homie suspend and resume Flux Kustomizations and HelmReleases, as an
 > opt-in per cluster, and refuse cleanly where git owns `spec.suspend`.
 

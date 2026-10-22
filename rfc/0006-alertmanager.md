@@ -2,8 +2,10 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| draft | 2026-10-22 | - | v0.2.0 |
+| rejected | 2026-10-22 | #16 | - |
 
+> Rejected 2026-10-22: not planned. Kept for the record.
+>
 > Read active alerts straight from Alertmanager, for labs that alert with
 > Prometheus and Alertmanager instead of Grafana.
 

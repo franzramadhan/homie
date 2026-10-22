@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| draft | 2026-10-22 | - | v0.2.0 |
+| accepted | 2026-10-22 | #16 | v0.2.0 |
 
 > Small trend lines next to the numbers that matter: node and guest CPU and
 > memory over the last hour.

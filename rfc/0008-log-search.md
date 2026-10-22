@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| draft | 2026-10-22 | - | v0.2.0 |
+| accepted | 2026-10-22 | #16 | v0.2.0 |
 
 > A log search page over the configured log datasources (VictoriaLogs,
 > Loki) through Grafana, with context links from pods, nodes and alerts.
@@ -43,6 +43,8 @@ Every log question leaves Homie for Grafana Explore.
 - **Tests:** caps enforced; LogsQL and LogQL result parsing; datasource allowlist.
 - **Rollout:** page appears only when `logs.datasources` is set.
 
-## Open questions
+## Decisions
 
-1. Live tail (follow mode) now or later?
+Accepted 2026-10-22 with the proposed defaults:
+
+1. Live tail comes later, in its own RFC.

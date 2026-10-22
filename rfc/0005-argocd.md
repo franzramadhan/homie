@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| draft | 2026-10-22 | - | v0.2.0 |
+| accepted | 2026-10-22 | #16 | v0.2.0 |
 
 > Show Argo CD Applications (sync, health, revision) on the GitOps page and
 > allow a refresh, for labs that run Argo CD instead of (or with) Flux.
@@ -39,6 +39,8 @@ The GitOps page knows only Flux.
 - **Tests:** status mapping from fixture Applications; refresh annotation.
 - **Rollout:** automatic where the CRD exists; e2e in a kind cluster with Argo CD.
 
-## Open questions
+## Decisions
 
-1. Offer Sync at all, behind an opt-in like Flux suspend?
+Accepted 2026-10-22 with the proposed defaults:
+
+1. No Sync action; refresh only.

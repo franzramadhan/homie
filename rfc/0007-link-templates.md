@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| draft | 2026-10-22 | - | v0.2.0 |
+| accepted | 2026-10-22 | #16 | v0.2.0 |
 
 > Replace the Headlamp-only deep links with templates, so any Kubernetes UI
 > (Lens, Kubernetes Dashboard, Rancher, Argo CD) can be linked.
