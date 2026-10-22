@@ -93,16 +93,7 @@ impl Grafana {
             .into_iter()
             .flatten()
             .filter_map(|a| {
-                let raw = a["state"].as_str().unwrap_or_default().to_lowercase();
-                let state = if raw.starts_with("alerting") || raw == "firing" {
-                    "firing"
-                } else if raw == "pending" {
-                    "pending"
-                } else if raw.contains("error") || raw.contains("nodata") {
-                    "error"
-                } else {
-                    return None;
-                };
+                let state = state(a["state"].as_str().unwrap_or_default())?;
                 let labels = a["labels"].as_object().cloned().unwrap_or_default();
                 let label = |k: &str| {
                     labels
@@ -208,6 +199,42 @@ impl Grafana {
     }
 }
 
+/// Grafana's alert state, reduced to what the UI shows. "Normal (NoData)" is
+/// normal: the rule is fine, its query returned nothing. Returns None for
+/// states that are not worth listing.
+fn state(raw: &str) -> Option<&'static str> {
+    let raw = raw.to_lowercase();
+    if raw.starts_with("normal") || raw == "inactive" {
+        None
+    } else if raw.starts_with("alerting") || raw == "firing" {
+        Some("firing")
+    } else if raw.starts_with("pending") {
+        Some("pending")
+    } else if raw.starts_with("error") || raw.starts_with("nodata") {
+        Some("error")
+    } else {
+        None
+    }
+}
+
 fn enc(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::state;
+
+    #[test]
+    fn alert_states() {
+        assert_eq!(state("Normal"), None);
+        assert_eq!(state("Normal (NoData)"), None);
+        assert_eq!(state("Normal (Error)"), None);
+        assert_eq!(state("Alerting"), Some("firing"));
+        assert_eq!(state("Alerting (NoData)"), Some("firing"));
+        assert_eq!(state("firing"), Some("firing"));
+        assert_eq!(state("Pending"), Some("pending"));
+        assert_eq!(state("NoData"), Some("error"));
+        assert_eq!(state("Error"), Some("error"));
+    }
 }
