@@ -1,6 +1,8 @@
 name: ci
 
 # Pull requests only. Pushes to main and tags are handled by build.yml.
+# test and web run only when their code changed; a docs-only PR skips them
+# (a skipped required check counts as passing).
 on:
   pull_request:
 
@@ -12,7 +14,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.files.outputs.rust }}
+      web: ${{ steps.files.outputs.web }}
+    steps:
+      - id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          files=$(gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" --name-only)
+          printf '%s\n' "$files"
+          rust=false
+          web=false
+          if grep -qE '^(src/|examples/|Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.github/workflows/ci\.yml$)' <<<"$files"; then rust=true; fi
+          if grep -qE '^(web/|\.github/workflows/ci\.yml$)' <<<"$files"; then web=true; fi
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "web=$web" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -26,6 +53,8 @@ jobs:
       - run: cargo test --locked
 
   web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-24.04
     defaults:
       run:
