@@ -66,6 +66,11 @@ comma, colon, parentheses or a new sentence.
 - Dev image for an end-to-end test: `gh workflow run build.yml --ref <branch>`
   builds only the Linux binaries and pushes `ghcr.io/franzramadhan/homie:dev-<short sha>`,
   no release.
+- `.github/workflows/coverage.yml` runs on pushes to `main` that touch Rust
+  code: `cargo llvm-cov`, then writes the test and coverage badge JSON to the
+  orphan branch `badges` (README badges read it). Never merge `badges`.
+- Dev images build with the `dev-image` profile (thin LTO, 16 codegen units);
+  tags keep the full-LTO `release` profile.
 - `.github/workflows/cleanup.yml` runs weekly: deletes stale image versions
   (main, sha-*, rc tags, dev-* older than 14 days, unreferenced untagged
   manifests). Release tags are kept. Manual runs default to a dry run.
