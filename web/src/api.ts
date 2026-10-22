@@ -119,7 +119,22 @@ export type SecurityTable = {
   link: string | null;
 };
 
-export type Device = { name: string; online: boolean; last_seen: string; os: string; quiet: boolean };
+export type Device = {
+  name: string;
+  hostname: string;
+  online: boolean;
+  last_seen: string;
+  os: string;
+  addresses: string[];
+  tags: string[];
+  user: string;
+  client_version: string;
+  update_available: boolean;
+  key_expiry: string | null;
+  external: boolean;
+  watched: boolean;
+  quiet: boolean;
+};
 export type Check = { name: string; status: string; last_ping: string | null; next_ping: string | null };
 
 export class ApiError extends Error {}

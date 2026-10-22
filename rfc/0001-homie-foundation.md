@@ -364,8 +364,10 @@ Each row links to the matching Grafana Explore query.
 #### Tailscale and healthchecks.io (optional)
 
 - **Tailscale:** `GET /api/v2/tailnet/-/devices`, with an API access token or
-  an OAuth client with only `devices:core:read`. Homie maps devices to hosts
-  with `hosts` globs and shows online state and last seen.
+  an OAuth client with only `devices:core:read`. The Tailscale page lists
+  every device: online state, last seen, OS, address, tags, user, client
+  version (and whether an update exists) and key expiry. Devices matching the
+  `hosts` globs are "watched": only they count on the overview card.
 - **healthchecks.io:** `GET /api/v3/checks/` with a read-only API key, on
   `healthchecks.io` or any self-hosted instance (`url`). Homie shows status,
   last ping and next expected ping per check.
@@ -380,6 +382,7 @@ Each row links to the matching Grafana Explore query.
 | `/gitops` | Flux sources, Kustomizations, HelmReleases; reconcile |
 | `/observability` | Merged alert list, links to each Grafana |
 | `/security` | The configured security presets |
+| `/tailscale` | Every tailnet device: status, OS, address, tags, user, client version, key expiry; watched hosts marked |
 
 - Stack: Vite, React, TanStack Router (file routes), TanStack Query (polling,
   cache), TanStack Table (sort, filter), Tailwind CSS. Bun for packages.
@@ -497,7 +500,7 @@ datasource = "<uid>"
 [tailscale]                            # optional
 tailnet = "-"
 api_key = { env = "TS_API_KEY" }       # or oauth_client_id + oauth_client_secret
-hosts = ["*"]
+hosts = ["*"]                          # watched: counted on the overview
 quiet_hosts = []
 
 [healthchecks]                         # optional

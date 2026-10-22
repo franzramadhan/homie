@@ -62,10 +62,9 @@ pub async fn run(cfg: Config) -> Result<()> {
         probes.push((
             "tailscale".into(),
             Box::pin(async move {
-                Ok(format!(
-                    "{} devices match hosts",
-                    t.devices(false).await?.len()
-                ))
+                let d = t.devices(false).await?;
+                let watched = d.iter().filter(|x| x.is_watched()).count();
+                Ok(format!("{} devices, {watched} watched (hosts)", d.len()))
             }),
         ));
     }
