@@ -10,7 +10,12 @@ use crate::{Result, auth::Auth, config::Config, integrations::Lab};
 type Probe<'a> = std::pin::Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
 
 pub async fn run(cfg: Config) -> Result<()> {
-    println!("{}\n", serde_json::to_string_pretty(&cfg)?);
+    report(cfg, &mut std::io::stdout()).await
+}
+
+/// `run`, printing to `out`.
+async fn report(cfg: Config, out: &mut impl std::io::Write) -> Result<()> {
+    writeln!(out, "{}\n", serde_json::to_string_pretty(&cfg)?)?;
 
     let lab = Lab::new(&cfg).await?;
     let auth = Auth::new(&cfg).await;
@@ -117,21 +122,108 @@ pub async fn run(cfg: Config) -> Result<()> {
     let mut failed = 0;
     for (name, r) in names.iter().zip(results) {
         match r {
-            Ok(detail) => println!("ok    {name:width$}  {detail}"),
+            Ok(detail) => writeln!(out, "ok    {name:width$}  {detail}")?,
             Err(e) => {
                 failed += 1;
-                println!("FAIL  {name:width$}  {e}");
+                writeln!(out, "FAIL  {name:width$}  {e}")?;
             }
         }
     }
     for (kind, name, reason) in lab.insecure() {
-        println!("warn  {:width$}  {reason}", format!("{kind}.{name}"));
+        writeln!(out, "warn  {:width$}  {reason}", format!("{kind}.{name}"))?;
     }
     if names.is_empty() {
-        println!("nothing configured: add a [proxmox.*], [kubernetes.*] or [grafana.*] section");
+        writeln!(
+            out,
+            "nothing configured: add a [proxmox.*], [kubernetes.*] or [grafana.*] section"
+        )?;
     }
     if failed > 0 {
         return Err(format!("{failed} of {} checks failed", names.len()).into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::harness::{backend, config, lab_sections, password_hash};
+
+    async fn check(toml: &str) -> (String, Result<()>) {
+        let mut out = Vec::new();
+        let r = report(config(toml), &mut out).await;
+        (String::from_utf8(out).unwrap(), r)
+    }
+
+    fn line<'a>(out: &'a str, start: &str) -> &'a str {
+        out.lines()
+            .find(|l| l.starts_with(start))
+            .unwrap_or_else(|| panic!("no line {start:?} in\n{out}"))
+    }
+
+    #[tokio::test]
+    async fn every_integration_answers() {
+        let backend = backend().await;
+        let (out, r) = check(&format!(
+            "public_url = \"http://localhost:7777\"\n[local_login]\npassword_hash = \"{}\"\n\
+             [github]\ntoken = \"ghp_x\"\napi_url = \"{backend}\"\nstore = \"off\"\n\
+             watch = [{{ repo = \"acme/app\", workflow = \"ci.yml\" }}]\n{}",
+            password_hash(),
+            lab_sections(&backend)
+        ))
+        .await;
+        assert!(r.is_ok(), "{out}");
+        assert!(out.contains("<redacted>"), "secrets are redacted");
+        assert!(!out.contains("glsa_x"));
+        for (name, detail) in [
+            ("auth", "password login for \"homie\""),
+            ("proxmox.lab", "Proxmox VE 8.2.4, power actions enabled"),
+            ("kubernetes.main", "Kubernetes v1.32.0, can list namespaces"),
+            ("grafana.mon", "Grafana 11.2.0, token accepted"),
+            ("openbao.vault", "active 2.1.0"),
+            ("security.kyverno", "0 rows"),
+            ("security.debsecan", "0 rows"),
+            ("github", "1 watched workflows readable"),
+            ("healthchecks", "0 checks"),
+        ] {
+            let l = line(&out, &format!("ok    {name} "));
+            assert!(l.ends_with(detail), "{l}");
+        }
+        line(&out, "warn  proxmox.lab");
+        line(&out, "warn  grafana.mon");
+    }
+
+    #[tokio::test]
+    async fn failures_are_counted() {
+        let backend = backend().await;
+        let (out, r) = check(&format!(
+            "public_url = \"http://localhost:7777\"\n\
+             [auth]\nissuer = \"http://127.0.0.1:9\"\nclient_id = \"homie\"\nallowed_emails = [\"me@example.com\"]\n\
+             [github]\ntoken = \"ghp_x\"\napi_url = \"{backend}\"\nstore = \"off\"\n\
+             watch = [{{ repo = \"acme/app\", workflow = \"ci.yml\" }}, {{ repo = \"acme/app\", workflow = \"gone.yml\" }}]\n\
+             [openbao.vault]\nurl = \"{backend}\"\n\
+             [grafana.gone]\nurl = \"{backend}/missing\"\ntoken = \"t\"\n\
+             [security.tetragon]\ngrafana = \"gone\"\ndatasource = \"vlogs\"\n"
+        ))
+        .await;
+        assert_eq!(r.unwrap_err().to_string(), "4 of 5 checks failed");
+        assert!(line(&out, "FAIL  grafana.gone").contains("404"), "{out}");
+        assert!(
+            line(&out, "FAIL  security.tetragon").contains("404"),
+            "{out}"
+        );
+        assert!(line(&out, "FAIL  auth").contains("OIDC discovery"), "{out}");
+        assert!(
+            line(&out, "FAIL  github").contains("acme/app/gone.yml: HTTP 404"),
+            "{out}"
+        );
+        line(&out, "ok    openbao.vault");
+    }
+
+    #[tokio::test]
+    async fn nothing_configured() {
+        let (out, r) = check("").await;
+        assert!(r.is_ok());
+        assert!(out.contains("nothing configured"), "{out}");
+    }
 }

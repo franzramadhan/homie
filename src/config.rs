@@ -1046,4 +1046,156 @@ mod tests {
         cfg.kubernetes.insert("x".into(), k);
         assert!(validate(&cfg).is_err());
     }
+
+    #[test]
+    fn validation_errors_name_the_setting() {
+        let check = |toml: &str| -> Result<()> {
+            let cfg: Config = Figment::from(Toml::string(toml))
+                .extract()
+                .unwrap_or_else(|e| panic!("{e}\n{toml}"));
+            validate(&cfg)
+        };
+        let oidc = "public_url = \"https://homie.example\"\n[auth]\nissuer = \"https://idp.example\"\nclient_id = \"homie\"\n";
+        let grafana = "[grafana.g]\nurl = \"https://grafana.example\"\ntoken = \"t\"\n";
+        let kube = "[kubernetes.k]\nauth = \"kubeconfig\"\n";
+        for (toml, error) in [
+            ("listen = \"nowhere\"".to_string(), "listen: \"nowhere\" is not ip:port"),
+            ("refresh_seconds = 1".into(), "refresh_seconds must be 5 or more"),
+            (
+                "allow_unauthenticated = true\n[local_login]\npassword_hash = \"x\"\nrole = \"nope\"\n".into(),
+                "local_login.role: no [roles.nope]",
+            ),
+            (
+                format!("{oidc}allowed_emails = [\"a@example.com\"]\nroles = {{ \"a@example.com\" = \"nope\" }}\n"),
+                "auth.roles: no [roles.nope]",
+            ),
+            (
+                "[quiet_hours]\nwindow = \"soon\"\n".into(),
+                "quiet_hours.window",
+            ),
+            (
+                "public_url = \"homie\"\n[local_login]\npassword_hash = \"x\"\n".into(),
+                "public_url: \"homie\" is not a URL",
+            ),
+            (
+                "public_url = \"ftp://homie.example\"\n[local_login]\npassword_hash = \"x\"\n".into(),
+                "must be http:// or https://",
+            ),
+            (
+                "public_url = \"http://localhost\"\n[local_login]\nusername = \" \"\npassword_hash = \"x\"\n".into(),
+                "local_login.username is empty",
+            ),
+            (
+                format!("{oidc}allowed_groups = [\"admins\"]\n"),
+                "auth.allowed_groups needs auth.groups_claim",
+            ),
+            (
+                "[proxmox.p]\nendpoints = []\ntoken = \"t\"\n".into(),
+                "proxmox.p.endpoints is empty",
+            ),
+            (
+                "[proxmox.p]\nendpoints = [\"pve:8006\"]\ntoken = \"t\"\n".into(),
+                "proxmox.p.endpoints",
+            ),
+            (
+                "[proxmox.p]\nendpoints = [\"https://pve\"]\ntoken = \"t\"\nui_url = \"x\"\n".into(),
+                "proxmox.p.ui_url",
+            ),
+            (
+                format!("{kube}argocd_url = \"x\"\n"),
+                "kubernetes.k.argocd_url",
+            ),
+            (
+                format!("{kube}metrics = {{ grafana = \"g\", datasource = \"d\", cpu = \"c\", memory = \"m\" }}\n"),
+                "kubernetes.k.metrics.grafana: no [grafana.g]",
+            ),
+            (
+                format!("{kube}links = {{ pod = \"ftp://x\" }}\n"),
+                "kubernetes.k.links.pod must start with http",
+            ),
+            (
+                "[kubernetes.k]\nauth = \"forward_token\"\n".into(),
+                "auth = \"forward_token\" needs [auth]",
+            ),
+            ("[openbao.b]\nurl = \"x\"\n".into(), "openbao.b.url"),
+            ("[grafana.g]\nurl = \"x\"\ntoken = \"t\"\n".into(), "grafana.g.url"),
+            (
+                format!("{grafana}ui_url = \"x\"\n"),
+                "grafana.g.ui_url",
+            ),
+            (
+                "[security.kyverno]\nkubernetes = \"k\"\n".into(),
+                "security.kyverno.kubernetes: no [kubernetes.k]",
+            ),
+            (
+                "[security.wazuh]\ngrafana = \"g\"\ndatasource = \"d\"\n".into(),
+                "security.wazuh.grafana: no [grafana.g]",
+            ),
+            (
+                "[[logs.datasources]]\nlabel = \"L\"\ngrafana = \"g\"\ndatasource = \"d\"\ntype = \"loki\"\n".into(),
+                "logs.datasources \"L\": no [grafana.g]",
+            ),
+            (
+                format!("{grafana}[[logs.datasources]]\nlabel = \"L\"\ngrafana = \"g\"\ndatasource = \"d\"\ntype = \"loki\"\n\
+                         [[logs.datasources]]\nlabel = \"L\"\ngrafana = \"g\"\ndatasource = \"e\"\ntype = \"victorialogs\"\n"),
+                "label \"L\" used twice",
+            ),
+            (
+                "[tailscale]\noauth_client_id = \"id\"\n".into(),
+                "tailscale: set api_key",
+            ),
+            ("[github]\napp_id = 1\n".into(), "github: set app_id and private_key, or token"),
+            (
+                "[github]\ntoken = \"t\"\napi_url = \"x\"\n".into(),
+                "github.api_url",
+            ),
+            (
+                "[github]\ntoken = \"t\"\nwatch = [{ repo = \"nope\", workflow = \"ci.yml\" }]\n".into(),
+                "github.watch: \"nope\" must be owner/name",
+            ),
+            (
+                "[github]\ntoken = \"t\"\nwatch = [{ repo = \"a/b\", workflow = \"../x\" }]\n".into(),
+                "must be a file name or id",
+            ),
+            (
+                "[healthchecks]\nurl = \"x\"\napi_key = \"k\"\n".into(),
+                "healthchecks.url",
+            ),
+        ] {
+            let e = check(&toml).expect_err(&toml).to_string();
+            assert!(e.contains(error), "{e:?} lacks {error:?}");
+        }
+        // and a config using all of them passes
+        check(&format!(
+            "{oidc}allowed_emails = [\"a@example.com\"]\n{grafana}ui_url = \"https://grafana.example\"\n\
+             [openbao.b]\nurl = \"https://bao.example\"\n\
+             [healthchecks]\napi_key = \"k\"\n\
+             [tailscale]\napi_key = \"k\"\n\
+             [github]\ntoken = \"t\"\nwatch = [{{ repo = \"a/b\", workflow = \"ci.yml\" }}]\n\
+             [quiet_hours]\nwindow = \"23:00-06:00\"\n"
+        ))
+        .unwrap();
+    }
+
+    #[test]
+    fn missing_config_file_and_home_expansion() {
+        let e = load(Some("/nonexistent/homie.toml".into())).unwrap_err();
+        assert!(e.to_string().contains("does not exist"), "{e}");
+        assert_eq!(expand(Path::new("/etc/x")), PathBuf::from("/etc/x"));
+        Jail::expect_with(|jail| {
+            let home = jail.directory().to_path_buf();
+            jail.set_env("HOME", home.display());
+            jail.create_dir(".config/homie")?;
+            jail.create_file(
+                ".config/homie/config.toml",
+                "refresh_seconds = 42\nstate_dir = \"~/state\"",
+            )?;
+            let cfg = load(None).unwrap();
+            assert_eq!(cfg.refresh_seconds, 42, "the default location is read");
+            assert_eq!(cfg.state_dir, Some(home.join("state")));
+            jail.set_env("HOMIE_CONFIG", "~/.config/homie/config.toml");
+            assert_eq!(load(None).unwrap().refresh_seconds, 42);
+            Ok(())
+        });
+    }
 }
