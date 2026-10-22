@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prints the Homebrew formula for a release from its SHA256SUMS.
 #   scripts/homebrew-formula.sh 0.2.0 dist/SHA256SUMS > homie.rb
-# The release job writes it to franzramadhan/homebrew-tap (RFC 0013).
+# franzramadhan/homebrew-tap runs it for each new release (RFC 0013).
 set -euo pipefail
 version=$1
 sums=$2
