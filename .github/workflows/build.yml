@@ -1,8 +1,8 @@
 name: build
 
 # Releases only: a v* tag publishes the binaries, the image and a GitHub
-# release. A tag with a "-" (v0.1.0-rc.1) is a pre-release: the image gets
-# only its exact version, and the GitHub release is marked pre-release.
+# release. Every v0.* release is alpha and marked pre-release on GitHub; so is
+# any tag with a "-" suffix.
 # Tests run in ci.yml on the pull request.
 on:
   push:
@@ -155,6 +155,7 @@ jobs:
         run: |
           sha256sum homie-*.tar.gz > SHA256SUMS
           prerelease=()
-          [[ "$GITHUB_REF_NAME" == *-* ]] && prerelease=(--prerelease)
+          # 0.x is alpha: no stable release before v1
+          [[ "$GITHUB_REF_NAME" == v0.* || "$GITHUB_REF_NAME" == *-* ]] && prerelease=(--prerelease)
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --verify-tag --generate-notes "${prerelease[@]}" ./*
