@@ -33,7 +33,8 @@ lags, and many open tabs multiply backend calls.
 ## Testing and rollout
 
 - **Tests:** watch reconnect, per-session teardown, fallback to polling.
-- **Rollout:** behind `live_updates = true` first, default after one release.
+- **Rollout:** behind `live_updates = true` first (v0.3.0), default since
+  v0.4.0; `live_updates = false` turns it off.
 
 ## Decisions
 

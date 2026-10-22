@@ -118,7 +118,8 @@ flowchart LR
   instances usually do not: when the cluster is down, Homie is down with it,
   so a file adds a PVC for no benefit.
 - **Polling.** TanStack Query refetches every `refresh_seconds` (default 15)
-  while the tab is visible. There are no watches or SSE in v0.1.0.
+  while the tab is visible. There are no watches or SSE in v0.1.0; since
+  v0.4.0 live updates (RFC 0009) push results and polling is the fallback.
 - **Every integration is optional.** A section left out of the config turns
   that integration off and hides its UI. Homie with only `[proxmox.*]` is a
   valid setup, and so is Homie with only `[kubernetes.*]`.
@@ -434,7 +435,7 @@ listen = "127.0.0.1:7777"
 public_url = "http://127.0.0.1:7777"   # required with [auth]; OIDC redirect is public_url/auth/callback
 state_dir = ""                         # set to keep snapshot.json, e.g. "~/.local/state/homie"
 refresh_seconds = 15
-live_updates = false                   # push query results over SSE (RFC 0009)
+live_updates = true                    # push query results over SSE (RFC 0009)
 allow_unauthenticated = false          # only for loopback-published containers or an auth proxy
 
 [quiet_hours]                          # optional

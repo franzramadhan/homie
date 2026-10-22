@@ -50,7 +50,7 @@ impl Default for Config {
             public_url: String::new(),
             state_dir: None,
             refresh_seconds: 15,
-            live_updates: false,
+            live_updates: true,
             allow_unauthenticated: false,
             quiet_hours: None,
             auth: None,
