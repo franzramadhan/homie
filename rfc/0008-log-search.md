@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-22 | #16 | v0.2.0 |
+| implemented | 2026-10-22 | #16 | v0.2.0 |
 
 > A log search page over the configured log datasources (VictoriaLogs,
 > Loki) through Grafana, with context links from pods, nodes and alerts.

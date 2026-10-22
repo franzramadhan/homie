@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-22 | #14 | v0.2.0 |
+| implemented | 2026-10-22 | #14 | v0.2.0 |
 
 > Give Homie one deliberate visual language: a dense, dark-first dashboard
 > whose only loud colors are the status colors. The structure is inspired by

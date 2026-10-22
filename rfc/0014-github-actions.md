@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-22 | #24 | - |
+| implemented | 2026-10-22 | #24 | v0.2.0 |
 
 > Show the runs of chosen GitHub Actions workflows (for example Terraform
 > plan and apply) next to the rest of the lab. One shared watch list in the

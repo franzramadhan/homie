@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-22 | #16 | v0.2.0 |
+| accepted | 2026-10-22 | #16 | v0.3.0 |
 
 > Push changes to the browser as they happen (server-sent events), so an
 > action's effect and a new failure show up without waiting for the next poll.
