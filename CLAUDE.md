@@ -100,3 +100,17 @@ comma, colon, parentheses or a new sentence.
 - `permissions: contents: read` at the top; grant more per job only where
   needed.
 - Pass `${{ }}` values into `run:` scripts through `env:`, never inline.
+
+## Bend
+
+`spec/` holds Bend models of security-critical logic, `LAWS.bend` the laws
+(the maintainer's file), `PROOF.bend` the proofs. CI's `bend` job runs
+`bend PROOF.bend` and `--verdict` (Lean 4.34) when they or the code a model
+mirrors change; bump `BEND_VERSION`/`BEND_SHA256` and `LEAN_VERSION`/`LEAN_SHA256`
+there from bend-lang.com/install.sh and the Lean release.
+
+When using Bend:
+- run `bend guide` to learn it
+- use `LAWS.bend` to keep important rules
+- run `bend PROOF.bend` before committing
+- parallelize the code whenever possible
