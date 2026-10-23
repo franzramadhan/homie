@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-23 | #59 | v0.7.0 |
+| implemented | 2026-10-23 | #60 | v0.7.0 |
 
 > A visitor of a public demo connects their own GitHub account and watches
 > their own workflow runs. The picks live only in their session and are read
