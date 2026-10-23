@@ -74,6 +74,10 @@ comma, colon, parentheses or a new sentence.
 - `.github/workflows/cleanup.yml` runs weekly: deletes stale image versions
   (main, sha-*, rc tags, dev-* older than 14 days, unreferenced untagged
   manifests). Release tags are kept. Manual runs default to a dry run.
+- `.github/workflows/title-check.yml` checks every PR title (it becomes the
+  squash commit): `type(scope): subject`, types `feat fix docs ci test refactor
+  perf build chore release rfc spec`, an optional scope from the list in the
+  workflow, a subject that does not start with an uppercase letter.
 - Versioning: `v0.MINOR.PATCH` only. 0.x is alpha (said in the README); no
   v1 until the user decides. No `-rc` suffixes for now. Releases are not
   marked pre-release: mise's `github:` backend and `releases/latest` skip
