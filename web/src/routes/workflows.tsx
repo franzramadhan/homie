@@ -137,7 +137,13 @@ function Picker({ store, installUrl, watched }: { store: string | null; installU
       {!repos ? (
         <div className="flex items-center gap-3">
           <button className="rounded-control bg-accent px-3 py-1 text-sm text-on-accent hover:bg-accent-hover" onClick={open}>
-            {session ? "Connect GitHub and pick workflows" : store ? "Change watched workflows" : "Pick workflows"}
+            {session
+              ? watched.length > 0
+                ? "Change workflows"
+                : "Connect GitHub and pick workflows"
+              : store
+                ? "Change watched workflows"
+                : "Pick workflows"}
           </button>
           {saved && <span className="text-sm text-ink-subtle">{saved}</span>}
         </div>
