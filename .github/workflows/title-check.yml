@@ -1,0 +1,68 @@
+name: title-check
+
+# PR titles become the squash commit on main, so they follow Conventional
+# Commits: a type from the list, an optional scope from the list, and a
+# subject that does not start with an uppercase letter.
+# pull_request_target: also runs for PRs from forks; it reads only the title
+# from the event and never checks out the PR's code.
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  title:
+    runs-on: ubuntu-26.04
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            ci
+            test
+            refactor
+            perf
+            build
+            chore
+            release
+            rfc
+            spec
+          scopes: |
+            proxmox
+            kubernetes
+            flux
+            argocd
+            helm
+            grafana
+            logs
+            security
+            github
+            tailscale
+            healthchecks
+            openbao
+            cnpg
+            auth
+            roles
+            demo
+            api
+            live
+            config
+            cache
+            ui
+            site
+            chart
+            brew
+            deps
+            spec
+          requireScope: false
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            The subject "{subject}" in "{title}" must not start with an uppercase letter.
