@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-22 | #41 | v0.6.0 |
+| implemented | 2026-10-23 | #42 | v0.6.0 |
 
 > A role limits what a user sees: which pages, which namespaces, which
 > guests, and no actions. The first use is a public read-only demo of the
