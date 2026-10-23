@@ -60,9 +60,11 @@ function Picker({ store, installUrl, watched }: { store: string | null; installU
       else setError((e as Error).message);
     }
   }
-  // back from the GitHub sign-in (/github/callback redirects here with ?picker)
+  // back from the GitHub sign-in (/github/callback redirects here with ?picker),
+  // or from installing the app (its Setup URL adds ?setup_action=install|update)
   useEffect(() => {
-    if (!new URLSearchParams(window.location.search).has("picker")) return;
+    const q = new URLSearchParams(window.location.search);
+    if (!q.has("picker") && !q.has("setup_action")) return;
     window.history.replaceState(null, "", window.location.pathname);
     open();
   }, []);
