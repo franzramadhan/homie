@@ -50,6 +50,16 @@ pub struct User {
     pub role: Option<String>,
 }
 
+/// `[auth] roles` with lowercased emails: the provider's email is lowercased
+/// too (see oidc), as for the allowlist.
+fn oidc_roles(cfg: &Config) -> std::collections::BTreeMap<String, String> {
+    cfg.auth
+        .iter()
+        .flat_map(|a| &a.roles)
+        .map(|(email, role)| (email.to_lowercase(), role.clone()))
+        .collect()
+}
+
 impl Auth {
     /// `None` when neither login method is configured.
     pub async fn new(cfg: &Config) -> Result<Option<Self>> {
@@ -69,11 +79,7 @@ impl Auth {
             oidc,
             local,
             public_url,
-            roles: cfg
-                .auth
-                .as_ref()
-                .map(|a| a.roles.clone())
-                .unwrap_or_default(),
+            roles: oidc_roles(cfg),
             demo: cfg.demo.clone(),
             local_role: cfg.local_login.as_ref().and_then(|l| l.role.clone()),
             sessions: Mutex::new(HashMap::new()),
@@ -115,7 +121,7 @@ impl Auth {
     pub async fn oidc_callback(&self, code: &str, state: &str) -> Result<String> {
         let oidc = self.oidc.as_ref().ok_or("OIDC login is not configured")?;
         let t = oidc.callback(code, state).await?;
-        let role = self.roles.get(&t.email).cloned();
+        let role = self.role_for(&t.email);
         tracing::info!(msg = "login", method = "oidc", user = %t.email, role = role.as_deref().unwrap_or(""), result = "ok");
         Ok(self.create(Session {
             user: t.email,
@@ -147,6 +153,11 @@ impl Auth {
             role: self.local_role.clone(),
             demo: false,
         }))
+    }
+
+    /// The role of an OIDC user; emails compare case-insensitively.
+    fn role_for(&self, email: &str) -> Option<String> {
+        self.roles.get(&email.to_lowercase()).cloned()
     }
 
     /// A passwordless session with the demo role (RFC 0016). At most
@@ -255,6 +266,29 @@ impl Auth {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oidc_roles_match_any_case() {
+        let mut cfg = Config::default();
+        let mut a: crate::config::Auth = serde_json::from_value(serde_json::json!({
+            "issuer": "https://idp.example", "client_id": "homie"
+        }))
+        .unwrap();
+        a.roles.insert("Viewer@Example.com".into(), "demo".into());
+        cfg.auth = Some(a);
+        let auth = Auth {
+            oidc: None,
+            local: None,
+            public_url: Url::parse("https://homie.example").unwrap(),
+            roles: oidc_roles(&cfg),
+            demo: None,
+            local_role: None,
+            sessions: Mutex::new(HashMap::new()),
+        };
+        assert_eq!(auth.role_for("viewer@example.com").as_deref(), Some("demo"));
+        assert_eq!(auth.role_for("VIEWER@example.COM").as_deref(), Some("demo"));
+        assert_eq!(auth.role_for("other@example.com"), None);
+    }
 
     #[tokio::test]
     async fn demo_sessions_are_capped_and_carry_the_role() {
