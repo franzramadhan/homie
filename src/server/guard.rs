@@ -244,6 +244,76 @@ mod tests {
         ));
     }
 
+    /// Keeps `role_route` equal to its Bend model, spec/roles.bend, whose laws
+    /// (LAWS.bend) are proven by `bend PROOF.bend`: every route, method, role
+    /// and store, against a direct transcription of the model.
+    #[test]
+    fn role_routes_match_spec() {
+        // (path, the model's Route) for each Route
+        let routes = [
+            ("/api/meta", "Meta"),
+            ("/api/stream", "Stream"),
+            ("/api/q/k8s/main", "Query"),
+            ("/auth/logout", "Logout"),
+            ("/api/logs", "Logs"),
+            ("/github/login", "GhLogin"),
+            ("/github/callback", "GhCallback"),
+            ("/api/github/repos", "GhRepos"),
+            ("/api/github/workflows", "GhWorkflows"),
+            ("/api/github/watch", "GhWatch"),
+            ("/api/act/pve/lab/power", "Act"),
+            ("/admin", "Unknown"),
+        ];
+        let methods = [
+            Method::GET,
+            Method::HEAD,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+        ];
+        let model = |m: &Method, route: &str, logs: bool, workflows: bool, ghs: bool| {
+            let read = *m == Method::GET || *m == Method::HEAD;
+            let post = *m == Method::POST;
+            let picker = ghs && workflows;
+            match route {
+                "Meta" | "Stream" | "Query" => read,
+                "Logout" => post,
+                "Logs" => post && logs,
+                "GhLogin" | "GhCallback" | "GhRepos" | "GhWorkflows" => read && picker,
+                "GhWatch" => post && picker,
+                _ => false,
+            }
+        };
+        for (path, route) in routes {
+            for m in &methods {
+                for logs in [false, true] {
+                    for workflows in [false, true] {
+                        for ghs in [false, true] {
+                            let mut pages = vec!["infra".to_string()];
+                            if logs {
+                                pages.push("logs".into());
+                            }
+                            if workflows {
+                                pages.push("workflows".into());
+                            }
+                            let role = Role {
+                                pages,
+                                namespaces: vec![],
+                                proxmox_tags: vec![],
+                                kubernetes_service_account: None,
+                            };
+                            assert_eq!(
+                                role_route(&role, m, path, ghs),
+                                model(m, route, logs, workflows, ghs),
+                                "{m} {path} logs={logs} workflows={workflows} ghs={ghs}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn hosts_and_cookies() {
         assert_eq!(host_only("localhost:7777"), "localhost");

@@ -100,3 +100,11 @@ comma, colon, parentheses or a new sentence.
 - `permissions: contents: read` at the top; grant more per job only where
   needed.
 - Pass `${{ }}` values into `run:` scripts through `env:`, never inline.
+
+## Bend
+
+When using Bend:
+- run `bend guide` to learn it
+- use `LAWS.bend` to keep important rules
+- run `bend PROOF.bend` before committing
+- parallelize the code whenever possible
