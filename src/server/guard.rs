@@ -17,15 +17,30 @@ use crate::{
 };
 
 /// Routes a role may use: reads only (RFC 0016). Whether a query's page is
-/// allowed is checked per query.
-fn role_route(role: &Role, method: &Method, path: &str) -> bool {
+/// allowed is checked per query. With per-session GitHub watches (RFC 0017)
+/// a role with the workflows page may also sign in to GitHub and pick: there
+/// it only ever touches the visitor's own data.
+fn role_route(role: &Role, method: &Method, path: &str, github_session: bool) -> bool {
+    let page = |p: &str| role.pages.iter().any(|x| x == p);
+    let picker = github_session && page("workflows");
     match *method {
         Method::GET | Method::HEAD => {
-            path == "/api/meta" || path == "/api/stream" || path.starts_with("/api/q/")
+            path == "/api/meta"
+                || path == "/api/stream"
+                || path.starts_with("/api/q/")
+                || (picker
+                    && matches!(
+                        path,
+                        "/github/login"
+                            | "/github/callback"
+                            | "/api/github/repos"
+                            | "/api/github/workflows"
+                    ))
         }
         Method::POST => {
             path == "/auth/logout"
-                || (path == "/api/logs" && role.pages.iter().any(|p| p == "logs"))
+                || (path == "/api/logs" && page("logs"))
+                || (picker && path == "/api/github/watch")
         }
         _ => false,
     }
@@ -155,14 +170,16 @@ pub async fn session(State(state): State<Shared>, mut req: Request, next: Next) 
                         email: Some(u.name),
                         id_token: u.id_token,
                         role,
+                        sid: cookie(req.headers(), auth.cookie_name()).map(String::from),
                     }
                 }
                 None => return deny(StatusCode::UNAUTHORIZED, "login required"),
             }
         }
     };
+    let github_session = state.lab.github.as_ref().is_some_and(|g| g.session_mode());
     if let Some(r) = &caller.role
-        && !role_route(&r.role, req.method(), req.uri().path())
+        && !role_route(&r.role, req.method(), req.uri().path(), github_session)
     {
         tracing::info!(msg = "denied", role = %r.name, route = %req.uri().path());
         return deny(StatusCode::FORBIDDEN, "not available in this view");
@@ -183,9 +200,9 @@ mod tests {
             proxmox_tags: vec![],
             kubernetes_service_account: None,
         };
-        assert!(role_route(&r, &Method::GET, "/api/q/k8s/main"));
-        assert!(role_route(&r, &Method::GET, "/api/stream"));
-        assert!(role_route(&r, &Method::POST, "/auth/logout"));
+        assert!(role_route(&r, &Method::GET, "/api/q/k8s/main", false));
+        assert!(role_route(&r, &Method::GET, "/api/stream", false));
+        assert!(role_route(&r, &Method::POST, "/auth/logout", false));
         for (m, p) in [
             (Method::POST, "/api/act/pve/lab/power"),
             (Method::GET, "/api/act/pve/lab/task"),
@@ -194,8 +211,37 @@ mod tests {
             (Method::GET, "/api/github/repos"),
             (Method::GET, "/github/login"),
         ] {
-            assert!(!role_route(&r, &m, p), "{m} {p}");
+            assert!(!role_route(&r, &m, p, false), "{m} {p}");
         }
+        // RFC 0017: the picker opens for a role only with session watches
+        // and the workflows page
+        let ci = Role {
+            pages: vec!["workflows".into()],
+            ..r.clone()
+        };
+        for (m, p) in [
+            (Method::GET, "/github/login"),
+            (Method::GET, "/github/callback"),
+            (Method::GET, "/api/github/repos"),
+            (Method::GET, "/api/github/workflows"),
+            (Method::POST, "/api/github/watch"),
+        ] {
+            assert!(role_route(&ci, &m, p, true), "{m} {p}");
+            assert!(
+                !role_route(&ci, &m, p, false),
+                "{m} {p} without session store"
+            );
+            assert!(
+                !role_route(&r, &m, p, true),
+                "{m} {p} without the workflows page"
+            );
+        }
+        assert!(!role_route(
+            &ci,
+            &Method::POST,
+            "/api/act/pve/lab/power",
+            true
+        ));
     }
 
     #[test]

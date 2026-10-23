@@ -523,7 +523,8 @@ quiet_hosts = []
 # token = { env = "GITHUB_TOKEN" }     # or a fine-grained token
 # client_id, client_secret             # optional: the sign-in picker
 # [[github.watch]]                     # repo = "owner/name", workflow = "apply.yaml"
-# store = "auto"                       # picker saves: auto, configmap, file, off (RFC 0015)
+# store = "auto"                       # picker saves: auto, configmap, file, off (RFC 0015),
+#                                      # or session: per visitor, their own token (RFC 0017)
 
 [roles.demo]                           # optional, RFC 0016: a read-only view
 # pages = ["infra", "workloads", "gitops"]

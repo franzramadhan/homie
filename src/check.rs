@@ -90,6 +90,9 @@ async fn report(cfg: Config, out: &mut impl std::io::Write) -> Result<()> {
         probes.push((
             "github".into(),
             Box::pin(async move {
+                if g.session_mode() {
+                    return Ok("session store: each visitor signs in and picks their own".into());
+                }
                 let flows = g.workflows().await?;
                 let broken: Vec<String> = flows
                     .iter()

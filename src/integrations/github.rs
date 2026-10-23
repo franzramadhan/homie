@@ -33,11 +33,31 @@ pub struct GitHub {
     client_secret: Option<String>,
     // per repository owner: installation token and its expiry
     tokens: Mutex<HashMap<String, (String, Instant)>>,
+    /// per Homie session: its GitHub user token and, with store = "session",
+    /// its own watches (RFC 0017)
+    personal: std::sync::Mutex<HashMap<String, Personal>>,
 }
 
+/// What one Homie session holds: the user token from the GitHub sign-in, and
+/// in session mode the workflows that session picked.
+#[derive(Default)]
+struct Personal {
+    token: Option<String>,
+    watches: Vec<config::Watch>,
+    touched: Option<Instant>,
+}
+
+/// Homie sessions last at most this long; older personal entries are dropped.
+const PERSONAL_TTL: Duration = Duration::from_secs(12 * 3600);
+
 enum Cred {
-    App { id: u64, key: ring::rsa::KeyPair },
+    App {
+        id: u64,
+        key: ring::rsa::KeyPair,
+    },
     Token(SecretCell),
+    /// store = "session": Homie never reads as the app
+    None,
 }
 
 #[derive(Serialize)]
@@ -160,6 +180,7 @@ impl GitHub {
                 key: load_key(&key.resolve().await?)?,
             },
             (_, _, Some(t)) => Cred::Token(SecretCell::new(t).await?),
+            _ if cfg.store == config::WatchStore::Session => Cred::None,
             _ => return Err("github: set app_id and private_key, or token".into()),
         };
         let resolve = |s: &Option<crate::secret::Secret>| {
@@ -193,6 +214,7 @@ impl GitHub {
             client_id,
             client_secret,
             tokens: Mutex::new(HashMap::new()),
+            personal: std::sync::Mutex::new(HashMap::new()),
         })
     }
 
@@ -225,6 +247,9 @@ impl GitHub {
         let (id, key) = match &self.cred {
             Cred::Token(t) => return Ok(t.get().await),
             Cred::App { id, key } => (id, key),
+            Cred::None => {
+                return Err("this Homie reads GitHub with each visitor's own token".into());
+            }
         };
         let mut tokens = self.tokens.lock().await;
         if let Some((t, until)) = tokens.get(owner)
@@ -335,7 +360,13 @@ impl GitHub {
         Ok((added, removed))
     }
 
-    async fn workflow(&self, w: &config::Watch, source: &'static str) -> Workflow {
+    /// `user_token`: read as that GitHub user (session mode), else as the app.
+    async fn workflow(
+        &self,
+        w: &config::Watch,
+        source: &'static str,
+        user_token: Option<&str>,
+    ) -> Workflow {
         let (owner, _) = w.repo.split_once('/').unwrap_or((&w.repo, ""));
         let repo_url = format!("https://github.com/{}", w.repo);
         let mut out = Workflow {
@@ -348,7 +379,10 @@ impl GitHub {
             error: None,
         };
         let result: Result<()> = async {
-            let token = self.token_for(owner).await?;
+            let token = match user_token {
+                Some(t) => t.to_string(),
+                None => self.token_for(owner).await?,
+            };
             let meta = self
                 .request(
                     reqwest::Method::GET,
@@ -383,11 +417,69 @@ impl GitHub {
     /// Every watched workflow. One failing workflow does not hide the others.
     pub async fn workflows(&self) -> Result<Vec<Workflow>> {
         let watch = self.watch();
-        let all = join_all(watch.iter().map(|(w, s)| self.workflow(w, s))).await;
+        let all = join_all(watch.iter().map(|(w, s)| self.workflow(w, s, None))).await;
         if !all.is_empty() && all.iter().all(|w| w.error.is_some()) {
             return Err(all[0].error.clone().unwrap_or_default().into());
         }
         Ok(all)
+    }
+
+    // ---- per session (RFC 0017): the sign-in token and personal watches ----
+
+    pub fn session_mode(&self) -> bool {
+        matches!(self.store, super::watch_store::Store::Session)
+    }
+
+    fn personal<T>(&self, key: &str, f: impl FnOnce(&mut Personal) -> T) -> T {
+        let mut all = self.personal.lock().unwrap();
+        all.retain(|_, p| p.touched.is_some_and(|t| t.elapsed() < PERSONAL_TTL));
+        let p = all.entry(key.to_string()).or_default();
+        p.touched = Some(Instant::now());
+        f(p)
+    }
+
+    pub fn set_user_token(&self, key: &str, token: String) {
+        self.personal(key, |p| p.token = Some(token));
+    }
+
+    pub fn user_token(&self, key: &str) -> Option<String> {
+        self.personal.lock().unwrap().get(key)?.token.clone()
+    }
+
+    /// Drops a session's token and watches (logout).
+    pub fn forget(&self, key: &str) {
+        self.personal.lock().unwrap().remove(key);
+    }
+
+    /// Sets a session's watches for `repo` to `workflows`; returns how many
+    /// it watches now.
+    pub fn save_session(&self, key: &str, repo: &str, workflows: &[String]) -> usize {
+        self.personal(key, |p| {
+            p.watches.retain(|w| w.repo != repo);
+            p.watches.extend(workflows.iter().map(|f| config::Watch {
+                repo: repo.to_string(),
+                workflow: f.clone(),
+            }));
+            p.watches.len()
+        })
+    }
+
+    /// A session's own workflows, read with its GitHub user token. Empty
+    /// until it signs in and picks some.
+    pub async fn session_workflows(&self, key: &str) -> Result<Vec<Workflow>> {
+        let (token, watches) = match self.personal.lock().unwrap().get(key) {
+            Some(p) => (p.token.clone(), p.watches.clone()),
+            None => (None, Vec::new()),
+        };
+        let Some(token) = token.filter(|_| !watches.is_empty()) else {
+            return Ok(Vec::new());
+        };
+        Ok(join_all(
+            watches
+                .iter()
+                .map(|w| self.workflow(w, "session", Some(&token))),
+        )
+        .await)
     }
 
     // ---- sign-in helper: pick repositories and workflows ----
@@ -513,6 +605,54 @@ mod tests {
 
     // a throwaway 2048-bit test key, never used anywhere else
     const TEST_KEY: &str = include_str!("../../tests/fixtures/test-rsa.pem");
+
+    #[tokio::test]
+    async fn session_reads_with_the_visitors_token() {
+        use axum::{Json, Router, http::HeaderMap, routing::get};
+        // the fake answers only for the visitor's token, never an app token
+        let runs = |h: HeaderMap| async move {
+            let ok = h.get("authorization").and_then(|v| v.to_str().ok()) == Some("Bearer visitor");
+            if ok {
+                Json(serde_json::json!({"workflow_runs": [], "name": "CI"})).into_response()
+            } else {
+                axum::http::StatusCode::UNAUTHORIZED.into_response()
+            }
+        };
+        use axum::response::IntoResponse;
+        let url = crate::testkit::serve(
+            Router::new()
+                .route("/repos/{o}/{r}/actions/workflows/{w}", get(runs))
+                .route("/repos/{o}/{r}/actions/workflows/{w}/runs", get(runs)),
+        )
+        .await;
+        let cfg: config::GitHub = serde_json::from_value(serde_json::json!({
+            "client_id": "Iv1.x", "client_secret": "s", "api_url": url, "store": "session"
+        }))
+        .unwrap();
+        let gh = GitHub::new(&cfg, None).await.unwrap();
+        assert!(gh.session_mode() && gh.store.name() == Some("session"));
+        assert!(gh.workflows().await.unwrap().is_empty(), "no shared list");
+        assert!(gh.session_workflows("a").await.unwrap().is_empty());
+
+        gh.set_user_token("a", "visitor".into());
+        assert_eq!(gh.save_session("a", "o/r", &["ci.yml".into()]), 1);
+        let flows = gh.session_workflows("a").await.unwrap();
+        assert_eq!(
+            (flows.len(), flows[0].source, flows[0].err()),
+            (1, "session", None)
+        );
+        assert_eq!(gh.save_session("a", "o/r", &[]), 0, "unticking removes");
+
+        // another session sees nothing, and an app token is never used
+        gh.save_session("b", "o/r", &["ci.yml".into()]);
+        assert!(
+            gh.session_workflows("b").await.unwrap().is_empty(),
+            "no token, no reads"
+        );
+        assert!(gh.token_for("o").await.is_err());
+        gh.forget("a");
+        assert!(gh.user_token("a").is_none());
+    }
 
     #[tokio::test]
     async fn saved_watches_merge_with_config() {

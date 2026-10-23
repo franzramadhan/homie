@@ -26,8 +26,8 @@ pub struct AppState {
     pub lab: Lab,
     pub cache: Cache,
     pub auth: Option<Auth>,
-    /// GitHub picker helper: user tokens per Homie user, pending OAuth states
-    pub github_users: std::sync::Mutex<std::collections::HashMap<String, String>>,
+    /// GitHub picker helper: pending OAuth states (user tokens live in the
+    /// GitHub integration, per session)
     pub github_states:
         std::sync::Mutex<std::collections::HashMap<String, (String, std::time::Instant)>>,
 }
@@ -85,7 +85,6 @@ pub async fn run(cfg: Config) -> Result<()> {
         lab,
         cache,
         auth,
-        github_users: Default::default(),
         github_states: Default::default(),
     });
     let persist = state.clone();
