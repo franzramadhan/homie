@@ -29,7 +29,7 @@ export type Meta = {
   logs: { label: string; type: "victorialogs" | "loki"; pod_query: string | null; node_query: string | null }[];
   security: string[];
   tailscale: boolean;
-  github: { watch: number; helper: boolean; store: "configmap" | "file" | "session" | null } | null;
+  github: { watch: number; helper: boolean; store: "configmap" | "file" | "session" | null; install_url: string | null } | null;
   healthchecks: { url: string } | null;
 };
 

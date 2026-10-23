@@ -58,6 +58,7 @@ pub async fn meta(State(state): State<Shared>, Extension(caller): Extension<Call
         "tailscale": page("tailscale") && lab.tailscale.is_some(),
         "github": lab.github.as_ref().filter(|_| page("workflows")).map(|g| json!({
             "watch": g.watch().len(), "helper": (full || g.session_mode()) && g.helper, "store": g.store.name(),
+            "install_url": g.install_url,
         })),
         "healthchecks": lab.healthchecks.as_ref().filter(|_| page("outage")).map(|h| json!({ "url": h.url })),
     }))

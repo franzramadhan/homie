@@ -40,7 +40,7 @@ function rememberPicks(repo: string, files: string[]) {
   }
 }
 
-function Picker({ store, watched }: { store: string | null; watched: GhWorkflow[] }) {
+function Picker({ store, installUrl, watched }: { store: string | null; installUrl: string | null; watched: GhWorkflow[] }) {
   const qc = useQueryClient();
   const session = store === "session";
   const [saved, setSaved] = useState("");
@@ -142,9 +142,16 @@ function Picker({ store, watched }: { store: string | null; watched: GhWorkflow[
       ) : (
         <div className="space-y-3">
           {repos && repos.length === 0 && (
-            <p className="text-sm text-ink-subtle">
-              No repositories yet: install the Homie GitHub App on a repository (GitHub, Settings, Applications), then connect again.
-            </p>
+            <div className="space-y-2">
+              <p className="text-sm text-ink-subtle">
+                No repositories yet: install the Homie GitHub App on the repositories you want to watch, then connect again.
+              </p>
+              {installUrl && (
+                <a className="inline-block rounded-control bg-accent px-3 py-1 text-sm text-on-accent hover:bg-accent-hover" href={installUrl}>
+                  Install the GitHub App
+                </a>
+              )}
+            </div>
           )}
           {session && rememberedCount > 0 && watched.length === 0 && (
             <button className="rounded-control border border-hairline-strong px-3 py-1 text-sm" onClick={readd}>
@@ -258,7 +265,7 @@ export function Workflows() {
           )
         }
       </Source>
-      {m.github.helper && <Picker store={m.github.store} watched={q.data?.data ?? []} />}
+      {m.github.helper && <Picker store={m.github.store} installUrl={m.github.install_url} watched={q.data?.data ?? []} />}
     </div>
   );
 }
