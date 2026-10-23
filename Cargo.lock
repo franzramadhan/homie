@@ -1060,7 +1060,7 @@ dependencies = [
 
 [[package]]
 name = "homie"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "argon2",
  "axum",
