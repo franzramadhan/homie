@@ -220,6 +220,8 @@ impl Lab {
             env.data = env
                 .data
                 .map(|d| crate::roles::filter(&r.role, kind, d, pve.as_ref()));
+            // errors name the endpoint that failed, often by address
+            env.error = env.error.map(|e| crate::roles::redact_ips(&e));
         }
         Some(env)
     }

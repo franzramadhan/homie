@@ -128,9 +128,17 @@ Deviations found while building (v0.6.0):
   role's ServiceAccount, and the apiserver answers 403 (not "not installed")
   without it.
 - Proxmox: storage and failed tasks are empty and power is off for a role.
-- IP addresses are replaced with `<ip>` in every text a role receives (event
-  messages name pod addresses), and Proxmox tags that are addresses are
-  dropped.
+- IP addresses are replaced with `<ip>` in every text a role receives, error
+  messages included (event messages name pod addresses, errors name the
+  endpoint that failed); bracketed addresses and addresses glued to other
+  text count too. Proxmox tags that are addresses are dropped (v0.6.1).
+- `[auth] roles` matches emails case-insensitively, like the allowlist; an
+  exact match failed open to full access for a differently cased email
+  (v0.6.1).
+- Known limit: the Flux filter judges a Kustomization by its namespaced
+  inventory only. One that also applies cluster-scoped objects is shown, and
+  after a failed apply its message can name objects outside the allow-list
+  (names only, no data).
 - `[[local_login.users]]` is not in v0.6.0: the demo button covers the demo,
   and OIDC users get roles through `[auth] roles`. `[local_login] role`
   gives the single local user a role, so a public demo instance has no

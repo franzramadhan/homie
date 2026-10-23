@@ -52,20 +52,26 @@ fn is_ip(s: &str) -> bool {
 
 /// Replaces IP addresses in free text with `<ip>`: event messages, Proxmox
 /// tags and the like name hosts and pods a public view must not show.
-fn redact_ips(s: &str) -> String {
+pub fn redact_ips(s: &str) -> String {
     let addr_char = |c: char| c.is_ascii_hexdigit() || matches!(c, '.' | ':' | '[' | ']');
     let mut out = String::with_capacity(s.len());
     let mut run = String::new();
+    // The run is ASCII. A trailing ':' or '.' (end of a sentence) sticks to it,
+    // and so can hex letters before the address ("de10.0.0.1"): try every start.
     let flush = |run: &mut String, out: &mut String| {
-        // a URL scheme's ':' or a trailing '.' sticks to the run; trim before testing
-        let t = run.trim_matches(|c| c == ':' || c == '.');
-        if t.chars().any(|c| c == '.' || c == ':') && is_ip(t) {
-            let start = run.find(t).unwrap_or(0);
-            out.push_str(&run[..start]);
-            out.push_str("<ip>");
-            out.push_str(&run[start + t.len()..]);
-        } else {
-            out.push_str(run);
+        let end = run.trim_end_matches([':', '.']).len();
+        let ok = |s: &str| s.contains(['.', ':']) && is_ip(s);
+        let found = (0..end).find(|&i| {
+            let t = &run[i..end];
+            ok(t) || ok(t.trim_matches(['[', ']']))
+        });
+        match found {
+            Some(i) => {
+                out.push_str(&run[..i]);
+                out.push_str("<ip>");
+                out.push_str(&run[end..]);
+            }
+            None => out.push_str(run),
         }
         run.clear();
     };
@@ -198,6 +204,11 @@ mod tests {
             redact_ips("node at fd00::1 and [fd00::2]:443."),
             "node at <ip> and <ip>."
         );
+        assert_eq!(
+            redact_ips("peer [10.0.0.1] and [fd00::2], id de10.0.0.9"),
+            "peer <ip> and <ip>, id de<ip>"
+        );
+        assert_eq!(redact_ips("error:: retry"), "error:: retry");
         // hashes, versions and times stay
         for keep in [
             "main@sha1:f5acd8e78b29be79070d7282eacf661cc74df011",
