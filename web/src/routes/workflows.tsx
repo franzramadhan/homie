@@ -19,8 +19,30 @@ function duration(s: number | null) {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
+// Session mode (RFC 0017): the browser remembers the last picks, names only,
+// so a returning visitor can re-add them after signing in again.
+const PICKS = "homie.github.picks";
+function lastPicks(): Record<string, string[]> {
+  try {
+    return JSON.parse(localStorage.getItem(PICKS) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+function rememberPicks(repo: string, files: string[]) {
+  try {
+    const all = lastPicks();
+    if (files.length) all[repo] = files;
+    else delete all[repo];
+    localStorage.setItem(PICKS, JSON.stringify(all));
+  } catch {
+    // private windows may refuse storage; the picks just are not remembered
+  }
+}
+
 function Picker({ store, watched }: { store: string | null; watched: GhWorkflow[] }) {
   const qc = useQueryClient();
+  const session = store === "session";
   const [saved, setSaved] = useState("");
   const [repos, setRepos] = useState<string[] | null>(null);
   const [repo, setRepo] = useState("");
@@ -65,8 +87,23 @@ function Picker({ store, watched }: { store: string | null; watched: GhWorkflow[
     setError("");
     try {
       await act("/api/github/watch", { repo, workflows: picked });
+      if (session) rememberPicks(repo, picked);
       await qc.invalidateQueries({ queryKey: ["q", "github", "_"] });
       setSaved(`Saved: ${picked.length} watched in ${repo}.`);
+      close();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+  // remembered picks for repositories this sign-in can still see
+  const remembered = Object.entries(lastPicks()).filter(([r]) => repos?.includes(r));
+  const rememberedCount = remembered.reduce((n, [, f]) => n + f.length, 0);
+  async function readd() {
+    setError("");
+    try {
+      for (const [r, files] of remembered) await act("/api/github/watch", { repo: r, workflows: files });
+      await qc.invalidateQueries({ queryKey: ["q", "github", "_"] });
+      setSaved(`Re-added ${rememberedCount} workflows.`);
       close();
     } catch (e) {
       setError((e as Error).message);
@@ -78,7 +115,12 @@ function Picker({ store, watched }: { store: string | null; watched: GhWorkflow[
   return (
     <Section title="Add workflows">
       <p className="mb-3 text-sm text-ink-subtle">
-        {store ? (
+        {session ? (
+          <>
+            Sign in with GitHub and pick workflows from your own repositories: install the Homie GitHub App on the ones you want to
+            see. Your picks and your GitHub sign-in live only in this session and are gone when you log out or the session ends.
+          </>
+        ) : store ? (
           <>
             Sign in with GitHub to browse the repositories the Homie GitHub App can read and pick the workflows to watch. The list is
             shared by everyone using Homie; workflows set in the config stay as they are.
@@ -93,13 +135,23 @@ function Picker({ store, watched }: { store: string | null; watched: GhWorkflow[
       {!repos ? (
         <div className="flex items-center gap-3">
           <button className="rounded-control bg-accent px-3 py-1 text-sm text-on-accent hover:bg-accent-hover" onClick={open}>
-            {store ? "Change watched workflows" : "Pick workflows"}
+            {session ? "Connect GitHub and pick workflows" : store ? "Change watched workflows" : "Pick workflows"}
           </button>
           {saved && <span className="text-sm text-ink-subtle">{saved}</span>}
         </div>
       ) : (
         <div className="space-y-3">
-          {repos && (
+          {repos && repos.length === 0 && (
+            <p className="text-sm text-ink-subtle">
+              No repositories yet: install the Homie GitHub App on a repository (GitHub, Settings, Applications), then connect again.
+            </p>
+          )}
+          {session && rememberedCount > 0 && watched.length === 0 && (
+            <button className="rounded-control border border-hairline-strong px-3 py-1 text-sm" onClick={readd}>
+              Re-add your last {rememberedCount} workflows
+            </button>
+          )}
+          {repos && repos.length > 0 && (
             <select aria-label="Repository" className={control} value={repo} onChange={(e) => pickRepo(e.target.value)}>
               <option value="">choose a repository</option>
               {repos.map((r) => (
@@ -159,7 +211,9 @@ export function Workflows() {
         {(flows) =>
           flows.length === 0 ? (
             <p className="text-sm text-ink-subtle">
-              No workflows are watched yet: {m.github?.helper && m.github?.store ? "pick some below." : "add `[[github.watch]]` entries to the config."}
+              {m.github?.store === "session"
+                ? "No workflows yet: connect GitHub below and pick some from your own repositories."
+                : `No workflows are watched yet: ${m.github?.helper && m.github?.store ? "pick some below." : "add `[[github.watch]]` entries to the config."}`}
             </p>
           ) : (
             <div className="space-y-6">

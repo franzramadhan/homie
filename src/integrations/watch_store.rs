@@ -18,6 +18,8 @@ const NAMESPACE_FILE: &str = "/var/run/secrets/kubernetes.io/serviceaccount/name
 
 pub enum Store {
     Off,
+    /// watches live in the Homie session, never here (RFC 0017)
+    Session,
     File(PathBuf),
     ConfigMap(Api<ConfigMap>),
 }
@@ -31,6 +33,7 @@ impl Store {
         };
         Ok(match kind {
             WatchStore::Off => Self::Off,
+            WatchStore::Session => Self::Session,
             WatchStore::File => file()?,
             WatchStore::Configmap => Self::configmap().await?,
             WatchStore::Auto if in_cluster => Self::configmap().await?,
@@ -50,6 +53,7 @@ impl Store {
     pub fn name(&self) -> Option<&'static str> {
         match self {
             Self::Off => None,
+            Self::Session => Some("session"),
             Self::File(_) => Some("file"),
             Self::ConfigMap(_) => Some("configmap"),
         }
@@ -57,7 +61,7 @@ impl Store {
 
     pub async fn load(&self) -> Result<Vec<Watch>> {
         let json = match self {
-            Self::Off => return Ok(Vec::new()),
+            Self::Off | Self::Session => return Ok(Vec::new()),
             Self::File(p) => match tokio::fs::read_to_string(p).await {
                 Ok(s) => s,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -78,6 +82,7 @@ impl Store {
         let json = serde_json::to_string_pretty(watch)?;
         match self {
             Self::Off => Err("saving watches is turned off (github.store = \"off\")".into()),
+            Self::Session => Err("session watches are kept per session, not in a store".into()),
             Self::File(p) => {
                 let tmp = p.with_extension("json.tmp");
                 tokio::fs::write(&tmp, json).await?;

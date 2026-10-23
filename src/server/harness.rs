@@ -358,7 +358,6 @@ impl Homie {
             cache: Cache::new(None).unwrap(),
             auth: Auth::new(&cfg).await.unwrap(),
             cfg,
-            github_users: Default::default(),
             github_states: Default::default(),
         };
         tweak(&mut state);

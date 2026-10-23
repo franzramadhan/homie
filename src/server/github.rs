@@ -1,8 +1,9 @@
 //! The GitHub picker helper (RFC 0014): sign in with the GitHub App's user
 //! authorization, list repositories and workflows, copy `[[github.watch]]`
 //! lines, or save them (RFC 0015). Runs are read with the app's installation
-//! token, never with these user tokens. Tokens stay on the server, keyed by
-//! the Homie user.
+//! token, except with `store = "session"` (RFC 0017), where each session
+//! picks its own and they are read with its own user token. User tokens stay
+//! on the server, keyed by the Homie session.
 
 use std::time::{Duration, Instant};
 
@@ -20,8 +21,12 @@ use crate::integrations::{Caller, github::valid_repo};
 
 const STATE_TTL: Duration = Duration::from_secs(600);
 
+/// Per Homie session: demo sessions all share one user name.
 fn user_key(c: &Caller) -> String {
-    c.email.clone().unwrap_or_else(|| "local".into())
+    c.sid
+        .clone()
+        .or_else(|| c.email.clone())
+        .unwrap_or_else(|| "local".into())
 }
 
 fn redirect_uri(state: &Shared) -> String {
@@ -91,11 +96,7 @@ pub async fn callback(
     }
     match gh.exchange(&code, &redirect_uri(&state)).await {
         Ok(token) => {
-            state
-                .github_users
-                .lock()
-                .unwrap()
-                .insert(user_key(&caller), token);
+            gh.set_user_token(&user_key(&caller), token);
             Redirect::to("/workflows?picker=1").into_response()
         }
         Err(e) => error(StatusCode::FORBIDDEN, e),
@@ -103,12 +104,7 @@ pub async fn callback(
 }
 
 fn user_token(state: &Shared, caller: &Caller) -> Option<String> {
-    state
-        .github_users
-        .lock()
-        .unwrap()
-        .get(&user_key(caller))
-        .cloned()
+    state.lab.github.as_ref()?.user_token(&user_key(caller))
 }
 
 pub async fn repos(State(state): State<Shared>, Extension(caller): Extension<Caller>) -> Response {
@@ -185,6 +181,18 @@ pub async fn save_watch(
             StatusCode::BAD_REQUEST,
             format!("no workflow {f:?} in {}", body.repo),
         );
+    }
+    if gh.session_mode() {
+        let n = gh.save_session(&user_key(&caller), &body.repo, &body.workflows);
+        // the visitor's own repositories stay out of the log
+        log_action(
+            "github.watch",
+            &caller,
+            "session",
+            &Ok(format!("{n} watched")),
+        );
+        state.cache.invalidate("github:");
+        return Json(json!({ "watch": n })).into_response();
     }
     let result = gh.save_repo(&body.repo, &body.workflows).await;
     let logged = result

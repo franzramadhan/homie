@@ -49,6 +49,8 @@ pub struct Caller {
     pub id_token: Option<String>,
     /// a read-only role (RFC 0016); `None` is full access
     pub role: Option<RoleRef>,
+    /// the Homie session id, for per-session state (RFC 0017)
+    pub sid: Option<String>,
 }
 
 #[derive(Clone)]
@@ -156,6 +158,30 @@ impl Lab {
         name: &str,
         caller: &Caller,
     ) -> Option<Envelope> {
+        // RFC 0017: each session's own workflows, read with its own token;
+        // the data is the visitor's own, so a role's filter does not apply
+        if let Some(gh) = self
+            .github
+            .as_ref()
+            .filter(|g| kind == "github" && g.session_mode())
+        {
+            if caller
+                .role
+                .as_ref()
+                .is_some_and(|r| !crate::roles::allows(&r.role, kind))
+            {
+                return None;
+            }
+            let sid = caller.sid.clone().unwrap_or_default();
+            let key = format!("github:_:session:{sid}");
+            return Some(
+                cache
+                    .get(&key, Duration::from_secs(60), false, || async {
+                        Ok(serde_json::to_value(gh.session_workflows(&sid).await?)?)
+                    })
+                    .await,
+            );
+        }
         if let Some(r) = &caller.role
             && !crate::roles::allows(&r.role, kind)
         {
@@ -398,6 +424,7 @@ mod tests {
         Caller {
             email: Some("viewer@example.com".into()),
             id_token: None,
+            sid: None,
             role: Some(RoleRef {
                 name: "viewer".into(),
                 role: std::sync::Arc::new(crate::config::Role {

@@ -781,10 +781,11 @@ async fn github_picker() {
     // as if the sign-in had finished
     let sign_in = |token: &str| {
         h.state
-            .github_users
-            .lock()
+            .lab
+            .github
+            .as_ref()
             .unwrap()
-            .insert("local".into(), token.into())
+            .set_user_token("local", token.into())
     };
     sign_in("good");
     assert_eq!(h.get("/api/github/repos").await.json, json!(["acme/app"]));
@@ -972,4 +973,55 @@ async fn run_reports_a_busy_port_and_serves() {
     }
     server.abort();
     assert!(answered);
+}
+
+#[tokio::test]
+async fn session_watches_are_per_visitor() {
+    let backend = backend().await;
+    let h = Homie::start(|url| {
+        format!(
+            "public_url = \"{url}\"\n{}[demo]\nrole = \"ci\"\n\
+             [roles.ci]\npages = [\"workflows\"]\n\
+             [github]\nclient_id = \"Iv1.x\"\nclient_secret = \"s\"\napi_url = \"{backend}\"\nstore = \"session\"\n",
+            local_login(Some("ci")),
+        )
+    })
+    .await;
+    let gh = h.state.lab.github.as_ref().unwrap();
+    let sid = |c: Option<String>| c.unwrap().split_once('=').unwrap().1.to_string();
+    let save = json!({"repo": "acme/app", "workflows": ["ci.yml"]});
+
+    // visitor A: a role, but the picker is open in session mode
+    assert_eq!(h.post("/auth/demo", json!({})).await.status, 204);
+    let a = h.cookie();
+    let meta = h.get("/api/meta").await.json;
+    assert_eq!(
+        (
+            meta["github"]["helper"].clone(),
+            meta["github"]["store"].clone()
+        ),
+        (json!(true), json!("session"))
+    );
+    assert_eq!(h.get("/api/q/github/_").await.json["data"], json!([]));
+    assert_eq!(h.get("/api/github/repos").await.status, 428);
+    assert_eq!(h.get("/github/login").await.status, 303);
+    gh.set_user_token(&sid(a.clone()), "ta".into());
+    assert_eq!(h.get("/api/github/repos").await.json, json!(["acme/app"]));
+    let r = h.post("/api/github/watch", save.clone()).await;
+    assert_eq!((r.status, r.json["watch"].clone()), (200, json!(1)));
+    let flows = h.get("/api/q/github/_").await.json;
+    assert_eq!(flows["data"][0]["repo"], "acme/app");
+    assert_eq!(flows["data"][0]["source"], "session");
+
+    // visitor B, same user name "demo": sees none of it
+    h.set_cookie(None);
+    assert_eq!(h.post("/auth/demo", json!({})).await.status, 204);
+    assert_eq!(h.get("/api/q/github/_").await.json["data"], json!([]));
+    assert_eq!(h.get("/api/github/repos").await.status, 428);
+    assert_eq!(h.post("/api/github/watch", save).await.status, 428);
+
+    // A logs out: its token and watches are gone
+    h.set_cookie(a.clone());
+    assert_eq!(h.post("/auth/logout", json!({})).await.status, 204);
+    assert!(gh.user_token(&sid(a)).is_none());
 }

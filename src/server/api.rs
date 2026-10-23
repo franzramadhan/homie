@@ -57,7 +57,7 @@ pub async fn meta(State(state): State<Shared>, Extension(caller): Extension<Call
         "security": if page("security") { lab.presets() } else { Vec::new() },
         "tailscale": page("tailscale") && lab.tailscale.is_some(),
         "github": lab.github.as_ref().filter(|_| page("workflows")).map(|g| json!({
-            "watch": g.watch().len(), "helper": full && g.helper, "store": g.store.name(),
+            "watch": g.watch().len(), "helper": (full || g.session_mode()) && g.helper, "store": g.store.name(),
         })),
         "healthchecks": lab.healthchecks.as_ref().filter(|_| page("outage")).map(|h| json!({ "url": h.url })),
     }))

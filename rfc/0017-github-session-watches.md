@@ -90,3 +90,17 @@ GitHub, picks workflows from their own repositories and sees their runs.
   public GitHub App `homie`; the main instance keeps its config and
   ConfigMap watches.
 - **Off switch:** any other `store` value, or no `workflows` page in the role.
+
+## Implementation notes
+
+- GitHub user tokens moved from the server state into the GitHub
+  integration and are keyed by the Homie session id in every mode, not only
+  in session mode. On an instance with a shared list, signing in to GitHub
+  for the picker therefore lasts one Homie session.
+- Session watches are pruned 12 hours after their last use, the longest a
+  Homie session lives; logout drops them at once.
+- In session mode the query cache key is `github:_:session:<sid>`, and a
+  save invalidates it, so the live stream shows the new picks at once.
+- `homie check` reports the session store instead of probing a shared list.
+- With no repositories visible (the app is not installed anywhere for that
+  visitor), the picker says so and points to installing the app.

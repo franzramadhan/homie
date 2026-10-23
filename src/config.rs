@@ -514,6 +514,8 @@ pub enum WatchStore {
     File,
     /// paste-only, as in RFC 0014
     Off,
+    /// per Homie session, read with the visitor's own GitHub token (RFC 0017)
+    Session,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -852,7 +854,15 @@ pub fn validate(cfg: &Config) -> Result<()> {
         }
     }
     if let Some(g) = &cfg.github {
-        if !(g.app_id.is_some() && g.private_key.is_some()) && g.token.is_none() {
+        if g.store == WatchStore::Session {
+            // Homie never reads as the app: only the visitors' sign-in is needed
+            if g.client_id.is_none() || g.client_secret.is_none() {
+                return Err("github: store = \"session\" needs client_id and client_secret".into());
+            }
+            if !g.watch.is_empty() {
+                return Err("github: store = \"session\" takes no [[github.watch]] (each visitor picks their own)".into());
+            }
+        } else if !(g.app_id.is_some() && g.private_key.is_some()) && g.token.is_none() {
             return Err("github: set app_id and private_key, or token".into());
         }
         check_url("github.api_url", &g.api_url)?;
@@ -941,6 +951,28 @@ mod tests {
                 validate(&cfg).unwrap_or_else(|e| panic!("{name}: {e}"));
             }
         }
+    }
+
+    #[test]
+    fn github_session_store() {
+        let gh = |v: serde_json::Value| -> GitHub { serde_json::from_value(v).unwrap() };
+        let mut cfg = Config {
+            allow_unauthenticated: true,
+            ..Config::default()
+        };
+        cfg.github = Some(gh(serde_json::json!({
+            "store": "session", "client_id": "Iv1.x", "client_secret": "s"
+        })));
+        assert!(validate(&cfg).is_ok(), "no app key needed");
+        cfg.github = Some(gh(
+            serde_json::json!({"store": "session", "client_id": "Iv1.x"}),
+        ));
+        assert!(validate(&cfg).is_err(), "needs the client secret");
+        cfg.github = Some(gh(serde_json::json!({
+            "store": "session", "client_id": "Iv1.x", "client_secret": "s",
+            "watch": [{"repo": "o/r", "workflow": "ci.yml"}]
+        })));
+        assert!(validate(&cfg).is_err(), "no shared watches");
     }
 
     #[test]

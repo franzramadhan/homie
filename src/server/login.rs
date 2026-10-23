@@ -132,6 +132,10 @@ pub async fn logout(State(state): State<Shared>, headers: HeaderMap) -> Response
     };
     if let Some(sid) = super::guard::cookie(&headers, auth.cookie_name()) {
         auth.logout(sid);
+        // the session's GitHub token and its own watches go with it
+        if let Some(gh) = &state.lab.github {
+            gh.forget(sid);
+        }
     }
     (
         StatusCode::NO_CONTENT,
