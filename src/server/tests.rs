@@ -820,7 +820,7 @@ async fn github_picker() {
     let m = h.get("/api/meta").await.json;
     assert_eq!(
         m["github"],
-        json!({"watch": 1, "helper": true, "store": "file"})
+        json!({"watch": 1, "helper": true, "store": "file", "install_url": null})
     );
 
     // GitHub refuses the user's token

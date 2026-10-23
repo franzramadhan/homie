@@ -103,4 +103,9 @@ GitHub, picks workflows from their own repositories and sees their runs.
   save invalidates it, so the live stream shows the new picks at once.
 - `homie check` reports the session store instead of probing a shared list.
 - With no repositories visible (the app is not installed anywhere for that
-  visitor), the picker says so and points to installing the app.
+  visitor), the picker says so and points to installing the app.- GitHub's sign-in authorizes but never offers to install the app, so a new
+  visitor first sees no repositories. `[github] install_url` (the app's
+  `https://github.com/apps/<slug>/installations/new`) adds an "Install the
+  GitHub App" button there; the app's Setup URL brings the visitor back to
+  `/workflows` after installing. "Request user authorization during
+  installation" stays off: that redirect carries no `state` and would fail.

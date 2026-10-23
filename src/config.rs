@@ -502,6 +502,10 @@ pub struct GitHub {
     /// where the picker saves watches (RFC 0015)
     #[serde(default)]
     pub store: WatchStore,
+    /// the app's install page, offered when a signed-in user sees no
+    /// repositories (RFC 0017), e.g. https://github.com/apps/<slug>/installations/new
+    #[serde(default)]
+    pub install_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
@@ -866,6 +870,9 @@ pub fn validate(cfg: &Config) -> Result<()> {
             return Err("github: set app_id and private_key, or token".into());
         }
         check_url("github.api_url", &g.api_url)?;
+        if let Some(u) = &g.install_url {
+            check_url("github.install_url", u)?;
+        }
         for w in &g.watch {
             if !crate::integrations::github::valid_repo(&w.repo) {
                 return Err(format!("github.watch: {:?} must be owner/name", w.repo).into());
@@ -973,6 +980,10 @@ mod tests {
             "watch": [{"repo": "o/r", "workflow": "ci.yml"}]
         })));
         assert!(validate(&cfg).is_err(), "no shared watches");
+        cfg.github = Some(gh(serde_json::json!({
+            "store": "session", "client_id": "Iv1.x", "client_secret": "s", "install_url": "javascript:x"
+        })));
+        assert!(validate(&cfg).is_err(), "install_url must be http(s)");
     }
 
     #[test]

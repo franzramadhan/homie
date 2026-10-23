@@ -27,6 +27,8 @@ pub struct GitHub {
     saved: std::sync::RwLock<Vec<config::Watch>>,
     pub store: super::watch_store::Store,
     pub helper: bool,
+    /// the app's install page (RFC 0017)
+    pub install_url: Option<String>,
     target: Target,
     cred: Cred,
     client_id: Option<String>,
@@ -209,6 +211,7 @@ impl GitHub {
             saved: std::sync::RwLock::new(saved),
             store,
             helper: client_id.is_some() && client_secret.is_some(),
+            install_url: cfg.install_url.clone(),
             target,
             cred,
             client_id,
@@ -672,6 +675,8 @@ mod tests {
             api_url: "https://api.github.com".into(),
             quiet: false,
             store: config::WatchStore::File,
+
+            install_url: None,
         };
         let gh = GitHub::new(&cfg, Some(&dir)).await.unwrap();
         let names = |gh: &GitHub| {
@@ -877,6 +882,8 @@ mod tests {
             api_url: api_url.into(),
             quiet: false,
             store: config::WatchStore::Off,
+
+            install_url: None,
         }
     }
 
