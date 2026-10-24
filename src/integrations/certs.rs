@@ -114,16 +114,17 @@ pub async fn collect(cfg: &Certificates, clusters: Vec<(&Kube, Result<Client>)>)
                         .discover_address
                         .as_deref()
                         .and_then(|a| a.rsplit_once(':'));
+                    let ca = &k.certificates.ca_file;
                     for (host, port, source) in found {
                         match via {
                             Some((addr, p)) => add(
                                 host,
                                 p.parse().unwrap_or(port),
                                 Some(addr.into()),
-                                None,
+                                ca.clone(),
                                 source,
                             ),
-                            None => add(host, port, None, None, source),
+                            None => add(host, port, None, ca.clone(), source),
                         }
                     }
                 }

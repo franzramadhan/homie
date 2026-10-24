@@ -348,6 +348,8 @@ pub struct CertDiscovery {
     pub annotations: Vec<String>,
     /// `host:port` to connect to instead of resolving each hostname
     pub discover_address: Option<String>,
+    /// extra roots for discovered hostnames (a private CA)
+    pub ca_file: Option<PathBuf>,
 }
 
 impl Default for CertDiscovery {
@@ -361,6 +363,7 @@ impl Default for CertDiscovery {
             ],
             annotations: vec!["external-dns.alpha.kubernetes.io/hostname".into()],
             discover_address: None,
+            ca_file: None,
         }
     }
 }

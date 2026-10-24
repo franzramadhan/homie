@@ -123,6 +123,7 @@ Issuer-specific status is an optional extra.
 | `kubernetes.<name>.certificates.sources` | `["ingress", "gateway", "annotations"]` | hostname sources to use |
 | `kubernetes.<name>.certificates.annotations` | `["external-dns.alpha.kubernetes.io/hostname"]` | annotation keys read by the `annotations` source |
 | `kubernetes.<name>.certificates.discover_address` | none | connect here (`host:port`) instead of resolving each hostname |
+| `kubernetes.<name>.certificates.ca_file` | none | extra roots for discovered hostnames (added during implementation) |
 | `kubernetes.<name>.cert_manager` | `false` | add "renewal failing" from Certificate conditions |
 
 ### Logs and metrics
@@ -151,6 +152,8 @@ Issuer-specific status is an optional extra.
   trusted", "untrusted root <name>", or "issuer <name> not found:
   incomplete chain or untrusted CA".
 - `homie check` does not probe certificate targets yet.
+- `kubernetes.<name>.certificates.ca_file` adds roots for discovered
+  hostnames, for clusters whose gateway serves a private CA.
 
 ## Alternatives
 
