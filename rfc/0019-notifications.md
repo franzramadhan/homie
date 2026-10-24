@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-24 | #70 | v0.9.0 |
+| implemented | 2026-10-24 | #80 | v0.9.0 |
 
 > Send a message when an overview card changes status (to ntfy, a
 > Slack-compatible webhook or a generic JSON webhook), so a problem is seen
