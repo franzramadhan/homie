@@ -22,5 +22,5 @@ the RFCs it implements. Versions stay 0.x (alpha) until a 1.0 is decided.
 | [0015](rfc/0015-github-watch-store.md) | Save picked workflows without a restart | implemented | v0.5.0 |
 | [0016](rfc/0016-roles-demo.md) | Roles and a public demo | implemented | v0.6.0 |
 | [0017](rfc/0017-github-session-watches.md) | Personal GitHub watches per session (demo Workflows page) | implemented | v0.7.0 |
-| [0018](rfc/0018-certificate-expiry.md) | Certificate expiry (cert-manager and endpoints) | draft | - |
+| [0018](rfc/0018-certificate-expiry.md) | Certificate expiry (TLS probes, any issuer) | draft | - |
 | - | Console, per-user Proxmox tickets, notifications | not written | later |
