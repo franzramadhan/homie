@@ -131,6 +131,14 @@ pub fn cross_origin(state: &Shared, headers: &HeaderMap) -> bool {
         let ok = match &state.auth {
             Some(a) => origin == a.public_url.origin().ascii_serialization(),
             None => url::Url::parse(origin).is_ok_and(|u| {
+                // the public_url host: scheme and port must match too, so
+                // another service on that host is another site
+                if let Ok(p) = url::Url::parse(&state.cfg.public_url)
+                    && p.host_str().is_some()
+                    && u.host_str() == p.host_str()
+                {
+                    return u.origin() == p.origin();
+                }
                 let host = match u.port() {
                     Some(p) => format!("{}:{p}", u.host_str().unwrap_or_default()),
                     None => u.host_str().unwrap_or_default().to_string(),
