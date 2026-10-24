@@ -26,5 +26,5 @@ the RFCs it implements. Versions stay 0.x (alpha) until a 1.0 is decided.
 | [0019](rfc/0019-notifications.md) | Notifications (ntfy, Slack-compatible, webhook) | implemented | v0.9.0 |
 | [0020](rfc/0020-pending-updates.md) | Pending updates: Proxmox, distribution, Flux, charts | implemented | v0.10.0 |
 | [0021](rfc/0021-image-updates.md) | Image updates (versions, unversioned tags flagged) | implemented | v0.10.0 |
-| [0022](rfc/0022-log-tail.md) | Live log tail | draft | v0.11.0 |
+| [0022](rfc/0022-log-tail.md) | Live log tail | accepted | v0.11.0 |
 | - | Console, per-user Proxmox tickets | not written | later |
