@@ -254,6 +254,93 @@ mod tests {
         }
     }
 
+    /// Keeps the row filters of `filter` equal to `rows`, `flux` and
+    /// `guests` in spec/filter.bend, whose laws (LAWS.bend) are proven by
+    /// `bend PROOF.bend`: three namespaces and three tags, every subset a
+    /// role can have.
+    #[test]
+    fn filter_matches_spec() {
+        let names = ["n1", "n2", "n3"];
+        let tags = ["t1", "t2", "t3"];
+        let subset = |set: u32, of: [&str; 3]| -> Vec<String> {
+            (0..3)
+                .filter(|i| set & 1 << i != 0)
+                .map(|i| of[i].to_string())
+                .collect()
+        };
+        let row_ns = ["n1", "n2", "n3", "other"];
+        let flux_ns: [&[&str]; 6] = [
+            &[],
+            &["n1"],
+            &["n1", "n2"],
+            &["n2", "n3"],
+            &["n3", "other"],
+            &["n1", "n2", "n3"],
+        ];
+        let guest_tags: [&[&str]; 5] = [&[], &["t1"], &["t2", "t3"], &["t3", "t1"], &["other"]];
+        for set in 0..8 {
+            let role = Role {
+                pages: vec![],
+                namespaces: subset(set, names),
+                proxmox_tags: subset(set, tags),
+                kubernetes_service_account: None,
+            };
+            let has = |list: &Vec<String>, x: &str| list.iter().any(|r| r == x);
+
+            let rows: Vec<Value> = row_ns.iter().map(|n| json!({"namespace": n})).collect();
+            let k8s = filter(
+                &role,
+                "k8s",
+                json!({"workloads": rows, "unhealthy_pods": rows, "events": rows}),
+                None,
+            );
+            let want: Vec<&str> = row_ns
+                .iter()
+                .copied()
+                .filter(|n| has(&role.namespaces, n))
+                .collect();
+            for key in ["workloads", "unhealthy_pods", "events"] {
+                let got: Vec<&str> = k8s[key]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|r| r["namespace"].as_str().unwrap())
+                    .collect();
+                assert_eq!(got, want, "{key} {:?}", role.namespaces);
+            }
+
+            let items: Vec<Value> = flux_ns.iter().map(|ns| json!({"namespaces": ns})).collect();
+            let got = filter(&role, "flux", Value::Array(items), None);
+            let want: Vec<Value> = flux_ns
+                .iter()
+                .filter(|ns| !ns.is_empty() && ns.iter().all(|n| has(&role.namespaces, n)))
+                .map(|ns| json!({"namespaces": ns}))
+                .collect();
+            assert_eq!(got, Value::Array(want), "flux {:?}", role.namespaces);
+
+            let guests: Vec<Value> = guest_tags
+                .iter()
+                .enumerate()
+                .map(|(i, t)| json!({"vmid": i, "tags": t}))
+                .collect();
+            let pve = filter(&role, "pve", json!({"guests": guests}), None);
+            let got: Vec<u64> = pve["guests"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|g| g["vmid"].as_u64().unwrap())
+                .collect();
+            let want: Vec<u64> = (0..guest_tags.len() as u64)
+                .filter(|&i| {
+                    guest_tags[i as usize]
+                        .iter()
+                        .any(|t| has(&role.proxmox_tags, t))
+                })
+                .collect();
+            assert_eq!(got, want, "guests {:?}", role.proxmox_tags);
+        }
+    }
+
     #[test]
     fn addresses_are_redacted() {
         assert_eq!(

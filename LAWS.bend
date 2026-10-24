@@ -8,6 +8,7 @@ import ./spec/power.bend as P
 import ./spec/queries.bend as Q
 import ./spec/sessions.bend as S
 import ./spec/lockout.bend as L
+import ./spec/filter.bend as F
 
 # LAW: a role never reaches an action route (power, reconcile, refresh), with
 # any method, any role and either GitHub store.
@@ -170,3 +171,29 @@ law success_resets:
   for f: Nat
   for w: Bool
   {L.after(L.Throttle{f, False{}}, True{}, w) == L.Throttle{0n, False{}} : L.Throttle}
+
+# LAW: every Kubernetes row a role sees (workload, unhealthy pod, event) is in
+# one of its namespaces.
+law role_rows_in_namespaces:
+  for xs: +List<F.Name>
+  for +a: Bool
+  for +b: Bool
+  for +c: Bool
+  {F.all_ok(F.rows(xs, a, b, c), a, b, c) == True{} : Bool}
+
+# LAW: every Flux object a role sees deploys somewhere, and only to its
+# namespaces.
+law role_flux_in_namespaces:
+  for xs: +List<+List<F.Name>>
+  for +a: Bool
+  for +b: Bool
+  for +c: Bool
+  {F.all_flux_ok(F.flux(xs, a, b, c), a, b, c) == True{} : Bool}
+
+# LAW: every Proxmox guest a role sees carries one of its tags.
+law role_guests_tagged:
+  for xs: +List<+List<F.Name>>
+  for +a: Bool
+  for +b: Bool
+  for +c: Bool
+  {F.all_tagged(F.guests(xs, a, b, c), a, b, c) == True{} : Bool}
