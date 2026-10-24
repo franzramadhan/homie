@@ -54,6 +54,7 @@ pub async fn meta(State(state): State<Shared>, Extension(caller): Extension<Call
         "logs": some(page("logs"))(lab.logs.datasources.iter().map(|s| json!({
             "label": s.label, "type": s.kind, "pod_query": s.pod_query, "node_query": s.node_query,
         })).collect()),
+        "log_tail": { "seconds": lab.logs.tail_seconds, "max_minutes": lab.logs.tail_max_minutes, "max_rows": lab.logs.max_rows },
         "security": if page("security") { lab.presets() } else { Vec::new() },
         "tailscale": page("tailscale") && lab.tailscale.is_some(),
         "github": lab.github.as_ref().filter(|_| page("workflows")).map(|g| json!({
@@ -211,6 +212,11 @@ pub async fn search_logs(
     let user = caller.email.as_deref().unwrap_or("local");
     let ms = started.elapsed().as_millis() as u64;
     match result {
+        // a tail polls every few seconds: its follow-up polls only at debug
+        Ok(r) if req.since.is_some() => {
+            tracing::debug!(msg = "logs", tail = true, user, source = %req.source, query = %req.query, ms, result = "ok");
+            Json(r).into_response()
+        }
         Ok(r) => {
             tracing::info!(msg = "logs", user, source = %req.source, minutes = req.minutes, query = %req.query, ms, result = "ok");
             Json(r).into_response()
