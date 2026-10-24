@@ -539,6 +539,8 @@ proxmox = true                         # package list and reboot pending per nod
 
 [logs]                                 # optional, RFC 0008
 max_rows = 1000
+# tail_seconds = 5                     # live tail poll interval (RFC 0022), 2 to 60
+# tail_max_minutes = 30                # a tail stops after this; 0 hides Follow
 # [[logs.datasources]]                 # label, grafana, datasource, type (victorialogs | loki), pod_query, node_query
 
 [tailscale]                            # optional

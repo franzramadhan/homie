@@ -515,8 +515,8 @@ impl Lab {
             .iter()
             .find(|s| s.label == req.source)
             .ok_or_else(|| format!("no log source {:?}", req.source))?;
-        let limit = logs::validate(req, self.logs.max_rows)?;
-        logs::search(self.grafana(&src.grafana)?, src, req, limit).await
+        let (limit, start) = logs::validate(req, self.logs.max_rows)?;
+        logs::search(self.grafana(&src.grafana)?, src, req, limit, start).await
     }
 }
 
@@ -623,6 +623,7 @@ mod tests {
             query: "x".into(),
             minutes: 5,
             limit: None,
+            since: None,
         };
         assert!(lab.search_logs(&req).await.is_err());
     }
