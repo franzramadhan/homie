@@ -78,6 +78,8 @@ export type PveOverview = {
   ha: { sid: string; node: string; state: string }[];
   failed_tasks: { node: string; upid: string; type: string; id: string; user: string; starttime: number; status: string }[];
   can_power: boolean;
+  /** embedded consoles (RFC 0023): `console = true` and VM.Console on the token */
+  can_console: boolean;
   ui_url: string;
 };
 

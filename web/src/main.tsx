@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Link, Outlet, RouterProvider, createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
+import { Link, Outlet, RouterProvider, createRootRoute, createRoute, createRouter, lazyRouteComponent } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { act, useLiveStream, useMeta } from "./api";
@@ -93,6 +93,8 @@ const router = createRouter({
     page("/security", Security),
     page("/logs", Logs),
     page("/tailscale", Tailscale),
+    // noVNC and xterm.js load only here (RFC 0023)
+    createRoute({ getParentRoute: () => root, path: "/console/$pve/$node/$type/$vmid", component: lazyRouteComponent(() => import("./routes/console"), "Console") }),
   ]),
 });
 

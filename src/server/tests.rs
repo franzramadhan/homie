@@ -1025,3 +1025,195 @@ async fn session_watches_are_per_visitor() {
     assert_eq!(h.post("/auth/logout", json!({})).await.status, 204);
     assert!(gh.user_token(&sid(a)).is_none());
 }
+
+/// A Proxmox with one VM on a serial port, one without, one stopped, and a
+/// vncwebsocket that checks the token and ticket, then echoes.
+async fn console_backend() -> String {
+    use axum::{
+        Form, Json, Router,
+        extract::{Path, Query, WebSocketUpgrade, ws::Message},
+        http::HeaderMap,
+        response::IntoResponse,
+        routing::{get, post},
+    };
+    use std::collections::HashMap;
+    let data = |v: Value| Json(json!({ "data": v }));
+    let app = Router::new()
+        .route(
+            "/api2/json/cluster/resources",
+            get(move || async move {
+                data(json!([
+                    {"type": "qemu", "vmid": 101, "name": "serial", "node": "pve1", "status": "running"},
+                    {"type": "qemu", "vmid": 102, "name": "vga", "node": "pve1", "status": "running"},
+                    {"type": "qemu", "vmid": 103, "name": "off", "node": "pve1", "status": "stopped"}
+                ]))
+            }),
+        )
+        .route(
+            "/api2/json/nodes/pve1/qemu/{vmid}/config",
+            get(move |Path(vmid): Path<u64>| async move {
+                data(if vmid == 101 { json!({"serial0": "socket"}) } else { json!({}) })
+            }),
+        )
+        .route(
+            "/api2/json/nodes/pve1/qemu/{vmid}/termproxy",
+            post(move |Form(f): Form<HashMap<String, String>>| async move {
+                assert_eq!(f["serial"], "serial0");
+                data(json!({"port": "5901", "ticket": "PVEVNC:term", "user": "homie@pve!t"}))
+            }),
+        )
+        .route(
+            "/api2/json/nodes/pve1/qemu/{vmid}/vncproxy",
+            post(move |Form(f): Form<HashMap<String, String>>| async move {
+                assert_eq!((f["websocket"].as_str(), f["generate-password"].as_str()), ("1", "1"));
+                data(json!({"port": "5902", "ticket": "PVEVNC:vnc", "user": "homie@pve!t", "password": "onetime"}))
+            }),
+        )
+        .route(
+            "/api2/json/nodes/pve1/qemu/{vmid}/vncwebsocket",
+            get(
+                |h: HeaderMap, Query(q): Query<HashMap<String, String>>, ws: WebSocketUpgrade| async move {
+                    assert_eq!(h["authorization"], "PVEAPIToken=homie@pve!t=secret");
+                    let term = q["vncticket"] == "PVEVNC:term";
+                    assert_eq!(q["port"], if term { "5901" } else { "5902" });
+                    ws.protocols(["binary"]).on_upgrade(move |mut s| async move {
+                        if term {
+                            let Some(Ok(Message::Text(login))) = s.recv().await else { return };
+                            assert_eq!(login.as_str(), "homie@pve!t:PVEVNC:term\n");
+                            let _ = s.send(Message::Text("OK".into())).await;
+                        }
+                        while let Some(Ok(m)) = s.recv().await {
+                            if matches!(m, Message::Close(_)) || s.send(m).await.is_err() {
+                                break;
+                            }
+                        }
+                    })
+                    .into_response()
+                },
+            ),
+        );
+    crate::testkit::serve(app).await
+}
+
+#[tokio::test]
+async fn consoles_open_once_and_relay() {
+    use futures::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
+
+    let pve = console_backend().await;
+    let h = Homie::start(|_| {
+        format!(
+            "public_url = \"http://homie.example\"\n{}\n\
+             [proxmox.lab]\nendpoints = [\"{pve}\"]\ntoken = \"homie@pve!t=secret\"\nconsole = true\n\
+             [proxmox.off]\nendpoints = [\"{pve}\"]\ntoken = \"homie@pve!t=secret\"\n",
+            local_login(None)
+        )
+    })
+    .await;
+    let open = |vmid: u64, mode: Option<&str>| json!({"node": "pve1", "vmid": vmid, "type": "qemu", "mode": mode});
+    assert_eq!(
+        h.post("/api/act/pve/lab/console", open(101, None))
+            .await
+            .status,
+        401
+    );
+    assert_eq!(h.login().await.status, 204);
+
+    let r = h.post("/api/act/pve/off/console", open(101, None)).await;
+    assert_eq!(
+        (r.status, r.json["error"].as_str()),
+        (403, Some("consoles are off for this Proxmox"))
+    );
+    let r = h.post("/api/act/pve/lab/console", open(103, None)).await;
+    assert_eq!(
+        (r.status, r.json["error"].as_str()),
+        (400, Some("off is not running"))
+    );
+    let r = h
+        .post("/api/act/pve/lab/console", open(102, Some("term")))
+        .await;
+    assert_eq!(
+        (r.status, r.json["error"].as_str()),
+        (400, Some("this VM has no serial0 port"))
+    );
+
+    let ws = |id: &str, origin: &str, cookie: Option<String>| {
+        let url = format!(
+            "{}/api/act/pve/lab/console/{id}",
+            h.url.replace("http", "ws")
+        );
+        let mut req = url.into_client_request().unwrap();
+        req.headers_mut().insert("origin", origin.parse().unwrap());
+        req.headers_mut()
+            .insert("sec-websocket-protocol", "binary".parse().unwrap());
+        if let Some(c) = cookie {
+            req.headers_mut().insert("cookie", c.parse().unwrap());
+        }
+        let addr = h.url.trim_start_matches("http://").to_string();
+        async move {
+            let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+            tokio_tungstenite::client_async(req, tcp).await
+        }
+    };
+    let refused = |e: tokio_tungstenite::tungstenite::Error| match e {
+        tokio_tungstenite::tungstenite::Error::Http(r) => r.status().as_u16(),
+        e => panic!("{e}"),
+    };
+
+    // serial VM: a terminal, the ticket never in the answer
+    let r = h.post("/api/act/pve/lab/console", open(101, None)).await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    assert_eq!(
+        (r.json["mode"].as_str(), r.json["switchable"].as_bool()),
+        (Some("term"), Some(true))
+    );
+    assert!(r.json["password"].is_null() && !r.text.contains("PVEVNC"));
+    let id = r.json["id"].as_str().unwrap().to_string();
+    let e = ws(&id, "http://evil.example", h.cookie())
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(refused(e), 403);
+    let e = ws(&id, "http://homie.example", None).await.err().unwrap();
+    assert_eq!(refused(e), 401, "no session");
+    let (mut s, _) = ws(&id, "http://homie.example", h.cookie()).await.unwrap();
+    s.send(Message::text("0:2:hi")).await.unwrap();
+    assert_eq!(s.next().await.unwrap().unwrap(), Message::text("0:2:hi"));
+    drop(s);
+    let e = ws(&id, "http://homie.example", h.cookie())
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(refused(e), 403, "an id works once");
+
+    // VNC on request: a one-time VNC password for noVNC, binary frames relayed
+    let r = h
+        .post("/api/act/pve/lab/console", open(101, Some("vnc")))
+        .await;
+    assert_eq!(
+        (r.json["mode"].as_str(), r.json["password"].as_str()),
+        (Some("vnc"), Some("onetime"))
+    );
+    let id = r.json["id"].as_str().unwrap().to_string();
+    let (mut s, resp) = ws(&id, "http://homie.example", h.cookie()).await.unwrap();
+    assert_eq!(resp.headers()["sec-websocket-protocol"], "binary");
+    s.send(Message::binary(vec![1, 2, 3])).await.unwrap();
+    assert_eq!(
+        s.next().await.unwrap().unwrap(),
+        Message::binary(vec![1, 2, 3])
+    );
+
+    // another session cannot take an id
+    let r = h.post("/api/act/pve/lab/console", open(102, None)).await;
+    assert_eq!(r.json["mode"], "vnc");
+    let id = r.json["id"].as_str().unwrap().to_string();
+    let mine = h.cookie();
+    h.set_cookie(None);
+    assert_eq!(h.login().await.status, 204);
+    assert_ne!(h.cookie(), mine);
+    let e = ws(&id, "http://homie.example", h.cookie())
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(refused(e), 403);
+}
