@@ -106,6 +106,45 @@ async fn report(cfg: Config, out: &mut impl std::io::Write) -> Result<()> {
             }),
         ));
     }
+    // RFC 0018: a handshake per listed target; expiry is the card's job,
+    // a chain that does not verify is a failure here
+    for t in &cfg.certificates.targets {
+        probes.push((
+            format!("certificates.{}:{}", t.host, t.port),
+            Box::pin(async move {
+                let roots = crate::tls::roots(t.ca_file.as_deref())?;
+                let seen = crate::tls::probe(&t.host, t.port, t.address.as_deref(), roots).await?;
+                let leaf = seen.chain.first().ok_or("no certificate")?;
+                match seen.problem {
+                    Some(p) => {
+                        Err(format!("{p} ({}, issued by {})", leaf.subject, leaf.issuer).into())
+                    }
+                    None => {
+                        let until = jiff::Timestamp::from_second(leaf.not_after)
+                            .map(|t| t.strftime("%Y-%m-%d").to_string())
+                            .unwrap_or_default();
+                        Ok(format!("valid until {until}, issued by {}", leaf.issuer))
+                    }
+                }
+            }),
+        ));
+    }
+    // RFC 0019: targets resolve (no message is sent; that is `notify-test`)
+    if let Some(n) = &cfg.notify {
+        let lab = &lab;
+        probes.push((
+            "notify".into(),
+            Box::pin(async move {
+                let targets = crate::notify::targets(n).await?;
+                let cards = crate::notify::cards(lab, n);
+                Ok(format!(
+                    "{} targets, {} cards evaluated",
+                    targets.len(),
+                    cards.len()
+                ))
+            }),
+        ));
+    }
     if let Some(h) = &lab.healthchecks {
         probes.push((
             "healthchecks".into(),
@@ -134,6 +173,19 @@ async fn report(cfg: Config, out: &mut impl std::io::Write) -> Result<()> {
     }
     for (kind, name, reason) in lab.insecure() {
         writeln!(out, "warn  {:width$}  {reason}", format!("{kind}.{name}"))?;
+    }
+    if let Some(n) = &cfg.notify
+        && n.kubernetes_service_account.is_none()
+    {
+        for (name, k) in &lab.kubernetes {
+            if k.forwards_token() {
+                writeln!(
+                    out,
+                    "warn  {:width$}  forward_token without notify.kubernetes_service_account: its cards are not evaluated",
+                    format!("notify.{name}")
+                )?;
+            }
+        }
     }
     if names.is_empty() {
         writeln!(
@@ -221,6 +273,41 @@ mod tests {
             "{out}"
         );
         line(&out, "ok    openbao.vault");
+    }
+
+    #[tokio::test]
+    async fn certificate_targets_and_notify() {
+        let pki = crate::tls::tests::Pki::new(2045, 2040);
+        let dir = std::env::temp_dir().join(format!("homie-check-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ca = dir.join("ca.pem");
+        std::fs::write(&ca, &pki.root_pem).unwrap();
+        let (leaf, key) = pki.leaf(&["ok.example"], 2024, 2040);
+        let port = crate::tls::tests::tls_server(vec![leaf, pki.inter.clone()], &key).await;
+        let (out, r) = check(&format!(
+            "[certificates]\ntargets = [\n\
+             {{ host = \"ok.example\", port = {port}, address = \"127.0.0.1\", ca_file = \"{ca}\" }},\n\
+             {{ host = \"wrong.example\", port = {port}, address = \"127.0.0.1\", ca_file = \"{ca}\" }},\n]\n\
+             [notify]\ntargets = [{{ type = \"webhook\", url = \"http://127.0.0.1:9/hook\" }}]\n",
+            ca = ca.display()
+        ))
+        .await;
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(r.unwrap_err().to_string(), "1 of 3 checks failed", "{out}");
+        assert!(
+            line(&out, &format!("ok    certificates.ok.example:{port}"))
+                .contains("valid until 2040-01-01, issued by Test Intermediate"),
+            "{out}"
+        );
+        assert!(
+            line(&out, &format!("FAIL  certificates.wrong.example:{port}"))
+                .contains("name_mismatch"),
+            "{out}"
+        );
+        assert!(
+            line(&out, "ok    notify").ends_with("1 targets, 1 cards evaluated"),
+            "{out}"
+        );
     }
 
     #[tokio::test]

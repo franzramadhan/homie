@@ -151,7 +151,9 @@ Issuer-specific status is an optional extra.
 - "Untrusted" is split by the last certificate sent: "self-signed, not
   trusted", "untrusted root <name>", or "issuer <name> not found:
   incomplete chain or untrusted CA".
-- `homie check` does not probe certificate targets yet.
+- `homie check` probes each listed target (v0.10.2): `ok` with the leaf's
+  expiry and issuer, `FAIL` when the chain does not verify. Expiry
+  thresholds stay the card's job.
 - `kubernetes.<name>.certificates.ca_file` adds roots for discovered
   hostnames, for clusters whose gateway serves a private CA.
 
