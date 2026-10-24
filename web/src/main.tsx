@@ -8,6 +8,7 @@ import { GitOps } from "./routes/gitops";
 import { Login } from "./routes/login";
 import { Logs } from "./routes/logs";
 import { Infra } from "./routes/infra";
+import { Updates } from "./routes/updates";
 import { Observability } from "./routes/observability";
 import { Overview } from "./routes/overview";
 import { Security } from "./routes/security";
@@ -31,6 +32,7 @@ function Layout() {
     ["/logs", "Logs", !!m?.logs.length],
     ["/security", "Security", !!m?.security.length],
     ["/tailscale", "Tailscale", !!m?.tailscale],
+    ["/updates", "Updates", !!m?.updates],
   ];
   return (
     <div className="mx-auto max-w-7xl px-4 py-4">
@@ -83,6 +85,7 @@ const router = createRouter({
   routeTree: root.addChildren([
     page("/", Overview),
     page("/infra", Infra),
+    page("/updates", Updates),
     page("/workloads", Workloads),
     page("/gitops", GitOps),
     page("/workflows", Workflows),

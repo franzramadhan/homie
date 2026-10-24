@@ -32,6 +32,8 @@ pub struct Kube {
     pub argocd_url: Option<String>,
     pub certificates: config::CertDiscovery,
     pub cert_manager: bool,
+    pub distro: config::Distro,
+    pub flux_namespace: String,
     base: Config,
     shared: Option<Client>,
 }
@@ -163,6 +165,8 @@ impl Kube {
             cnpg_max_backup_age_hours: cfg.cnpg_max_backup_age_hours,
             certificates: cfg.certificates.clone(),
             cert_manager: cfg.cert_manager,
+            distro: cfg.distro.clone(),
+            flux_namespace: cfg.flux_namespace.clone(),
             argocd_url: cfg.argocd_url.clone(),
             links: super::links::Links::new(
                 &cfg.links,

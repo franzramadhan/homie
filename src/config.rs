@@ -49,6 +49,8 @@ pub struct Config {
     pub certificates: Certificates,
     /// messages when an overview card changes status (RFC 0019)
     pub notify: Option<Notify>,
+    /// what is out of date (RFC 0020)
+    pub updates: Updates,
 }
 
 impl Default for Config {
@@ -76,6 +78,7 @@ impl Default for Config {
             healthchecks: None,
             certificates: Certificates::default(),
             notify: None,
+            updates: Updates::default(),
         }
     }
 }
@@ -291,8 +294,86 @@ pub struct Kubernetes {
     /// "renewal failing" from cert-manager Certificate conditions (RFC 0018)
     #[serde(default)]
     pub cert_manager: bool,
+    /// the distribution behind the versions (RFC 0020): "auto", "none", a
+    /// built-in name, or `{ github = "owner/repo" }`
+    #[serde(default)]
+    pub distro: Distro,
+    /// where the Flux version label is read (RFC 0020)
+    #[serde(default = "default_flux_namespace")]
+    pub flux_namespace: String,
     #[serde(default)]
     pub quiet: bool,
+}
+
+fn default_flux_namespace() -> String {
+    "flux-system".into()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Distro {
+    Name(String),
+    GitHub { github: String },
+}
+
+impl Default for Distro {
+    fn default() -> Self {
+        Distro::Name("auto".into())
+    }
+}
+
+/// Pending updates (RFC 0020). Everything that calls a third party is off
+/// until turned on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Updates {
+    /// package list and reboot pending per Proxmox node
+    pub proxmox: bool,
+    pub upstream: Upstream,
+    /// raises the GitHub API rate limit (60 an hour without)
+    pub github_token: Option<Secret>,
+    pub registries: Vec<Registry>,
+    /// repositories of charts installed with plain `helm install`
+    pub charts: Vec<ChartRepo>,
+    /// chart (and image) globs never looked up
+    pub ignore: Vec<String>,
+}
+
+impl Default for Updates {
+    fn default() -> Self {
+        Self {
+            proxmox: true,
+            upstream: Upstream::default(),
+            github_token: None,
+            registries: Vec::new(),
+            charts: Vec::new(),
+            ignore: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Upstream {
+    pub kubernetes: bool,
+    pub distro: bool,
+    pub flux: bool,
+    pub charts: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Registry {
+    pub host: String,
+    pub username: Secret,
+    pub password: Secret,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChartRepo {
+    pub name: String,
+    pub repo: String,
 }
 
 /// Notifications (RFC 0019): status changes of the overview cards.
@@ -953,6 +1034,18 @@ pub fn validate(cfg: &Config) -> Result<()> {
             return Err(
                 "notify.kubernetes_service_account: set \"namespace/name\" of a read-only ServiceAccount".into(),
             );
+        }
+    }
+    for r in &cfg.updates.charts {
+        if !(r.repo.starts_with("oci://")
+            || r.repo.starts_with("https://")
+            || r.repo.starts_with("http://"))
+        {
+            return Err(format!(
+                "updates.charts: repo {:?} must be oci://, https:// or http://",
+                r.repo
+            )
+            .into());
         }
     }
     let c = &cfg.certificates;
