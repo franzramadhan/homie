@@ -25,6 +25,8 @@ pub struct Report {
     pub proxmox: Vec<PveNode>,
     pub kubernetes: Vec<Cluster>,
     pub charts: Vec<Chart>,
+    /// container images, when `updates.upstream.images` is on (RFC 0021)
+    pub images: Vec<Image>,
     pub errors: Vec<String>,
 }
 
@@ -499,6 +501,158 @@ pub async fn chart_latest(
     }
 }
 
+#[derive(Debug, Serialize, PartialEq)]
+pub struct Image {
+    cluster: String,
+    /// as written in the pod spec
+    image: String,
+    registry: String,
+    repository: String,
+    tag: Option<String>,
+    /// pinned by digest without a tag: nothing to compare
+    pinned: bool,
+    /// `latest`, `stable`, no tag: no version to compare (RFC 0021)
+    unversioned: bool,
+    /// `<namespace>/<kind>/<name>` of the workloads running it
+    used_by: Vec<String>,
+    latest: Latest,
+}
+
+/// `registry`, `repository`, `tag`, `digest` of an image reference. Docker
+/// Hub short names expand to `docker.io/library/...`.
+pub fn image_ref(image: &str) -> (String, String, Option<String>, Option<String>) {
+    let (rest, digest) = match image.split_once('@') {
+        Some((r, d)) => (r, Some(d.to_string())),
+        None => (image, None),
+    };
+    // a tag is after the last colon that comes after the last slash
+    let slash = rest.rfind('/').map(|i| i + 1).unwrap_or(0);
+    let (name, tag) = match rest[slash..].rfind(':') {
+        Some(i) => (&rest[..slash + i], Some(rest[slash + i + 1..].to_string())),
+        None => (rest, None),
+    };
+    let first = name.split('/').next().unwrap_or_default();
+    let (registry, repo) =
+        if name.contains('/') && (first.contains(['.', ':']) || first == "localhost") {
+            let (r, p) = name.split_once('/').unwrap();
+            (r.to_string(), p.to_string())
+        } else if name.contains('/') {
+            ("docker.io".to_string(), name.to_string())
+        } else {
+            ("docker.io".to_string(), format!("library/{name}"))
+        };
+    (registry, repo, tag, digest)
+}
+
+/// The images of running pods (containers and init containers), one row
+/// per image with the workloads using it.
+pub async fn images(cluster: &str, client: Client, cfg: &Updates) -> Result<Vec<Image>> {
+    use k8s_openapi::api::core::v1::Pod;
+    let pods = Api::<Pod>::all(client).list(&ListParams::default()).await?;
+    let mut by: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for p in &pods.items {
+        let ns = p.metadata.namespace.clone().unwrap_or_default();
+        let owner = p
+            .metadata
+            .owner_references
+            .as_ref()
+            .and_then(|o| o.first())
+            .map(|o| match o.kind.as_str() {
+                // a ReplicaSet's name is its Deployment's plus a hash
+                "ReplicaSet" => format!(
+                    "deployment/{}",
+                    o.name.rsplit_once('-').map(|(d, _)| d).unwrap_or(&o.name)
+                ),
+                k => format!("{}/{}", k.to_lowercase(), o.name),
+            })
+            .unwrap_or_else(|| format!("pod/{}", p.metadata.name.clone().unwrap_or_default()));
+        let spec = p.spec.as_ref();
+        let containers = spec.map(|s| s.containers.iter()).into_iter().flatten();
+        let inits = spec
+            .and_then(|s| s.init_containers.as_ref())
+            .into_iter()
+            .flatten();
+        for c in containers.chain(inits) {
+            if let Some(img) = &c.image {
+                let users = by.entry(img.clone()).or_default();
+                let u = format!("{ns}/{owner}");
+                if !users.contains(&u) {
+                    users.push(u);
+                }
+            }
+        }
+    }
+    Ok(by
+        .into_iter()
+        .filter(|(img, _)| !cfg.ignore.iter().any(|g| glob(g, img)))
+        .map(|(image, used_by)| {
+            let (registry, repository, tag, digest) = image_ref(&image);
+            let versioned = tag.as_deref().and_then(upstream::parse).is_some();
+            Image {
+                cluster: cluster.into(),
+                pinned: digest.is_some() && tag.is_none(),
+                unversioned: !versioned && !(digest.is_some() && tag.is_none()),
+                image,
+                registry,
+                repository,
+                tag,
+                used_by,
+                latest: Latest::default(),
+            }
+        })
+        .collect())
+}
+
+/// The newest X.Y.Z tag: what an unversioned image could pin to.
+fn newest_plain(tags: &[String]) -> Option<String> {
+    tags.iter()
+        .filter_map(|t| upstream::parse(t).map(|v| (t, v)))
+        .filter(|(_, v)| v.nums.len() == 3 && v.suffix.is_empty())
+        .max_by(|a, b| a.1.nums.cmp(&b.1.nums))
+        .map(|(t, _)| t.clone())
+}
+
+/// Tags of each image repository (one lookup per repository, four at a
+/// time), compared by shape; unversioned images get the newest X.Y.Z.
+pub async fn image_latest(
+    images: &mut [Image],
+    creds: &BTreeMap<String, (String, String)>,
+    errors: &mut Vec<String>,
+) {
+    use futures::StreamExt;
+    let repos: Vec<(String, String)> = images
+        .iter()
+        .filter(|i| !i.pinned)
+        .map(|i| (i.registry.clone(), i.repository.clone()))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let found: BTreeMap<(String, String), std::result::Result<Vec<String>, String>> =
+        futures::stream::iter(repos)
+            .map(|(reg, repo)| async move {
+                let r = upstream::oci_tags(&reg, &repo, creds.get(&reg).cloned())
+                    .await
+                    .map_err(|e| e.to_string());
+                ((reg, repo), r)
+            })
+            .buffer_unordered(4)
+            .collect()
+            .await;
+    for i in images.iter_mut() {
+        match found.get(&(i.registry.clone(), i.repository.clone())) {
+            Some(Ok(tags)) if i.unversioned => i.latest.newest = newest_plain(tags),
+            Some(Ok(tags)) => {
+                i.latest = upstream::latest(i.tag.as_deref().unwrap_or_default(), tags)
+            }
+            Some(Err(e)) => errors.push(format!(
+                "{}: image {}/{}: {e}",
+                i.cluster, i.registry, i.repository
+            )),
+            None => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -712,5 +866,123 @@ mod tests {
         c[0].latest = Latest::default();
         chart_latest(&mut c, &BTreeMap::new(), &mut errors).await;
         assert_eq!(c[0].latest.newest.as_deref(), Some("1.21.0"));
+    }
+    #[test]
+    fn image_references() {
+        let r = |s: &str| image_ref(s);
+        assert_eq!(
+            r("nginx"),
+            ("docker.io".into(), "library/nginx".into(), None, None)
+        );
+        assert_eq!(
+            r("nginx:1.27-alpine"),
+            (
+                "docker.io".into(),
+                "library/nginx".into(),
+                Some("1.27-alpine".into()),
+                None
+            )
+        );
+        assert_eq!(
+            r("grafana/grafana:13.0.1"),
+            (
+                "docker.io".into(),
+                "grafana/grafana".into(),
+                Some("13.0.1".into()),
+                None
+            )
+        );
+        assert_eq!(
+            r("ghcr.io/org/app:v1.2.3"),
+            (
+                "ghcr.io".into(),
+                "org/app".into(),
+                Some("v1.2.3".into()),
+                None
+            )
+        );
+        assert_eq!(
+            r("registry.local:5000/team/app:2.0@sha256:abc"),
+            (
+                "registry.local:5000".into(),
+                "team/app".into(),
+                Some("2.0".into()),
+                Some("sha256:abc".into())
+            )
+        );
+        assert_eq!(
+            r("quay.io/cilium/cilium@sha256:abc"),
+            (
+                "quay.io".into(),
+                "cilium/cilium".into(),
+                None,
+                Some("sha256:abc".into())
+            )
+        );
+        assert_eq!(
+            r("localhost/app:1"),
+            ("localhost".into(), "app".into(), Some("1".into()), None)
+        );
+    }
+
+    #[test]
+    fn newest_plain_versions() {
+        let t: Vec<String> = [
+            "1.27.3",
+            "1.28.0-alpine",
+            "1.29",
+            "latest",
+            "v1.30.0",
+            "1.28.1",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(newest_plain(&t).as_deref(), Some("v1.30.0"));
+        assert_eq!(newest_plain(&[]), None);
+    }
+
+    #[tokio::test]
+    async fn images_of_running_pods() {
+        let pods = json!([
+            {"metadata": {"namespace": "web", "name": "site-7d9f-abc", "ownerReferences": [{"kind": "ReplicaSet", "name": "site-7d9f", "apiVersion": "apps/v1", "uid": "1"}]},
+             "spec": {"containers": [{"name": "c", "image": "nginx:1.27.3-alpine"}], "initContainers": [{"name": "i", "image": "busybox"}]}},
+            {"metadata": {"namespace": "web", "name": "site-7d9f-def", "ownerReferences": [{"kind": "ReplicaSet", "name": "site-7d9f", "apiVersion": "apps/v1", "uid": "1"}]},
+             "spec": {"containers": [{"name": "c", "image": "nginx:1.27.3-alpine"}]}},
+            {"metadata": {"namespace": "kube-system", "name": "pause"}, "spec": {"containers": [{"name": "p", "image": "registry.k8s.io/pause:3.10"}]}},
+            {"metadata": {"namespace": "db", "name": "pg-1"}, "spec": {"containers": [{"name": "c", "image": "ghcr.io/cnpg/pg@sha256:abc"}]}}]);
+        let url = serve(route("/api/v1/pods", klist("Pod", pods))).await;
+        let cfg = Updates {
+            ignore: vec!["registry.k8s.io/pause*".into()],
+            ..Default::default()
+        };
+        let got = images("lab", kube_client(&url), &cfg).await.unwrap();
+        let rows: Vec<_> = got
+            .iter()
+            .map(|i| (i.image.as_str(), i.unversioned, i.pinned, i.used_by.clone()))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                (
+                    "busybox",
+                    true,
+                    false,
+                    vec!["web/deployment/site".to_string()]
+                ),
+                (
+                    "ghcr.io/cnpg/pg@sha256:abc",
+                    false,
+                    true,
+                    vec!["db/pod/pg-1".to_string()]
+                ),
+                (
+                    "nginx:1.27.3-alpine",
+                    false,
+                    false,
+                    vec!["web/deployment/site".to_string()]
+                ),
+            ]
+        );
     }
 }

@@ -2,7 +2,7 @@
 // distribution and Flux versions, and chart versions. Read-only: Homie never
 // installs anything. "Available" comes from opt-in upstream lookups.
 
-import { useQ, type ChartUpdate, type ClusterUpdate, type Latest, type PveUpdate, type Updates as Report } from "../api";
+import { useQ, type ChartUpdate, type ClusterUpdate, type ImageUpdate, type Latest, type PveUpdate, type Updates as Report } from "../api";
 import { Badge, DataTable, Source, type Col } from "../ui";
 
 /** "1.27.5 / 1.29.0": the newest patch, then the newest overall. */
@@ -64,6 +64,31 @@ const chartColumns: Col<ChartUpdate>[] = [
   { id: "source", header: "repository", accessorFn: (r) => r.source ?? "", cell: ({ row }) => <span className="text-xs">{row.original.source ?? "unknown"}</span> },
 ];
 
+const imageColumns: Col<ImageUpdate>[] = [
+  { id: "image", header: "image", accessorFn: (r) => `${r.registry}/${r.repository}` },
+  {
+    id: "tag",
+    header: "tag",
+    accessorFn: (r) => (r.unversioned ? `unversioned ${r.tag ?? ""}` : r.pinned ? "pinned by digest" : (r.tag ?? "")),
+    cell: ({ row }) => {
+      const r = row.original;
+      if (r.pinned) return <span className="text-ink-subtle">pinned by digest</span>;
+      return r.unversioned ? <Badge tone="quiet">{`unversioned${r.tag ? `: ${r.tag}` : ""}`}</Badge> : r.tag;
+    },
+  },
+  {
+    id: "available",
+    header: "available",
+    accessorFn: (r) => available(r.latest),
+    cell: ({ row }) => {
+      const r = row.original;
+      const a = available(r.latest);
+      return r.unversioned && a ? <span>pin to {a}</span> : a;
+    },
+  },
+  { id: "used", header: "used by", accessorFn: (r) => r.used_by.join(" "), cell: ({ row }) => <span className="block min-w-48 text-xs whitespace-normal">{row.original.used_by.join(", ")}</span> },
+];
+
 export function Updates() {
   const q = useQ<Report>("updates", "_");
   return (
@@ -91,6 +116,12 @@ export function Updates() {
             <div>
               <h3 className="mb-1 text-sm font-semibold">Charts</h3>
               <DataTable columns={chartColumns} data={d.charts} />
+            </div>
+          )}
+          {d.images.length > 0 && (
+            <div>
+              <h3 className="mb-1 text-sm font-semibold">Images</h3>
+              <DataTable columns={imageColumns} data={d.images} empty="No images" />
             </div>
           )}
           <p className="text-xs text-ink-subtle">"Available" needs [updates.upstream] lookups turned on; package lists are what each node's daily pveupdate found.</p>

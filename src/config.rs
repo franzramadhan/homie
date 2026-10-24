@@ -359,6 +359,8 @@ pub struct Upstream {
     pub distro: bool,
     pub flux: bool,
     pub charts: bool,
+    /// running container images against their registries (RFC 0021)
+    pub images: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -253,6 +253,9 @@ function UpdatesCard() {
             return `${c.cluster}: ${c.distro} ${c.distro_version}${a ? `, ${a} available` : ""}${c.skew ? ", version skew" : ""}`;
           }),
           ...(d.charts.length ? [`${behind}/${d.charts.length} charts with a newer version`] : []),
+          ...(d.images.length
+            ? [`${d.images.filter((i) => !i.unversioned && available(i.latest)).length}/${d.images.length} images with a newer version, ${d.images.filter((i) => i.unversioned).length} unversioned`]
+            : []),
         ];
       }}
     />
