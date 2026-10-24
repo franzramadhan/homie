@@ -44,6 +44,7 @@ endpoints = [
 token = { env = "PVE_TOKEN" }
 protected_tags = ["homie-protected"]
 ui_url = "https://pve-01.<tailnet>.ts.net:8006"
+console = true
 
 [grafana.lab]
 url = "http://grafana.monitoring.svc"

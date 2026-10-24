@@ -2,7 +2,7 @@
 //! custom CA, verification off, plain http, and `tls_server_name` (connect to
 //! one address, verify the certificate against another name).
 
-use std::{net::SocketAddr, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use reqwest::{Client, Response, StatusCode};
 use url::Url;
@@ -15,6 +15,10 @@ pub struct Target {
     pub client: Client,
     pub base: Url,
     pub insecure: Option<&'static str>,
+    /// for connections outside reqwest (Proxmox console WebSockets): the
+    /// address `tls_server_name` resolves to, and the TLS config (none for http)
+    pub addr: Option<SocketAddr>,
+    pub tls: Option<Arc<rustls::ClientConfig>>,
 }
 
 /// reqwest is built without a crypto provider so it shares rustls' ring with
@@ -36,6 +40,7 @@ pub async fn target(url: &str, tls: &Tls) -> Result<Target> {
     // Built-in Mozilla roots, so a scratch image without /etc/ssl works.
     let roots = crate::tls::roots(tls.ca_file.as_deref())?;
 
+    let mut resolved = None;
     if let Some(name) = &tls.tls_server_name {
         let host = base.host_str().ok_or("URL has no host")?.to_string();
         let port = base.port_or_known_default().ok_or("URL has no port")?;
@@ -47,6 +52,7 @@ pub async fn target(url: &str, tls: &Tls) -> Result<Target> {
                 .ok_or_else(|| format!("{host} does not resolve"))?,
         };
         builder = builder.resolve(name, addr);
+        resolved = Some(addr);
         base.set_host(Some(name))?;
     }
     // the certificate of every handshake is recorded for RFC 0018
@@ -55,8 +61,8 @@ pub async fn target(url: &str, tls: &Tls) -> Result<Target> {
         base.host_str().unwrap_or_default(),
         base.port_or_known_default().unwrap_or(443)
     );
-    builder =
-        builder.tls_backend_preconfigured(crate::tls::http_config(key, roots, tls.tls_verify)?);
+    let config = crate::tls::http_config(key, roots, tls.tls_verify)?;
+    builder = builder.tls_backend_preconfigured(config.clone());
 
     let insecure = if base.scheme() == "http" {
         Some("plain_http")
@@ -65,10 +71,13 @@ pub async fn target(url: &str, tls: &Tls) -> Result<Target> {
     } else {
         None
     };
+    let tls = (base.scheme() == "https").then(|| Arc::new(config));
     Ok(Target {
         client: builder.build()?,
         base,
         insecure,
+        addr: resolved,
+        tls,
     })
 }
 

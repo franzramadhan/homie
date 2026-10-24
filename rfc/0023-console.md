@@ -84,6 +84,30 @@ Token privilege: add `VM.Console` to the role from RFC 0001
 | `msg="console" ... result=closed seconds=... bytes=...` | it closed, with how long and how much traffic |
 | `msg="console" ... result=denied reason=...` | role, demo, no `VM.Console`, expired id |
 
+## Changes during implementation
+
+- Build check passed before any code: on Proxmox 9 an API token with
+  `VM.Console` opens `vncwebsocket` for both `vncproxy` (the server sends
+  its `RFB 003.008` banner) and `termproxy` (the login line gets `OK`).
+- noVNC answers the VNC challenge in the browser, so it needs a password.
+  `vncproxy` is called with `generate-password=1`: Proxmox returns a
+  one-time VNC password for that console only, and that password is all
+  the browser gets. The console ticket stays in Homie. For terminals Homie
+  sends the login line itself, so the browser gets no secret at all.
+- `POST /api/act/pve/{name}/console` takes `{node, type, vmid, mode}`;
+  `mode` is optional (`term` for containers and VMs with `serial0`, `vnc`
+  otherwise). The answer is `{id, guest, mode, switchable, password}`;
+  `switchable` marks a VM that can toggle between serial and VNC.
+- The WebSocket upgrade needs an Origin from this site (browsers always
+  send one), the session that opened the id, and the same Proxmox. A
+  console also closes when the session ends (checked every 30 s) and tells
+  the browser why in the close frame.
+- The Proxmox link for a VM always opens noVNC: the guest list does not
+  say which VMs have `serial0`.
+- `homie check` mentions consoles only when `console = true`.
+- The console page is a lazy route: noVNC 1.7 and xterm.js 6 load only
+  there (140 kB gzip); the initial JS stays at 134 kB gzip.
+
 ## Alternatives
 
 | Option | Why not |

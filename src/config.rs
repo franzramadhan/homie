@@ -219,6 +219,15 @@ pub struct Proxmox {
     pub ui_url: Option<String>,
     #[serde(default)]
     pub quiet: bool,
+    /// embedded guest consoles (RFC 0023); the token also needs VM.Console
+    #[serde(default)]
+    pub console: bool,
+    #[serde(default = "default_console_minutes")]
+    pub console_max_minutes: u64,
+}
+
+fn default_console_minutes() -> u64 {
+    60
 }
 
 impl Proxmox {

@@ -1,11 +1,15 @@
-//! Proxmox VE: cluster overview and guest power actions through the API,
-//! with failover across the configured node endpoints.
+//! Proxmox VE: cluster overview, guest power actions and consoles through
+//! the API, with failover across the configured node endpoints.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Duration,
+};
 
-use futures::future::join_all;
+use futures::{SinkExt, StreamExt, future::join_all};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 
 use crate::{
     Result, config,
@@ -22,6 +26,9 @@ pub struct Proxmox {
     token: SecretCell,
     protected_tags: Vec<String>,
     preferred: AtomicUsize,
+    /// embedded consoles (RFC 0023) and how long one may stay open
+    pub console: bool,
+    pub console_max: Duration,
 }
 
 #[derive(Serialize)]
@@ -33,6 +40,7 @@ pub struct Overview {
     ha: Vec<HaService>,
     failed_tasks: Vec<Task>,
     can_power: bool,
+    can_console: bool,
     ui_url: String,
 }
 
@@ -116,6 +124,49 @@ pub struct PowerRequest {
     pub confirm: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct ConsoleRequest {
+    pub node: String,
+    pub vmid: u64,
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// `vnc` or `term`; none picks `term` for containers and VMs with serial0
+    #[serde(default)]
+    pub mode: Option<String>,
+}
+
+/// An opened Proxmox console. The ticket stays in Homie; only `password`
+/// (a one-time VNC password for this console, `generate-password`) goes to
+/// the browser, because noVNC answers the VNC challenge itself.
+pub struct Console {
+    pub guest: String,
+    pub mode: &'static str,
+    /// a VM that can switch between its serial port and VNC
+    pub switchable: bool,
+    pub password: Option<String>,
+    path: String,
+    port: String,
+    ticket: String,
+    user: String,
+}
+
+pub trait Io: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> Io for T {}
+pub type ConsoleStream = tokio_tungstenite::WebSocketStream<Box<dyn Io>>;
+
+/// The console kind for a guest and the mode the user asked for.
+fn console_mode(kind: &str, serial: bool, asked: Option<&str>) -> Result<&'static str> {
+    match (kind, asked) {
+        ("lxc", None | Some("term")) => Ok("term"),
+        ("lxc", Some(_)) => Err("containers have a terminal only".into()),
+        (_, Some("vnc")) => Ok("vnc"),
+        (_, Some("term")) if serial => Ok("term"),
+        (_, Some("term")) => Err("this VM has no serial0 port".into()),
+        (_, None) => Ok(if serial { "term" } else { "vnc" }),
+        (_, Some(m)) => Err(format!("unknown console mode {m:?}").into()),
+    }
+}
+
 #[derive(Serialize)]
 pub struct TaskStatus {
     status: String,
@@ -196,6 +247,8 @@ impl Proxmox {
                 .map_err(|e| format!("proxmox.{name}.token: {e}"))?,
             protected_tags: cfg.protected_tags.clone(),
             preferred: AtomicUsize::new(0),
+            console: cfg.console,
+            console_max: Duration::from_secs(cfg.console_max_minutes * 60),
         })
     }
 
@@ -203,9 +256,13 @@ impl Proxmox {
     /// on after connect errors, timeouts and 5xx; POSTs only after connect
     /// errors, because a timed-out POST may already have run.
     async fn call(&self, post: bool, path: &str) -> Result<Value> {
+        self.call_form(post, path, &[]).await
+    }
+
+    async fn call_form(&self, post: bool, path: &str, form: &[(&str, &str)]) -> Result<Value> {
         let mut retried_auth = false;
         loop {
-            match self.call_once(post, path).await {
+            match self.call_once(post, path, form).await {
                 Err(e) if http::is_unauthorized(&e) && !retried_auth => {
                     retried_auth = true;
                     self.token.reload().await?;
@@ -215,7 +272,7 @@ impl Proxmox {
         }
     }
 
-    async fn call_once(&self, post: bool, path: &str) -> Result<Value> {
+    async fn call_once(&self, post: bool, path: &str, form: &[(&str, &str)]) -> Result<Value> {
         let auth = format!("PVEAPIToken={}", self.token.get().await);
         let first = self.preferred.load(Ordering::Relaxed);
         let mut last_err: Option<crate::Error> = None;
@@ -224,7 +281,7 @@ impl Proxmox {
             let t = &self.endpoints[idx];
             let url = http::join(&t.base, &format!("/api2/json{path}"));
             let req = if post {
-                t.client.post(url)
+                t.client.post(url).form(form)
             } else {
                 t.client.get(url)
             };
@@ -346,14 +403,14 @@ impl Proxmox {
                 state: s(e, "state"),
             })
             .collect();
-        let can_power = perms
-            .ok()
-            .and_then(|p| p.as_object().cloned())
-            .is_some_and(|paths| {
-                paths
-                    .values()
-                    .any(|privs| privs.get("VM.PowerMgmt").is_some())
-            });
+        let perms = perms.ok().and_then(|p| p.as_object().cloned());
+        let has = |privilege: &str| {
+            perms
+                .as_ref()
+                .is_some_and(|paths| paths.values().any(|privs| privs.get(privilege).is_some()))
+        };
+        let can_power = has("VM.PowerMgmt");
+        let can_console = self.console && has("VM.Console");
 
         let online: Vec<String> = nodes
             .iter()
@@ -399,6 +456,7 @@ impl Proxmox {
             ha,
             failed_tasks,
             can_power,
+            can_console,
             ui_url: self.ui_url.clone(),
         })
     }
@@ -455,6 +513,110 @@ impl Proxmox {
             .ok_or_else(|| "Proxmox returned no task id".into())
     }
 
+    /// Opens a console on a running guest from the live guest list: a
+    /// terminal for containers and VMs with serial0, VNC otherwise or when
+    /// asked for.
+    pub async fn console(&self, req: &ConsoleRequest) -> Result<Console> {
+        let guests = self.guests().await?;
+        let guest = guests
+            .iter()
+            .find(|g| g.vmid == req.vmid && g.kind == req.kind && g.node == req.node)
+            .ok_or_else(|| format!("no {} {} on node {:?}", req.kind, req.vmid, req.node))?;
+        if !safe(&guest.node) {
+            return Err("unexpected node name".into());
+        }
+        if guest.status != "running" {
+            return Err(format!("{} is not running", guest.name).into());
+        }
+        let base = format!("/nodes/{}/{}/{}", guest.node, guest.kind, guest.vmid);
+        let serial = guest.kind == "qemu"
+            && self
+                .call(false, &format!("{base}/config"))
+                .await?
+                .get("serial0")
+                .is_some();
+        let mode = console_mode(&guest.kind, serial, req.mode.as_deref())?;
+        let opened = match (mode, guest.kind.as_str()) {
+            ("vnc", _) => {
+                let form = [("websocket", "1"), ("generate-password", "1")];
+                self.call_form(true, &format!("{base}/vncproxy"), &form)
+                    .await?
+            }
+            (_, "lxc") => self.call(true, &format!("{base}/termproxy")).await?,
+            _ => {
+                self.call_form(true, &format!("{base}/termproxy"), &[("serial", "serial0")])
+                    .await?
+            }
+        };
+        Ok(Console {
+            guest: guest.name.clone(),
+            mode,
+            switchable: serial,
+            password: opened["password"].as_str().map(String::from),
+            path: format!("{base}/vncwebsocket"),
+            port: s(&opened, "port"),
+            ticket: s(&opened, "ticket"),
+            user: s(&opened, "user"),
+        })
+    }
+
+    /// Connects to an opened console's WebSocket with the token and the
+    /// ticket; a terminal also gets its login line here, so the browser
+    /// only ever sees the console itself.
+    pub async fn console_connect(&self, c: &Console) -> Result<ConsoleStream> {
+        let t = &self.endpoints[self.preferred.load(Ordering::Relaxed)];
+        let mut url = http::join(&t.base, &format!("/api2/json{}", c.path));
+        url.query_pairs_mut()
+            .append_pair("port", &c.port)
+            .append_pair("vncticket", &c.ticket);
+        let host = url.host_str().ok_or("URL has no host")?.to_string();
+        let port = url.port_or_known_default().ok_or("URL has no port")?;
+        let addr = match t.addr {
+            Some(a) => a,
+            None => tokio::net::lookup_host((host.as_str(), port))
+                .await?
+                .next()
+                .ok_or_else(|| format!("{host} does not resolve"))?,
+        };
+        let tcp =
+            tokio::time::timeout(Duration::from_secs(5), tokio::net::TcpStream::connect(addr))
+                .await
+                .map_err(|_| format!("connecting to {host}: timed out"))??;
+        let io: Box<dyn Io> = match &t.tls {
+            Some(cfg) => {
+                let name = rustls::pki_types::ServerName::try_from(
+                    host.trim_matches(['[', ']']).to_string(),
+                )?;
+                Box::new(
+                    tokio_rustls::TlsConnector::from(cfg.clone())
+                        .connect(name, tcp)
+                        .await?,
+                )
+            }
+            None => Box::new(tcp),
+        };
+        let scheme = if t.tls.is_some() { "wss" } else { "ws" };
+        url.set_scheme(scheme)
+            .map_err(|_| "unexpected URL scheme")?;
+        let mut req = url.as_str().into_client_request()?;
+        let headers = req.headers_mut();
+        headers.insert(
+            "Authorization",
+            format!("PVEAPIToken={}", self.token.get().await).parse()?,
+        );
+        headers.insert("Sec-WebSocket-Protocol", "binary".parse()?);
+        let (mut ws, _) = tokio_tungstenite::client_async(req, io).await?;
+        if c.mode == "term" {
+            ws.send(Message::text(format!("{}:{}\n", c.user, c.ticket)))
+                .await?;
+            let reply = tokio::time::timeout(Duration::from_secs(5), ws.next()).await;
+            if !matches!(reply, Ok(Some(Ok(ref m))) if m.clone().into_data().starts_with(b"OK")) {
+                return Err("the terminal did not accept the console ticket".into());
+            }
+        }
+        Ok(ws)
+    }
+
     pub async fn task(&self, node: &str, upid: &str) -> Result<TaskStatus> {
         if !safe(node) || !safe(upid) || !upid.starts_with("UPID:") {
             return Err("invalid node or task id".into());
@@ -476,13 +638,21 @@ impl Proxmox {
     pub async fn probe(&self) -> Result<String> {
         let version = self.call(false, "/version").await?;
         let perms = self.call(false, "/access/permissions").await?;
-        let power = perms
-            .as_object()
-            .is_some_and(|p| p.values().any(|v| v.get("VM.PowerMgmt").is_some()));
+        let has = |privilege: &str| {
+            perms
+                .as_object()
+                .is_some_and(|p| p.values().any(|v| v.get(privilege).is_some()))
+        };
+        // consoles are opt-in: mentioned only when configured
+        let console = match (self.console, has("VM.Console")) {
+            (false, _) => "",
+            (true, true) => ", console on",
+            (true, false) => ", console off (no VM.Console)",
+        };
         Ok(format!(
-            "Proxmox VE {}, power actions {}",
+            "Proxmox VE {}, power actions {}{console}",
             s(&version, "version"),
-            if power {
+            if has("VM.PowerMgmt") {
                 "enabled"
             } else {
                 "off (no VM.PowerMgmt)"
@@ -494,6 +664,17 @@ impl Proxmox {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn console_modes() {
+        assert_eq!(console_mode("lxc", false, None).unwrap(), "term");
+        assert!(console_mode("lxc", false, Some("vnc")).is_err());
+        assert_eq!(console_mode("qemu", true, None).unwrap(), "term");
+        assert_eq!(console_mode("qemu", false, None).unwrap(), "vnc");
+        assert_eq!(console_mode("qemu", true, Some("vnc")).unwrap(), "vnc");
+        assert!(console_mode("qemu", false, Some("term")).is_err());
+        assert!(console_mode("qemu", true, Some("spice")).is_err());
+    }
 
     #[test]
     fn path_values_are_restricted() {

@@ -119,6 +119,14 @@ pub fn write_denied(state: &Shared, headers: &HeaderMap) -> Option<Response> {
     if headers.get("x-homie").and_then(|v| v.to_str().ok()) != Some("1") {
         return Some(deny(StatusCode::FORBIDDEN, "missing X-Homie header"));
     }
+    if cross_origin(state, headers) {
+        return Some(deny(StatusCode::FORBIDDEN, "cross-origin request"));
+    }
+    None
+}
+
+/// An Origin header from another site (none sent counts as same site).
+pub fn cross_origin(state: &Shared, headers: &HeaderMap) -> bool {
     if let Some(origin) = headers.get(header::ORIGIN).and_then(|o| o.to_str().ok()) {
         let ok = match &state.auth {
             Some(a) => origin == a.public_url.origin().ascii_serialization(),
@@ -130,11 +138,9 @@ pub fn write_denied(state: &Shared, headers: &HeaderMap) -> Option<Response> {
                 host_allowed(state, &host)
             }),
         };
-        if !ok {
-            return Some(deny(StatusCode::FORBIDDEN, "cross-origin request"));
-        }
+        return !ok;
     }
-    None
+    false
 }
 
 /// Writes pass `write_denied`. Reads and writes need a session when a login
@@ -263,6 +269,8 @@ mod tests {
             ("/api/github/workflows", "GhWorkflows"),
             ("/api/github/watch", "GhWatch"),
             ("/api/act/pve/lab/power", "Act"),
+            ("/api/act/pve/lab/console", "Act"),
+            ("/api/act/pve/lab/console/id", "Act"),
             ("/admin", "Unknown"),
         ];
         let methods = [
