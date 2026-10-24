@@ -21,6 +21,11 @@ function pveConsole(ui: string, node: string, guest?: Guest): string {
   return `${ui.replace(/\/$/, "")}/?${new URLSearchParams(q)}`;
 }
 
+/** The guest's page in the Proxmox UI. */
+function pveGuest(ui: string, guest: Guest): string {
+  return `${ui.replace(/\/$/, "")}/#v1:0:=${encodeURIComponent(`${guest.type}/${guest.vmid}`)}`;
+}
+
 // Guests with an action in flight, kept outside React so a table re-render
 // cannot re-enable the buttons halfway through a task.
 const inFlight = new Set<string>();
@@ -205,7 +210,7 @@ function Cluster({ name }: { name: string }) {
                       open
                     </Link>
                   )}
-                  {ui && <Ext href={pveConsole(ui, g.node, g)}>{embedded ? "in Proxmox" : "console"}</Ext>}
+                  {ui && (embedded ? <Ext href={pveGuest(ui, g)} title="Open in Proxmox">↗</Ext> : <Ext href={pveConsole(ui, g.node, g)}>console</Ext>)}
                 </span>
               );
             },

@@ -104,6 +104,9 @@ Token privilege: add `VM.Console` to the role from RFC 0001
   the browser why in the close frame.
 - The Proxmox link for a VM always opens noVNC: the guest list does not
   say which VMs have `serial0`.
+- With the embed on, the row's Proxmox link is an arrow to the guest's page
+  in the Proxmox UI (`{ui_url}/#v1:0:={type}%2F{vmid}`), not its console:
+  the embed already is the console, and the page has every other tab.
 - `homie check` mentions consoles only when `console = true`.
 - The console page is a lazy route: noVNC 1.7 and xterm.js 6 load only
   there (140 kB gzip); the initial JS stays at 134 kB gzip.
