@@ -383,12 +383,18 @@ pub async fn probe(host: &str, port: u16, address: Option<&str>, roots: Roots) -
         .await
         .map_err(|_| format!("connecting to {addr}:{port} timed out"))??;
     let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
-    // the handshake's own result does not matter: the verifier has recorded
-    let _ = tokio::time::timeout(PROBE_TIMEOUT, connector.connect(name, tcp)).await;
-    slot.lock()
-        .unwrap()
-        .take()
-        .ok_or_else(|| format!("{addr}:{port} sent no certificate").into())
+    // the handshake's own result does not matter once the verifier has
+    // recorded; without a record it says why
+    let handshake = tokio::time::timeout(PROBE_TIMEOUT, connector.connect(name, tcp)).await;
+    if let Some(seen) = slot.lock().unwrap().take() {
+        return Ok(seen);
+    }
+    Err(match handshake {
+        Err(_) => format!("TLS handshake with {addr}:{port} timed out"),
+        Ok(Err(e)) => format!("TLS handshake with {addr}:{port} failed: {e}"),
+        Ok(Ok(_)) => format!("{addr}:{port} sent no certificate"),
+    }
+    .into())
 }
 
 #[cfg(test)]

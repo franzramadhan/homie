@@ -53,6 +53,10 @@ Behavior that suits a homelab:
 - **Roles.** A read-only view limited to some pages, explicit namespaces and
   tagged Proxmox guests, enforced by Kubernetes RBAC as well. It powers the
   public demo and its passwordless "Try the demo" button.
+- **Notifications.** When a card changes status and the change holds, a
+  message goes to ntfy, a Slack-compatible webhook (Slack, Mattermost,
+  Discord) or any JSON webhook. Quiet hours stay quiet, and the lab
+  waking up in the morning is not news.
 - **Watched workflows without a restart.** Pick GitHub workflows in the UI;
   the list is saved in a ConfigMap (in a cluster) or a file.
 - **TLS options per integration.** Verify against a custom CA, verify

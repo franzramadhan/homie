@@ -516,6 +516,17 @@ interval_hours = 6                     # probe period for listed and discovered 
 endpoints = true                       # the integrations' own HTTPS endpoints
 # [[certificates.targets]]             # host, port (443), address, ca_file
 
+# [notify]                             # RFC 0019: messages when a card changes status
+# interval_seconds = 60
+# hold_seconds = 180                   # a new status must hold this long
+# min_tone = "bad"                     # warn | bad
+# min_tone_per_card = { certificates = "warn", cnpg = "warn" }
+# recovery = true
+# cards = []                           # empty: every card but alerts
+# redact = false                       # card and status only
+# kubernetes_service_account = ""      # namespace/name, for forward_token clusters
+# [[notify.targets]]                   # type (ntfy | slack | webhook), url, token, headers, ca_file
+
 [logs]                                 # optional, RFC 0008
 max_rows = 1000
 # [[logs.datasources]]                 # label, grafana, datasource, type (victorialogs | loki), pod_query, node_query

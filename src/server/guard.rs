@@ -171,6 +171,7 @@ pub async fn session(State(state): State<Shared>, mut req: Request, next: Next) 
                         id_token: u.id_token,
                         role,
                         sid: cookie(req.headers(), auth.cookie_name()).map(String::from),
+                        service_account: None,
                     }
                 }
                 None => return deny(StatusCode::UNAUTHORIZED, "login required"),

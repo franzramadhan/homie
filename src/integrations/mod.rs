@@ -53,6 +53,9 @@ pub struct Caller {
     pub role: Option<RoleRef>,
     /// the Homie session id, for per-session state (RFC 0017)
     pub sid: Option<String>,
+    /// a ServiceAccount to impersonate for Kubernetes reads without a user
+    /// (the notifier, RFC 0019)
+    pub service_account: Option<String>,
 }
 
 #[derive(Clone)]
@@ -287,7 +290,10 @@ impl Lab {
                     .as_deref()
                     .ok_or("this role has no kubernetes_service_account")?,
             ),
-            None => k.client(caller.id_token.as_deref()),
+            None => match &caller.service_account {
+                Some(sa) => k.impersonating(sa),
+                None => k.client(caller.id_token.as_deref()),
+            },
         }
     }
 
@@ -457,6 +463,7 @@ mod tests {
             email: Some("viewer@example.com".into()),
             id_token: None,
             sid: None,
+            service_account: None,
             role: Some(RoleRef {
                 name: "viewer".into(),
                 role: std::sync::Arc::new(crate::config::Role {
