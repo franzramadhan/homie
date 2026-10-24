@@ -238,9 +238,10 @@ impl Lab {
             "tailscale" => (secs(30), false, false),
             "github" => (secs(60), self.github.as_ref()?.quiet, false),
             "healthchecks" => (secs(60), self.healthchecks.as_ref()?.quiet, false),
-            // probes keep their own interval; this only bounds discovery
+            // probes keep their own interval; this bounds discovery reads
+            // and how soon newly seen endpoints show
             "certs" if self.certificates_on() => (
-                secs(300),
+                secs(60),
                 false,
                 self.cert_clusters().any(|k| k.forwards_token()),
             ),

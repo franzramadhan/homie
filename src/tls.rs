@@ -134,9 +134,14 @@ fn parse(der: &[u8], role: &str, public: bool) -> Option<Cert> {
     } else {
         Vec::new()
     };
+    // a leaf with only SANs (no CN) is named by its first DNS name
+    let subject = match common_name(&tbs.subject.to_string()) {
+        cn if cn.is_empty() => names.first().cloned().unwrap_or_default(),
+        cn => cn,
+    };
     Some(Cert {
         role: role.into(),
-        subject: common_name(&tbs.subject.to_string()),
+        subject,
         issuer: common_name(&tbs.issuer.to_string()),
         not_before: secs(tbs.validity.not_before),
         not_after: secs(tbs.validity.not_after),
@@ -556,6 +561,17 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(r.anchors.len(), PUBLIC.anchors.len());
         assert!(roots(Some(Path::new("/nonexistent/ca.pem"))).is_err());
+    }
+
+    #[test]
+    fn a_leaf_without_cn_is_named_by_its_san() {
+        let pki = Pki::new(2040, 2035);
+        let mut p = CertificateParams::new(vec!["san-only.example".to_string()]).unwrap();
+        p.distinguished_name = rcgen::DistinguishedName::new();
+        let k = KeyPair::generate().unwrap();
+        let leaf = p.signed_by(&k, &pki.inter_issuer).unwrap();
+        let c = parse(leaf.der(), "leaf", false).unwrap();
+        assert_eq!(c.subject, "san-only.example");
     }
 
     #[test]
