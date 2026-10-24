@@ -29,6 +29,12 @@ node_label = "k8s_node_name"
 
 # Pods are not on the tailnet: connect to the LAN IPs, verify the tailnet
 # certificate each node serves on :8006.
+# certificate expiry (RFC 0018): the endpoints in this file are recorded on
+# their own; the cluster's Gateway API hostnames are probed as well
+[kubernetes.homelab.certificates]
+discover = true
+sources = ["gateway"]
+
 [proxmox.lab]
 endpoints = [
   { url = "https://192.168.1.101:8006", tls_server_name = "pve-01.<tailnet>.ts.net" },

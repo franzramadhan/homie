@@ -11,6 +11,7 @@ mod server;
 mod status;
 #[cfg(test)]
 mod testkit;
+mod tls;
 
 use std::{path::PathBuf, process::ExitCode};
 

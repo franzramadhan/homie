@@ -23,7 +23,7 @@ function Layout() {
   const page = (p: string) => !m?.pages || m.pages.includes(p);
   const nav: [string, string, boolean][] = [
     ["/", "Overview", true],
-    ["/infra", "Infrastructure", !!m?.proxmox.length],
+    ["/infra", "Infrastructure", !!m?.proxmox.length || !!m?.certificates],
     ["/workloads", "Workloads", !!m?.kubernetes.length && page("workloads")],
     ["/gitops", "GitOps", !!m?.kubernetes.length && page("gitops")],
     ["/workflows", "Workflows", !!m?.github],

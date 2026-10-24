@@ -2,8 +2,9 @@
 
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import { useMeta, useQ, workflowHealth, type Alerts, type ArgoApp, type GhWorkflow, type BaoHealth, type Check, type PgCluster, type Device, type Envelope, type FluxItem, type K8sOverview, type PveOverview, type SecurityTable } from "../api";
+import { useMeta, useQ, workflowHealth, type Alerts, type Certs, type ArgoApp, type GhWorkflow, type BaoHealth, type Check, type PgCluster, type Device, type Envelope, type FluxItem, type K8sOverview, type PveOverview, type SecurityTable } from "../api";
 import { Badge, sourceTone, type Tone } from "../ui";
+import { untilText } from "./infra";
 
 function Card<T>({ title, to, env, summary }: { title: string; to?: string; env: Envelope<T> | undefined; summary: (d: T) => ReactNode[] }) {
   const st = sourceTone(env);
@@ -211,6 +212,28 @@ function CnpgCard({ name }: { name: string }) {
   );
 }
 
+function CertificatesCard() {
+  const q = useQ<Certs>("certs", "_");
+  return (
+    <Card
+      title="Certificates"
+      to="/infra"
+      env={q.data}
+      summary={(d) => {
+        const loud = d.rows.filter((r) => r.status !== "ok");
+        const now = new Date().toISOString();
+        const next = d.rows.filter((r) => r.expires && r.expires > now).sort((a, b) => (a.expires! < b.expires! ? -1 : 1))[0];
+        return [
+          `${d.rows.length - loud.length}/${d.rows.length} fine`,
+          ...loud.slice(0, 3).map((r) => `${r.host}: ${r.reasons[0] ?? r.status}`),
+          ...(next ? [`next expiry: ${next.host}, ${untilText(next.expires)}`] : []),
+          ...d.errors.slice(0, 2),
+        ];
+      }}
+    />
+  );
+}
+
 function WorkflowsCard() {
   const q = useQ<GhWorkflow[]>("github", "_");
   return (
@@ -252,7 +275,7 @@ export function Overview() {
   if (!m) return null;
   // a role (RFC 0016) gets the cards of its pages only
   const page = (p: string) => !m.pages || m.pages.includes(p);
-  const nothing = !m.proxmox.length && !m.kubernetes.length && !m.grafana.length && !m.tailscale && !m.healthchecks;
+  const nothing = !m.proxmox.length && !m.kubernetes.length && !m.grafana.length && !m.tailscale && !m.healthchecks && !m.certificates;
   if (nothing) {
     return <p className="text-sm text-ink-subtle">Nothing is configured yet. Add a [proxmox.*], [kubernetes.*] or [grafana.*] section and restart, then run `homie check`.</p>;
   }
@@ -271,6 +294,7 @@ export function Overview() {
         <OpenBaoCard key={b.name} name={b.name} />
       ))}
       {page("services") && m.kubernetes.map((k) => <CnpgCard key={`pg-${k.name}`} name={k.name} />)}
+      {m.certificates && <CertificatesCard />}
       {m.security.map((s) => (
         <SecurityCard key={s} preset={s} />
       ))}

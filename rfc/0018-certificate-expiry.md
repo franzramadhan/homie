@@ -131,6 +131,27 @@ Issuer-specific status is an optional extra.
 |---|---|
 | `msg="cert probe" host result` | debug, one per probe; warn when unreachable |
 
+## Changes during implementation
+
+- `certificates.interval` is `certificates.interval_hours` (a number,
+  default 6), like `cnpg_max_backup_age_hours`.
+- No background timer: probes run when the `certs` query runs (cached
+  5 min). A target is probed again once its last probe is older than
+  `interval_hours`. The notifier (RFC 0019) is what will evaluate it in the
+  background.
+- Discovery and cert-manager reads use the caller's credentials, so a
+  `forward_token` cluster needs the user's RBAC to list Services,
+  Ingresses, Gateways, HTTPRoutes, TLSRoutes and Certificates. TLSRoutes are
+  read at `v1alpha2`.
+- A failed discovery or cert-manager read is listed on the card (amber)
+  instead of failing every row.
+- Endpoint rows are keyed `host:port` with the source `integration`, not
+  the integration's name.
+- "Untrusted" is split by the last certificate sent: "self-signed, not
+  trusted", "untrusted root <name>", or "issuer <name> not found:
+  incomplete chain or untrusted CA".
+- `homie check` does not probe certificate targets yet.
+
 ## Alternatives
 
 | Option | Why not |

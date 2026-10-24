@@ -28,6 +28,19 @@ rules:
   - apiGroups: [postgresql.cnpg.io]
     resources: [clusters, backups]
     verbs: [get, list, watch]
+  # certificate discovery and cert-manager status (RFC 0018); no Secrets
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [get, list]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list]
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [gateways, httproutes, tlsroutes]
+    verbs: [get, list]
+  - apiGroups: [cert-manager.io]
+    resources: [certificates]
+    verbs: [get, list]
 ---
 # Reconcile only adds an annotation, but RBAC cannot tell an annotation patch
 # from a spec patch: this role can patch Flux objects.

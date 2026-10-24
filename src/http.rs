@@ -4,7 +4,7 @@
 
 use std::{net::SocketAddr, time::Duration};
 
-use reqwest::{Certificate, Client, Response, StatusCode};
+use reqwest::{Client, Response, StatusCode};
 use url::Url;
 
 use crate::{Result, config::Tls};
@@ -34,19 +34,7 @@ pub async fn target(url: &str, tls: &Tls) -> Result<Target> {
         .redirect(reqwest::redirect::Policy::none());
 
     // Built-in Mozilla roots, so a scratch image without /etc/ssl works.
-    let mut roots = webpki_root_certs::TLS_SERVER_ROOT_CERTS
-        .iter()
-        .map(|c| Certificate::from_der(c))
-        .collect::<Result<Vec<_>, _>>()?;
-    if let Some(ca) = &tls.ca_file {
-        let path = crate::config::expand(ca);
-        let pem = std::fs::read(&path).map_err(|e| format!("reading {}: {e}", path.display()))?;
-        roots.extend(Certificate::from_pem_bundle(&pem)?);
-    }
-    builder = builder.tls_certs_only(roots);
-    if !tls.tls_verify {
-        builder = builder.danger_accept_invalid_certs(true);
-    }
+    let roots = crate::tls::roots(tls.ca_file.as_deref())?;
 
     if let Some(name) = &tls.tls_server_name {
         let host = base.host_str().ok_or("URL has no host")?.to_string();
@@ -61,6 +49,14 @@ pub async fn target(url: &str, tls: &Tls) -> Result<Target> {
         builder = builder.resolve(name, addr);
         base.set_host(Some(name))?;
     }
+    // the certificate of every handshake is recorded for RFC 0018
+    let key = format!(
+        "{}:{}",
+        base.host_str().unwrap_or_default(),
+        base.port_or_known_default().unwrap_or(443)
+    );
+    builder =
+        builder.tls_backend_preconfigured(crate::tls::http_config(key, roots, tls.tls_verify)?);
 
     let insecure = if base.scheme() == "http" {
         Some("plain_http")

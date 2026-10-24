@@ -2,6 +2,7 @@
 //! the API serves from them.
 
 pub mod argocd;
+pub mod certs;
 pub mod flux;
 pub mod github;
 pub mod grafana;
@@ -39,6 +40,7 @@ pub struct Lab {
     pub healthchecks: Option<outage::Healthchecks>,
     pub quiet: Option<Quiet>,
     pub roles: BTreeMap<String, std::sync::Arc<crate::config::Role>>,
+    pub certificates: crate::config::Certificates,
 }
 
 /// The caller of a query: who they are and, in forward_token mode, the ID
@@ -81,6 +83,7 @@ impl Lab {
                 .iter()
                 .map(|(k, v)| (k.clone(), std::sync::Arc::new(v.clone())))
                 .collect(),
+            certificates: cfg.certificates.clone(),
         };
         for (name, c) in &cfg.proxmox {
             lab.proxmox
@@ -131,6 +134,19 @@ impl Lab {
             .values()
             .filter_map(|x| Some(("grafana", x.name.as_str(), x.insecure?)));
         p.chain(g).collect()
+    }
+
+    /// Clusters that discovery or cert-manager read for certificates.
+    fn cert_clusters(&self) -> impl Iterator<Item = &kubernetes::Kube> {
+        self.kubernetes
+            .values()
+            .filter(|k| k.certificates.discover || k.cert_manager)
+    }
+
+    /// Anything to show on the certificates card (RFC 0018).
+    pub fn certificates_on(&self) -> bool {
+        let c = &self.certificates;
+        c.endpoints || !c.targets.is_empty() || self.cert_clusters().next().is_some()
     }
 
     pub fn quiet_active(&self) -> bool {
@@ -222,6 +238,12 @@ impl Lab {
             "tailscale" => (secs(30), false, false),
             "github" => (secs(60), self.github.as_ref()?.quiet, false),
             "healthchecks" => (secs(60), self.healthchecks.as_ref()?.quiet, false),
+            // probes keep their own interval; this only bounds discovery
+            "certs" if self.certificates_on() => (
+                secs(300),
+                false,
+                self.cert_clusters().any(|k| k.forwards_token()),
+            ),
             _ => return None,
         };
         let key = match (&caller.role, per_user, &caller.email) {
@@ -383,6 +405,13 @@ impl Lab {
                     .checks()
                     .await?,
             )?,
+            "certs" => {
+                let clusters = self
+                    .cert_clusters()
+                    .map(|k| (k, self.kube_client(k, caller)))
+                    .collect();
+                serde_json::to_value(certs::collect(&self.certificates, clusters).await)?
+            }
             _ => return Err(format!("unknown query {kind:?}").into()),
         };
         Ok(v)

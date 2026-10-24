@@ -40,6 +40,7 @@ Every integration is optional. Configure only what your lab has.
 | Logs | VictoriaLogs (LogsQL), Loki (LogQL) through Grafana | Search page, prefilled from pods and nodes |
 | Security | Presets: Kyverno, Tetragon, Wazuh, debsecan | Tetragon and Wazuh read VictoriaLogs through Grafana |
 | CI and IaC runs | GitHub Actions | Watched workflows (Terraform plan and apply, ...) through a read-only GitHub App |
+| Certificates | Any TLS endpoint, by handshake | Leaf, intermediates and roots: the integrations' own endpoints, listed hosts, and hostnames from Ingress, Gateway API and annotations; cert-manager renewal failures as an extra |
 | Outage signals | Tailscale API, healthchecks.io (hosted or self-hosted) | Useful from outside when the lab is down |
 | Deep links | Any Kubernetes UI by URL template (Headlamp built in), Grafana, Proxmox UI | |
 

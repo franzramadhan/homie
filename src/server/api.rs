@@ -61,6 +61,8 @@ pub async fn meta(State(state): State<Shared>, Extension(caller): Extension<Call
             "install_url": g.install_url,
         })),
         "healthchecks": lab.healthchecks.as_ref().filter(|_| page("outage")).map(|h| json!({ "url": h.url })),
+        // hostnames and addresses: never for a role (RFC 0018)
+        "certificates": full && lab.certificates_on(),
     }))
     .into_response()
 }

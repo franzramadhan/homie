@@ -1,8 +1,9 @@
 // Proxmox: nodes, guests with power actions, storage, HA and failed tasks.
+// Certificates (RFC 0018): every TLS chain Homie has seen or probed.
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { act, get, useMeta, useQ, type Guest, type PveOverview, type Sparks } from "../api";
+import { act, get, useMeta, useQ, type CertRow, type Certs, type Guest, type PveOverview, type Sparks } from "../api";
 import { Badge, Bar, Button, Confirm, DataTable, Ext, Section, Source, Spark, bytes, duration, type Col } from "../ui";
 
 type Action = "start" | "shutdown" | "reboot" | "stop";
@@ -264,15 +265,94 @@ function Cluster({ name }: { name: string }) {
   );
 }
 
+/** "in 9 days", "2 days ago" from now. */
+export function untilText(iso: string | null): string {
+  if (!iso) return "";
+  const days = Math.floor((new Date(iso).getTime() - Date.now()) / 86_400_000);
+  return days < 0 ? `${-days} days ago` : days === 0 ? "today" : `in ${days} days`;
+}
+
+const certColumns: Col<CertRow>[] = [
+  {
+    id: "status",
+    header: "status",
+    accessorFn: (r) => ({ bad: 0, warn: 1, ok: 2 })[r.status],
+    cell: ({ row }) => <Badge tone={row.original.status}>{{ ok: "fine", warn: "check", bad: "broken" }[row.original.status]}</Badge>,
+  },
+  { id: "host", header: "host", accessorFn: (r) => `${r.host}${r.port === 443 ? "" : `:${r.port}`}` },
+  {
+    id: "expires",
+    header: "expires",
+    accessorFn: (r) => r.expires ?? "",
+    cell: ({ row }) => {
+      const r = row.original;
+      if (!r.expires) return "";
+      return (
+        <span title={new Date(r.expires).toLocaleString()}>
+          {untilText(r.expires)}
+          {r.expires_cert && r.expires_cert !== "leaf" && <span className="text-ink-subtle"> ({r.expires_cert})</span>}
+        </span>
+      );
+    },
+  },
+  { id: "issuer", header: "issuer", accessorFn: (r) => r.issuer },
+  {
+    id: "why",
+    header: "why",
+    accessorFn: (r) => r.reasons.join(", "),
+    cell: ({ row }) => <span className="block min-w-48 text-xs whitespace-normal">{row.original.reasons.join(", ")}</span>,
+  },
+  {
+    id: "chain",
+    header: "chain",
+    enableSorting: false,
+    accessorFn: (r) => r.chain.map((c) => c.subject).join(" "),
+    cell: ({ row }) => (
+      <details className="text-xs">
+        <summary className="cursor-pointer text-ink-subtle">{row.original.chain.length === 1 ? "1 certificate" : `${row.original.chain.length} certificates`}</summary>
+        <ul className="mt-1 space-y-0.5">
+          {row.original.chain.map((c, i) => (
+            <li key={i}>
+              <span className="text-ink-subtle">{c.role}</span> {c.subject}, until {new Date(c.not_after * 1000).toLocaleDateString()}
+              {c.public && <span className="text-ink-subtle"> (bundled public root)</span>}
+              {c.names?.length ? <span className="text-ink-subtle"> for {c.names.join(", ")}</span> : null}
+            </li>
+          ))}
+        </ul>
+      </details>
+    ),
+  },
+  { id: "source", header: "found by", accessorFn: (r) => r.sources.join(", "), cell: ({ row }) => <span className="text-xs">{row.original.sources.join(", ")}</span> },
+];
+
+function Certificates() {
+  const q = useQ<Certs>("certs", "_");
+  return (
+    <Source title="Certificates" query={q}>
+      {(d) => (
+        <>
+          {d.errors.map((e) => (
+            <p key={e} className="mb-2 text-sm text-warn">
+              {e}
+            </p>
+          ))}
+          <DataTable columns={certColumns} data={d.rows} empty="No TLS endpoints seen yet" />
+        </>
+      )}
+    </Source>
+  );
+}
+
 export function Infra() {
   const m = useMeta().data;
   if (!m) return null;
-  if (!m.proxmox.length) return <Section title="Infrastructure">No [proxmox.*] section is configured.</Section>;
+  if (!m.proxmox.length && !m.certificates) return <Section title="Infrastructure">No [proxmox.*] section is configured.</Section>;
   return (
     <div className="space-y-4">
       {m.proxmox.map((p) => (
         <Cluster key={p.name} name={p.name} />
       ))}
+      {m.certificates && <Certificates />}
     </div>
   );
 }
