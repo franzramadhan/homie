@@ -137,7 +137,7 @@ Issuer-specific status is an optional extra.
 - `certificates.interval` is `certificates.interval_hours` (a number,
   default 6), like `cnpg_max_backup_age_hours`.
 - No background timer: probes run when the `certs` query runs (cached
-  5 min). A target is probed again once its last probe is older than
+  60 s). A target is probed again once its last probe is older than
   `interval_hours`. The notifier (RFC 0019) is what will evaluate it in the
   background.
 - Discovery and cert-manager reads use the caller's credentials, so a
