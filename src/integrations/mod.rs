@@ -174,13 +174,13 @@ impl Lab {
             }
             let sid = caller.sid.clone().unwrap_or_default();
             let key = format!("github:_:session:{sid}");
-            return Some(
-                cache
-                    .get(&key, Duration::from_secs(60), false, || async {
-                        Ok(serde_json::to_value(gh.session_workflows(&sid).await?)?)
-                    })
-                    .await,
-            );
+            let mut env = cache
+                .get(&key, Duration::from_secs(60), false, || async {
+                    Ok(serde_json::to_value(gh.session_workflows(&sid).await?)?)
+                })
+                .await;
+            crate::status::apply(kind, &mut env);
+            return Some(env);
         }
         if let Some(r) = &caller.role
             && !crate::roles::allows(&r.role, kind)
@@ -249,6 +249,8 @@ impl Lab {
             // errors name the endpoint that failed, often by address
             env.error = env.error.map(|e| crate::roles::redact_ips(&e));
         }
+        // after the role filter: the tone is of what the caller sees
+        crate::status::apply(kind, &mut env);
         Some(env)
     }
 

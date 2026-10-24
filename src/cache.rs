@@ -25,6 +25,11 @@ pub struct Envelope {
     pub stale: bool,
     pub quiet: bool,
     pub error: Option<String>,
+    /// the overview card's status, set by `status::apply` (RFC 0019)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tone: Option<crate::status::Tone>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reasons: Vec<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -175,6 +180,8 @@ fn envelope(e: Option<&Entry>, stale: bool, quiet: bool, error: Option<String>) 
         stale: stale && e.is_some(),
         quiet,
         error,
+        tone: None,
+        reasons: Vec::new(),
     }
 }
 
