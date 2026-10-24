@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Homie: one page for the whole homelab</title>
-<meta name="description" content="Homie is a single Rust binary that shows Proxmox, Kubernetes, Flux, Grafana alerts, logs and security findings on one calm page, with a few safe actions.">
+<meta name="description" content="Homie is a single Rust binary that shows Proxmox, Kubernetes, Flux, Grafana alerts, logs, updates, certificates and security findings on one calm page, with a few safe actions.">
 <meta property="og:title" content="Homie: one page for the whole homelab">
 <meta property="og:description" content="Proxmox, Kubernetes, GitOps, alerts, logs and security findings on one page. A single Rust binary, no database.">
 <meta property="og:image" content="demo.gif">
@@ -141,8 +141,10 @@
         <div class="card"><span class="tag">Hypervisor</span><h3>Proxmox VE</h3><p>Nodes, guests, storage, HA and failed tasks for one or more clusters, with CPU and memory sparklines. Start, shut down and reboot guests; protected tags ask you to type the name first.</p></div>
         <div class="card"><span class="tag">Kubernetes</span><h3>Any conformant cluster</h3><p>Nodes, workloads, unhealthy pods and warning events from k0s, k3s, RKE2, Talos, kind or a managed cloud. Auth by kubeconfig, in-cluster ServiceAccount, or the user's own OIDC token.</p></div>
         <div class="card"><span class="tag">GitOps</span><h3>Flux and Argo CD</h3><p>Sources, Kustomizations and HelmReleases with one-click reconcile; Argo CD Applications with refresh. Helm releases show chart, version and status, never values.</p></div>
-        <div class="card"><span class="tag">Observability</span><h3>Alerts and logs</h3><p>Firing and pending alerts from any number of Grafana instances, self-hosted or Grafana Cloud. Search VictoriaLogs or Loki, prefilled from a pod or a node.</p></div>
-        <div class="card"><span class="tag">Security</span><h3>Findings in one place</h3><p>Kyverno policy reports, Tetragon runtime events, Wazuh alerts and debsecan CVE counts, read through Grafana. Plus OpenBao seal state and CloudNativePG backup age.</p></div>
+        <div class="card"><span class="tag">Observability</span><h3>Alerts and logs</h3><p>Firing and pending alerts from any number of Grafana instances, self-hosted or Grafana Cloud. Search VictoriaLogs or Loki, prefilled from a pod or a node, or press Follow to tail new lines live.</p></div>
+        <div class="card"><span class="tag">Consoles</span><h3>A guest's screen, one click away</h3><p>Console and shell links to Proxmox for every guest and node. Turn it on, and the console opens inside Homie (xterm.js or noVNC), proxied so the Proxmox ticket never reaches the browser.</p></div>
+        <div class="card"><span class="tag">Updates</span><h3>What is out of date</h3><p>Pending packages and reboots on Proxmox nodes, the Kubernetes distribution, Flux, Helm charts and running container images, each against the newest release. Read-only: nothing is bumped for you.</p></div>
+        <div class="card"><span class="tag">Certificates</span><h3>Expiry from the handshake</h3><p>Every certificate in the served chain, for any issuer: cert-manager, an ingress controller's ACME, Caddy, Tailscale, an internal CA or a router. Hostnames come from Ingress, Gateway API and your list.</p></div>        <div class="card"><span class="tag">Security</span><h3>Findings in one place</h3><p>Kyverno policy reports, Tetragon runtime events, Wazuh alerts and debsecan CVE counts, read through Grafana. Plus OpenBao seal state and CloudNativePG backup age.</p></div>
         <div class="card"><span class="tag">CI and outages</span><h3>Pipelines and the outside view</h3><p>Terraform plan and apply runs (any GitHub Actions workflow) through a read-only GitHub App, picked in the UI. Tailscale and healthchecks.io tell you what is down when the lab itself is.</p></div>
       </div>
     </div>
@@ -157,6 +159,7 @@
           <li><b>Runs where you want.</b> In the cluster behind any OIDC provider (Authentik, Keycloak, Authelia, Pocket ID, Zitadel, Cloudflare Access, Google), or on a laptop bound to loopback, so the lab's last known state stays visible when the cluster is down.</li>
           <li><b>Live.</b> Results stream to the browser over server-sent events; Kubernetes and Flux changes appear within seconds. One shared cache serves every tab.</li>
           <li><b>Quiet hours.</b> Parts of the lab that are powered off on a schedule show as "scheduled off", not as an outage.</li>
+          <li><b>Notifications.</b> When a card changes status and the change holds, a message goes to ntfy, Slack, Mattermost, Discord or any JSON webhook. The lab waking up in the morning is not news.</li>
           <li><b>Read-only by default.</b> Actions are few, confirmed, and logged with the user who ran them.</li>
           <li><b>Configured, not clicked.</b> One TOML file and <code>HOMIE__*</code> environment variables. Secrets come from env, files or a command (Keychain, <code>pass</code>, <code>op read</code>).</li>
         </ul>
@@ -238,7 +241,8 @@ homie serve</pre>
         <h2>Built in the open</h2>
         <p class="sub">Every feature starts as an RFC, is discussed, then built and tested against a real homelab before release.</p>
         <ul class="checks">
-          <li><b>Tested.</b> Over 130 tests against fake Proxmox, Kubernetes, Grafana, GitHub and OIDC servers; line coverage around 98%.</li>
+          <li><b>Tested.</b> Over 190 tests against fake Proxmox, Kubernetes, Grafana, GitHub and OIDC servers; line coverage around 98%.</li>
+          <li><b>Proven.</b> Security rules (write guards, roles, console tickets, power confirmations) are modeled in <a href="https://github.com/franzramadhan/homie/tree/main/spec">Bend</a> and their laws proven, checked by Lean in CI.</li>
           <li><b>End to end.</b> Each change runs in the author's k0s cluster before it ships.</li>
           <li><b>Design docs.</b> <a href="https://github.com/franzramadhan/homie/tree/main/rfc">rfc/</a> and the <a href="https://github.com/franzramadhan/homie/blob/main/ROADMAP.md">roadmap</a> explain what exists and why.</li>
           <li><b>MIT licensed.</b> Alpha (0.x): config keys may still change between versions.</li>
