@@ -2,6 +2,9 @@
 # maintainer owns this file; PROOF.bend holds the proofs. See CLAUDE.md.
 import Base
 import ./spec/roles.bend as R
+import ./spec/guard.bend as G
+import ./spec/console.bend as C
+import ./spec/power.bend as P
 
 # LAW: a role never reaches an action route (power, reconcile, refresh), with
 # any method, any role and either GitHub store.
@@ -41,3 +44,68 @@ law other_methods_refused:
   for role: R.Role
   for ghs: Bool
   {R.role_route(role, R.Other{}, r, ghs) == False{} : Bool}
+
+# LAW: a write without the X-Homie header is refused, whatever its Origin.
+law write_needs_header:
+  for o: G.Origin
+  {G.write_ok(False{}, o) == False{} : Bool}
+
+# LAW: a write with an Origin from another site is refused.
+law write_refuses_foreign_origin:
+  for x: Bool
+  {G.write_ok(x, G.Foreign{}) == False{} : Bool}
+
+# LAW: without login, a Host other than a loopback name or the public_url host
+# passes only when no public_url is set and allow_unauthenticated is on.
+law foreign_host_refused:
+  for p: Bool
+  for a: Bool
+  {G.host_allowed(G.Elsewhere{}, p, a) == Bool.and(Bool.not(p), a) : Bool}
+
+# LAW: a console id opens at most one WebSocket: after any attempt, a second
+# one is refused.
+law console_id_single_use:
+  for p: Bool
+  for f: Bool
+  for s: Bool
+  for v: Bool
+  for f2: Bool
+  for s2: Bool
+  for v2: Bool
+  {C.granted(C.kept(p, f, s, v), f2, s2, v2) == False{} : Bool}
+
+# LAW: a console id is refused from another session.
+law console_needs_session:
+  for p: Bool
+  for f: Bool
+  for v: Bool
+  {C.granted(p, f, False{}, v) == False{} : Bool}
+
+# LAW: a console id is refused on another Proxmox.
+law console_needs_same_pve:
+  for p: Bool
+  for f: Bool
+  for s: Bool
+  {C.granted(p, f, s, False{}) == False{} : Bool}
+
+# LAW: a console id is refused once its TTL has passed.
+law console_expires:
+  for p: Bool
+  for s: Bool
+  for v: Bool
+  {C.granted(p, False{}, s, v) == False{} : Bool}
+
+# LAW: a console WebSocket without an Origin, or with one from another site,
+# is refused.
+law console_needs_same_origin:
+  {Bool.or(C.origin_ok(C.Absent{}), C.origin_ok(C.Foreign{})) == False{} : Bool}
+
+# LAW: stop never runs without the guest's name typed.
+law stop_needs_name:
+  for p: Bool
+  {P.proceeds(P.Stop{}, p, False{}) == False{} : Bool}
+
+# LAW: no action runs on a protected guest without its name typed.
+law protected_needs_name:
+  for a: P.Action
+  {P.proceeds(a, True{}, False{}) == False{} : Bool}

@@ -36,6 +36,8 @@ pub struct Pending {
     created: Instant,
 }
 
+pub type Consoles = std::sync::Mutex<std::collections::HashMap<String, Pending>>;
+
 fn error(status: StatusCode, msg: impl ToString) -> Response {
     (status, Json(json!({ "error": msg.to_string() }))).into_response()
 }
@@ -94,8 +96,8 @@ pub async fn open(
 
 /// Takes the pending console for this id: once, within `ID_TTL`, from the
 /// session that opened it and on the same Proxmox.
-fn take(state: &Shared, id: &str, sid: Option<&str>, pve: &str) -> Option<Pending> {
-    let p = state.consoles.lock().unwrap().remove(id)?;
+fn take(consoles: &Consoles, id: &str, sid: Option<&str>, pve: &str) -> Option<Pending> {
+    let p = consoles.lock().unwrap().remove(id)?;
     (p.created.elapsed() < ID_TTL && p.sid.as_deref() == sid && p.pve == pve).then_some(p)
 }
 
@@ -110,7 +112,7 @@ pub async fn connect(
     if headers.get(axum::http::header::ORIGIN).is_none() || guard::cross_origin(&state, &headers) {
         return error(StatusCode::FORBIDDEN, "cross-origin request");
     }
-    let Some(p) = take(&state, &id, caller.sid.as_deref(), &name) else {
+    let Some(p) = take(&state.consoles, &id, caller.sid.as_deref(), &name) else {
         tracing::info!(
             msg = "console",
             user = user(&caller),
@@ -212,4 +214,51 @@ async fn relay(
         seconds = started.elapsed().as_secs(),
         bytes
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Keeps `take` equal to `granted` and `kept` in spec/console.bend, whose
+    /// laws (LAWS.bend) are proven by `bend PROOF.bend`.
+    #[test]
+    fn take_matches_spec() {
+        let b = [false, true];
+        for present in b {
+            for fresh in b {
+                for same_session in b {
+                    for same_pve in b {
+                        let consoles = Consoles::default();
+                        if present {
+                            let age = if fresh {
+                                Duration::ZERO
+                            } else {
+                                ID_TTL + Duration::from_secs(1)
+                            };
+                            consoles.lock().unwrap().insert(
+                                "id".into(),
+                                Pending {
+                                    sid: Some("s1".into()),
+                                    pve: "lab".into(),
+                                    console: Console::default(),
+                                    created: Instant::now() - age,
+                                },
+                            );
+                        }
+                        let sid = if same_session { "s1" } else { "s2" };
+                        let pve = if same_pve { "lab" } else { "other" };
+                        let got = take(&consoles, "id", Some(sid), pve).is_some();
+                        let case = format!(
+                            "present={present} fresh={fresh} session={same_session} pve={same_pve}"
+                        );
+                        assert_eq!(got, present && fresh && same_session && same_pve, "{case}");
+                        // kept: the id is gone after any attempt
+                        assert!(consoles.lock().unwrap().is_empty(), "{case}");
+                        assert!(take(&consoles, "id", Some(sid), pve).is_none(), "{case}");
+                    }
+                }
+            }
+        }
+    }
 }

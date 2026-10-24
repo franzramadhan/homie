@@ -118,6 +118,64 @@ async fn writes_need_the_header_and_a_same_site_origin() {
     }
 }
 
+/// Keeps `guard::write_denied` equal to `write_ok` in spec/guard.bend, whose
+/// laws (LAWS.bend) are proven by `bend PROOF.bend`: with and without login.
+#[tokio::test]
+async fn writes_match_spec() {
+    let open = open_homie().await;
+    let login = Homie::start(|_| {
+        format!(
+            "public_url = \"http://homie.example\"\n{}",
+            local_login(None)
+        )
+    })
+    .await;
+    // (Origin header, the model's Origin), per instance
+    // without login only the host counts: scheme and port do not
+    let same_open = [
+        "http://homie.example",
+        "https://homie.example:8443",
+        "http://localhost:7777",
+        "http://127.0.0.1",
+    ];
+    let same_login = ["http://homie.example"];
+    let foreign = [
+        "http://evil.example",
+        "http://homie.example.evil.example",
+        "null",
+    ];
+    let foreign_login = [
+        "https://homie.example",
+        "http://homie.example:8443",
+        "http://localhost:7777",
+    ];
+    for (h, same, extra) in [
+        (&open, &same_open[..], &[][..]),
+        (&login, &same_login[..], &foreign_login[..]),
+    ] {
+        let origins = std::iter::once((None, "Absent"))
+            .chain(same.iter().map(|o| (Some(*o), "Same")))
+            .chain(foreign.iter().chain(extra).map(|o| (Some(*o), "Foreign")));
+        for (origin, class) in origins {
+            for x_homie in [false, true] {
+                let mut headers = axum::http::HeaderMap::new();
+                if x_homie {
+                    headers.insert("x-homie", "1".parse().unwrap());
+                }
+                if let Some(o) = origin {
+                    headers.insert("origin", o.parse().unwrap());
+                }
+                assert_eq!(
+                    crate::server::guard::write_denied(&h.state, &headers).is_none(),
+                    x_homie && class != "Foreign",
+                    "{origin:?} x_homie={x_homie} login={}",
+                    h.state.auth.is_some()
+                );
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn meta_and_queries_with_full_access() {
     let h = open_homie().await;

@@ -138,6 +138,7 @@ pub struct ConsoleRequest {
 /// An opened Proxmox console. The ticket stays in Homie; only `password`
 /// (a one-time VNC password for this console, `generate-password`) goes to
 /// the browser, because noVNC answers the VNC challenge itself.
+#[cfg_attr(test, derive(Default))]
 pub struct Console {
     pub guest: String,
     pub mode: &'static str,
@@ -750,6 +751,43 @@ mod tests {
         g.protected = true;
         assert!(confirmation_needed(&g, "reboot", Some("wrong")).is_some());
         assert!(confirmation_needed(&g, "reboot", Some("vm1")).is_none());
+    }
+
+    /// Keeps `confirmation_needed` equal to `proceeds` in spec/power.bend,
+    /// whose laws (LAWS.bend) are proven by `bend PROOF.bend`.
+    #[test]
+    fn confirmations_match_spec() {
+        for action in ["start", "shutdown", "reboot", "stop"] {
+            for protected in [false, true] {
+                for (confirm, typed) in [(None, false), (Some("wrong"), false), (Some("vm1"), true)]
+                {
+                    let g = Guest {
+                        vmid: 1,
+                        name: "vm1".into(),
+                        kind: "qemu".into(),
+                        node: "pve".into(),
+                        status: "running".into(),
+                        cpu: 0.0,
+                        maxcpu: 1,
+                        mem: 0,
+                        maxmem: 0,
+                        uptime: 0,
+                        tags: vec![],
+                        protected,
+                        template: false,
+                    };
+                    let model = match action {
+                        "stop" => typed,
+                        _ => typed || !protected,
+                    };
+                    assert_eq!(
+                        confirmation_needed(&g, action, confirm).is_none(),
+                        model,
+                        "{action} protected={protected} confirm={confirm:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
