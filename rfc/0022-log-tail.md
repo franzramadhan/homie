@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-24 | #89 | - |
+| implemented | 2026-10-24 | #91 | v0.11.0 |
 
 > A **Follow** toggle on the Logs page: new lines matching the query appear
 > as they arrive, for VictoriaLogs and Loki, through the same Grafana path as
