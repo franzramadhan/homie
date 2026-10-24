@@ -516,6 +516,27 @@ interval_hours = 6                     # probe period for listed and discovered 
 endpoints = true                       # the integrations' own HTTPS endpoints
 # [[certificates.targets]]             # host, port (443), address, ca_file
 
+[updates]                              # RFC 0020: read-only, nothing is installed
+proxmox = true                         # package list and reboot pending per node
+# github_token = { env = "GITHUB_TOKEN" }  # raises the GitHub rate limit
+# ignore = []                          # chart globs never looked up
+# [updates.upstream]                   # third-party lookups, all off: kubernetes, distro, flux, charts, images (RFC 0021)
+# [[updates.registries]]               # host, username, password for private OCI registries
+# [[updates.charts]]                   # name, repo: charts installed with plain helm install
+# kubernetes.<name>.distro = "auto"    # none | k0s | k3s | rke2 | talos | eks | gke | aks | { github = "owner/repo" }
+# kubernetes.<name>.flux_namespace = "flux-system"
+
+# [notify]                             # RFC 0019: messages when a card changes status
+# interval_seconds = 60
+# hold_seconds = 180                   # a new status must hold this long
+# min_tone = "bad"                     # warn | bad
+# min_tone_per_card = { certificates = "warn", cnpg = "warn" }
+# recovery = true
+# cards = []                           # empty: every card but alerts
+# redact = false                       # card and status only
+# kubernetes_service_account = ""      # namespace/name, for forward_token clusters
+# [[notify.targets]]                   # type (ntfy | slack | webhook), url, token, headers, ca_file
+
 [logs]                                 # optional, RFC 0008
 max_rows = 1000
 # [[logs.datasources]]                 # label, grafana, datasource, type (victorialogs | loki), pod_query, node_query

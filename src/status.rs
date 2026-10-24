@@ -2,12 +2,12 @@
 //! behind it, computed from a query's data. The UI shows this tone, so the
 //! page and anything else that reads it (notifications) cannot disagree.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::cache::Envelope;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Tone {
     Ok,
@@ -279,6 +279,19 @@ fn summarize(kind: &str, d: &Value, now: jiff::Timestamp) -> Option<(Tone, Vec<S
                 Tone::Ok
             }
         }
+        "updates" => {
+            let mut tone = Tone::Ok;
+            for n in arr(&d["proxmox"]).iter().filter(|n| n["reboot"] == true) {
+                reasons.push(format!("{}: reboot pending", text(&n["node"])));
+                tone = Tone::Warn;
+            }
+            for c in arr(&d["kubernetes"]).iter().filter(|c| c["skew"] == true) {
+                reasons.push(format!("{}: version skew", text(&c["cluster"])));
+                tone = Tone::Warn;
+            }
+            // "update available" is information, never a tone (RFC 0020)
+            tone
+        }
         "certs" => {
             let mut tone = Tone::Ok;
             for r in arr(&d["rows"]) {
@@ -541,6 +554,21 @@ mod tests {
         assert_eq!(
             tone("healthchecks", d),
             (Tone::Bad, vec!["down: a".into(), "late: b".into()])
+        );
+    }
+
+    #[test]
+    fn updates_only_warn_for_reboots_and_skew() {
+        let d = json!({"proxmox": [{"node": "pve-01", "reboot": false, "updates": 30}],
+                       "kubernetes": [{"cluster": "lab", "skew": false}], "charts": [{"latest": {"newest": "2.0.0"}}]});
+        assert_eq!(tone("updates", d), (Tone::Ok, vec![]));
+        let d = json!({"proxmox": [{"node": "pve-01", "reboot": true}], "kubernetes": [{"cluster": "lab", "skew": true}]});
+        assert_eq!(
+            tone("updates", d),
+            (
+                Tone::Warn,
+                vec!["pve-01: reboot pending".into(), "lab: version skew".into()]
+            )
         );
     }
 

@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-24 | #71 | v0.10.0 |
+| implemented | 2026-10-24 | #82 | v0.10.0 |
 
 > Show what is out of date: package updates and pending reboots on Proxmox
 > nodes, the Kubernetes distribution, Flux and Helm charts, each against
@@ -126,6 +126,29 @@ newest overall are shown ("1.27.5 / 1.29.0 available").
 |---|---|
 | `msg="query" source="updates-pve/<name>"` | as every query |
 | `msg="upstream" kind repo result ms` | one per lookup, warn on failure |
+
+## Changes during implementation
+
+- Display: one Updates page and one Updates card instead of badges spread
+  over the Infrastructure, Workloads and GitOps pages. Reboot pending and
+  version skew make the Updates card amber; the Proxmox and Kubernetes
+  cards keep their own rules.
+- Chart versions are compared without build metadata (semver gives it no
+  precedence): Flux reports OCI charts as `0.15.0+<digest>`.
+- Argo CD names OCI Helm repositories without a scheme; they are read as
+  `oci://`.
+- k0s reports `v1.36.4+k0s` without the `.N` of its release tag, so only
+  the Kubernetes part is compared for k0s.
+- A chart from a GitRepository has no release to compare and shows its
+  repository as unknown.
+- The query is cached 5 minutes; upstream answers 12 hours, failures 30
+  minutes. Upstream hosts go through the same HTTP client as integrations,
+  so they show on the certificates page too.
+- The YAML parser for `index.yaml` is `serde_yaml_ng`.
+- `GET /nodes/{node}/apt/update` needs `Sys.Modify`, not `Sys.Audit` as
+  assumed above. Homie keeps the read-only `PVEAuditor` role: without
+  `Sys.Modify` the package count is unknown (with a note on the page) and
+  reboot pending still comes from `apt/versions` (`Sys.Audit`). (v0.10.1)
 
 ## Alternatives
 

@@ -36,6 +36,8 @@ export type Meta = {
   healthchecks: { url: string } | null;
   /** certificate expiry (RFC 0018); never for a role */
   certificates: boolean;
+  /** pending updates (RFC 0020); never for a role */
+  updates: boolean;
 };
 
 export type PveNode = {
@@ -167,6 +169,52 @@ export type Device = {
 };
 export type Check = { name: string; status: string; last_ping: string | null; next_ping: string | null };
 
+export type Latest = { patch: string | null; newest: string | null };
+export type PveUpdate = {
+  cluster: string;
+  node: string;
+  /** null: the token may not read the list (needs Sys.Modify) */
+  updates: number | null;
+  packages: { package: string; installed: string; new: string }[];
+  running_kernel: string;
+  newest_kernel: string | null;
+  reboot: boolean;
+};
+export type ClusterUpdate = {
+  cluster: string;
+  server: string;
+  nodes: { name: string; kubelet: string }[];
+  skew: boolean;
+  distro: string;
+  distro_version: string;
+  kubernetes_latest: Latest;
+  distro_latest: Latest;
+  flux: string | null;
+  flux_latest: Latest;
+};
+export type ChartUpdate = {
+  cluster: string;
+  namespace: string;
+  release: string;
+  chart: string;
+  version: string;
+  managed_by: "flux" | "argocd" | "helm";
+  source: string | null;
+  latest: Latest;
+};
+export type ImageUpdate = {
+  cluster: string;
+  image: string;
+  registry: string;
+  repository: string;
+  tag: string | null;
+  pinned: boolean;
+  /** latest, stable, no tag: only the version to pin to is shown (RFC 0021) */
+  unversioned: boolean;
+  used_by: string[];
+  latest: Latest;
+};
+export type Updates = { proxmox: PveUpdate[]; kubernetes: ClusterUpdate[]; charts: ChartUpdate[]; images: ImageUpdate[]; errors: string[] };
 export type ChainCert = {
   role: "leaf" | "intermediate" | "root" | "unused";
   subject: string;

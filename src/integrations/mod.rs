@@ -15,6 +15,7 @@ pub mod proxmox;
 pub mod security;
 pub mod services;
 pub mod sparks;
+pub mod updates;
 pub mod watch_store;
 
 use std::{collections::BTreeMap, time::Duration};
@@ -41,6 +42,7 @@ pub struct Lab {
     pub quiet: Option<Quiet>,
     pub roles: BTreeMap<String, std::sync::Arc<crate::config::Role>>,
     pub certificates: crate::config::Certificates,
+    pub updates: crate::config::Updates,
 }
 
 /// The caller of a query: who they are and, in forward_token mode, the ID
@@ -53,6 +55,9 @@ pub struct Caller {
     pub role: Option<RoleRef>,
     /// the Homie session id, for per-session state (RFC 0017)
     pub sid: Option<String>,
+    /// a ServiceAccount to impersonate for Kubernetes reads without a user
+    /// (the notifier, RFC 0019)
+    pub service_account: Option<String>,
 }
 
 #[derive(Clone)]
@@ -84,6 +89,7 @@ impl Lab {
                 .map(|(k, v)| (k.clone(), std::sync::Arc::new(v.clone())))
                 .collect(),
             certificates: cfg.certificates.clone(),
+            updates: cfg.updates.clone(),
         };
         for (name, c) in &cfg.proxmox {
             lab.proxmox
@@ -147,6 +153,11 @@ impl Lab {
     pub fn certificates_on(&self) -> bool {
         let c = &self.certificates;
         c.endpoints || !c.targets.is_empty() || self.cert_clusters().next().is_some()
+    }
+
+    /// Anything to show on the updates card (RFC 0020).
+    pub fn updates_on(&self) -> bool {
+        (self.updates.proxmox && !self.proxmox.is_empty()) || !self.kubernetes.is_empty()
     }
 
     pub fn quiet_active(&self) -> bool {
@@ -245,6 +256,11 @@ impl Lab {
                 false,
                 self.cert_clusters().any(|k| k.forwards_token()),
             ),
+            "updates" if self.updates_on() => (
+                secs(300),
+                false,
+                self.kubernetes.values().any(|k| k.forwards_token()),
+            ),
             _ => return None,
         };
         let key = match (&caller.role, per_user, &caller.email) {
@@ -287,7 +303,10 @@ impl Lab {
                     .as_deref()
                     .ok_or("this role has no kubernetes_service_account")?,
             ),
-            None => k.client(caller.id_token.as_deref()),
+            None => match &caller.service_account {
+                Some(sa) => k.impersonating(sa),
+                None => k.client(caller.id_token.as_deref()),
+            },
         }
     }
 
@@ -413,6 +432,60 @@ impl Lab {
                     .collect();
                 serde_json::to_value(certs::collect(&self.certificates, clusters).await)?
             }
+            "updates" => {
+                let u = &self.updates;
+                let mut r = updates::Report::default();
+                let gh = match &u.github_token {
+                    Some(s) => Some(s.resolve().await?),
+                    None => None,
+                };
+                if u.proxmox {
+                    for p in self.proxmox.values() {
+                        match updates::proxmox(p, &mut r.errors).await {
+                            Ok(n) => r.proxmox.extend(n),
+                            Err(e) => r.errors.push(format!("{}: {e}", p.name)),
+                        }
+                    }
+                }
+                for k in self.kubernetes.values() {
+                    let client = match self.kube_client(k, caller) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            r.errors.push(format!("{}: {e}", k.name));
+                            continue;
+                        }
+                    };
+                    match updates::cluster(k, client.clone(), u, gh.as_deref(), &mut r.errors).await
+                    {
+                        Ok(c) => r.kubernetes.push(c),
+                        Err(e) => r.errors.push(format!("{}: {e}", k.name)),
+                    }
+                    match updates::charts(&k.name, client.clone(), u).await {
+                        Ok(c) => r.charts.extend(c),
+                        Err(e) => r.errors.push(format!("{}: charts: {e}", k.name)),
+                    }
+                    if u.upstream.images {
+                        match updates::images(&k.name, client, u).await {
+                            Ok(i) => r.images.extend(i),
+                            Err(e) => r.errors.push(format!("{}: images: {e}", k.name)),
+                        }
+                    }
+                }
+                if u.upstream.charts || u.upstream.images {
+                    let mut creds = std::collections::BTreeMap::new();
+                    for reg in &u.registries {
+                        creds.insert(
+                            reg.host.clone(),
+                            (reg.username.resolve().await?, reg.password.resolve().await?),
+                        );
+                    }
+                    if u.upstream.charts {
+                        updates::chart_latest(&mut r.charts, &creds, &mut r.errors).await;
+                    }
+                    updates::image_latest(&mut r.images, &creds, &mut r.errors).await;
+                }
+                serde_json::to_value(r)?
+            }
             _ => return Err(format!("unknown query {kind:?}").into()),
         };
         Ok(v)
@@ -457,6 +530,7 @@ mod tests {
             email: Some("viewer@example.com".into()),
             id_token: None,
             sid: None,
+            service_account: None,
             role: Some(RoleRef {
                 name: "viewer".into(),
                 role: std::sync::Arc::new(crate::config::Role {

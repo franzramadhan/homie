@@ -47,6 +47,10 @@ pub struct Config {
     pub healthchecks: Option<Healthchecks>,
     /// certificate expiry from TLS handshakes (RFC 0018)
     pub certificates: Certificates,
+    /// messages when an overview card changes status (RFC 0019)
+    pub notify: Option<Notify>,
+    /// what is out of date (RFC 0020)
+    pub updates: Updates,
 }
 
 impl Default for Config {
@@ -73,6 +77,8 @@ impl Default for Config {
             demo: None,
             healthchecks: None,
             certificates: Certificates::default(),
+            notify: None,
+            updates: Updates::default(),
         }
     }
 }
@@ -288,8 +294,161 @@ pub struct Kubernetes {
     /// "renewal failing" from cert-manager Certificate conditions (RFC 0018)
     #[serde(default)]
     pub cert_manager: bool,
+    /// the distribution behind the versions (RFC 0020): "auto", "none", a
+    /// built-in name, or `{ github = "owner/repo" }`
+    #[serde(default)]
+    pub distro: Distro,
+    /// where the Flux version label is read (RFC 0020)
+    #[serde(default = "default_flux_namespace")]
+    pub flux_namespace: String,
     #[serde(default)]
     pub quiet: bool,
+}
+
+fn default_flux_namespace() -> String {
+    "flux-system".into()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Distro {
+    Name(String),
+    GitHub { github: String },
+}
+
+impl Default for Distro {
+    fn default() -> Self {
+        Distro::Name("auto".into())
+    }
+}
+
+/// Pending updates (RFC 0020). Everything that calls a third party is off
+/// until turned on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Updates {
+    /// package list and reboot pending per Proxmox node
+    pub proxmox: bool,
+    pub upstream: Upstream,
+    /// raises the GitHub API rate limit (60 an hour without)
+    pub github_token: Option<Secret>,
+    pub registries: Vec<Registry>,
+    /// repositories of charts installed with plain `helm install`
+    pub charts: Vec<ChartRepo>,
+    /// chart (and image) globs never looked up
+    pub ignore: Vec<String>,
+}
+
+impl Default for Updates {
+    fn default() -> Self {
+        Self {
+            proxmox: true,
+            upstream: Upstream::default(),
+            github_token: None,
+            registries: Vec::new(),
+            charts: Vec::new(),
+            ignore: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Upstream {
+    pub kubernetes: bool,
+    pub distro: bool,
+    pub flux: bool,
+    pub charts: bool,
+    /// running container images against their registries (RFC 0021)
+    pub images: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Registry {
+    pub host: String,
+    pub username: Secret,
+    pub password: Secret,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChartRepo {
+    pub name: String,
+    pub repo: String,
+}
+
+/// Notifications (RFC 0019): status changes of the overview cards.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Notify {
+    #[serde(default = "default_notify_interval")]
+    pub interval_seconds: u64,
+    /// how long a new status holds before a message
+    #[serde(default = "default_notify_hold")]
+    pub hold_seconds: u64,
+    #[serde(default = "default_min_tone")]
+    pub min_tone: crate::status::Tone,
+    /// per card; amber is the stage to act on for certificates and backups
+    #[serde(default = "default_min_tone_per_card")]
+    pub min_tone_per_card: BTreeMap<String, crate::status::Tone>,
+    #[serde(default = "yes")]
+    pub recovery: bool,
+    /// card ids to evaluate; empty: all but `alerts` (Grafana notifies itself)
+    #[serde(default)]
+    pub cards: Vec<String>,
+    /// send the card and its status only, no names
+    #[serde(default)]
+    pub redact: bool,
+    /// "namespace/name" impersonated for forward_token clusters
+    #[serde(default)]
+    pub kubernetes_service_account: Option<String>,
+    pub targets: Vec<NotifyTarget>,
+}
+
+fn default_notify_interval() -> u64 {
+    60
+}
+
+fn default_notify_hold() -> u64 {
+    180
+}
+
+fn default_min_tone() -> crate::status::Tone {
+    crate::status::Tone::Bad
+}
+
+fn default_min_tone_per_card() -> BTreeMap<String, crate::status::Tone> {
+    [
+        ("certificates", crate::status::Tone::Warn),
+        ("cnpg", crate::status::Tone::Warn),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NotifyTarget {
+    #[serde(rename = "type")]
+    pub kind: NotifyKind,
+    pub url: Secret,
+    /// bearer token (an ntfy access token)
+    #[serde(default)]
+    pub token: Option<Secret>,
+    #[serde(default)]
+    pub headers: BTreeMap<String, Secret>,
+    #[serde(default)]
+    pub ca_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NotifyKind {
+    Ntfy,
+    Slack,
+    Webhook,
 }
 
 /// Certificate expiry (RFC 0018): thresholds and the targets to probe.
@@ -854,6 +1013,43 @@ pub fn validate(cfg: &Config) -> Result<()> {
         }
     }
 
+    if let Some(n) = &cfg.notify {
+        if n.targets.is_empty() {
+            return Err("notify.targets is empty".into());
+        }
+        if n.interval_seconds < 10 {
+            return Err("notify.interval_seconds must be 10 or more".into());
+        }
+        use crate::status::Tone;
+        let thresholds = std::iter::once(&n.min_tone).chain(n.min_tone_per_card.values());
+        if thresholds
+            .into_iter()
+            .any(|t| !matches!(t, Tone::Warn | Tone::Bad))
+        {
+            return Err("notify: min_tone values are \"warn\" or \"bad\"".into());
+        }
+        if let Some(sa) = &n.kubernetes_service_account
+            && !sa
+                .split_once('/')
+                .is_some_and(|(ns, name)| valid_namespace(ns) && valid_namespace(name))
+        {
+            return Err(
+                "notify.kubernetes_service_account: set \"namespace/name\" of a read-only ServiceAccount".into(),
+            );
+        }
+    }
+    for r in &cfg.updates.charts {
+        if !(r.repo.starts_with("oci://")
+            || r.repo.starts_with("https://")
+            || r.repo.starts_with("http://"))
+        {
+            return Err(format!(
+                "updates.charts: repo {:?} must be oci://, https:// or http://",
+                r.repo
+            )
+            .into());
+        }
+    }
     let c = &cfg.certificates;
     if c.interval_hours == 0 {
         return Err("certificates.interval_hours must be 1 or more".into());

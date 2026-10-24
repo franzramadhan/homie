@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-24 | #70 | v0.9.0 |
+| implemented | 2026-10-24 | #80 | v0.9.0 |
 
 > Send a message when an overview card changes status (to ntfy, a
 > Slack-compatible webhook or a generic JSON webhook), so a problem is seen
@@ -85,6 +85,22 @@ No `[notify]` section, no evaluator.
 |---|---|
 | `msg="notify" card target from to result` | every message sent or failed |
 | `msg="notify skipped" card reason` | quiet hours, baseline, missing credentials |
+
+## Changes during implementation
+
+- Durations are numbers, like the other keys: `interval_seconds` (60) and
+  `hold_seconds` (180) instead of `interval` and `for`.
+- Card ids are the query kinds (`pve`, `k8s`, `flux`, `argocd`, `alerts`,
+  `security`, `openbao`, `cnpg`, `tailscale`, `github`, `healthchecks`),
+  and `certificates` for the RFC 0018 card.
+- A target can take a `ca_file` (a self-hosted ntfy behind a private CA).
+- `homie notify-test` sends one message to every target and fails when one
+  does not answer 2xx.
+- The GitHub card is not evaluated in session mode (RFC 0017): there are no
+  workflows without a visitor.
+- Kubernetes cards of a `forward_token` cluster without
+  `kubernetes_service_account` are left out with a `msg="notify skipped"`
+  line at start, instead of in `homie check`.
 
 ## Alternatives
 

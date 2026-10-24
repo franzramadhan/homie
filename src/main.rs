@@ -4,6 +4,7 @@ mod check;
 mod config;
 mod http;
 mod integrations;
+mod notify;
 mod quiet;
 mod roles;
 mod secret;
@@ -12,6 +13,7 @@ mod status;
 #[cfg(test)]
 mod testkit;
 mod tls;
+mod upstream;
 
 use std::{path::PathBuf, process::ExitCode};
 
@@ -20,10 +22,11 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const USAGE: &str = "usage: homie [serve|check|hash-password|version] [--config <path>]
+const USAGE: &str = "usage: homie [serve|check|notify-test|hash-password|version] [--config <path>]
 
   serve          run the server (default)
   check          validate the config and test every integration
+  notify-test    send a test message to every [notify] target
   hash-password  read a password from stdin, print its hash for local_login.password_hash
   version        print the version
 
@@ -72,6 +75,10 @@ async fn main() -> ExitCode {
         },
         "check" => match config::load(config_path) {
             Ok(cfg) => check::run(cfg).await,
+            Err(e) => Err(e),
+        },
+        "notify-test" => match config::load(config_path) {
+            Ok(cfg) => notify::test(&cfg).await,
             Err(e) => Err(e),
         },
         other => {

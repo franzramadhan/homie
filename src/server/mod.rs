@@ -89,6 +89,9 @@ pub async fn run(cfg: Config) -> Result<()> {
     });
     let persist = state.clone();
     tokio::spawn(async move { persist.cache.persist_loop().await });
+    if state.cfg.notify.is_some() {
+        tokio::spawn(crate::notify::run(state.clone()));
+    }
 
     axum::serve(listener, router(state))
         .with_graceful_shutdown(shutdown())

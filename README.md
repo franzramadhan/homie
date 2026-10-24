@@ -40,6 +40,7 @@ Every integration is optional. Configure only what your lab has.
 | Logs | VictoriaLogs (LogsQL), Loki (LogQL) through Grafana | Search page, prefilled from pods and nodes |
 | Security | Presets: Kyverno, Tetragon, Wazuh, debsecan | Tetragon and Wazuh read VictoriaLogs through Grafana |
 | CI and IaC runs | GitHub Actions | Watched workflows (Terraform plan and apply, ...) through a read-only GitHub App |
+| Updates | Proxmox apt, Kubernetes and its distribution, Flux, Helm charts | Package updates and reboot pending per node, version skew, and (opt-in) the newest Kubernetes, k0s, k3s, RKE2, Talos, Flux and chart releases through GitHub, OCI registries and Helm indexes |
 | Certificates | Any TLS endpoint, by handshake | Leaf, intermediates and roots: the integrations' own endpoints, listed hosts, and hostnames from Ingress, Gateway API and annotations; cert-manager renewal failures as an extra |
 | Outage signals | Tailscale API, healthchecks.io (hosted or self-hosted) | Useful from outside when the lab is down |
 | Deep links | Any Kubernetes UI by URL template (Headlamp built in), Grafana, Proxmox UI | |
@@ -53,6 +54,10 @@ Behavior that suits a homelab:
 - **Roles.** A read-only view limited to some pages, explicit namespaces and
   tagged Proxmox guests, enforced by Kubernetes RBAC as well. It powers the
   public demo and its passwordless "Try the demo" button.
+- **Notifications.** When a card changes status and the change holds, a
+  message goes to ntfy, a Slack-compatible webhook (Slack, Mattermost,
+  Discord) or any JSON webhook. Quiet hours stay quiet, and the lab
+  waking up in the morning is not news.
 - **Watched workflows without a restart.** Pick GitHub workflows in the UI;
   the list is saved in a ConfigMap (in a cluster) or a file.
 - **TLS options per integration.** Verify against a custom CA, verify
