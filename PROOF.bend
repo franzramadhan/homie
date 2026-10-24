@@ -8,6 +8,7 @@ import ./spec/power.bend as P
 import ./spec/queries.bend as Q
 import ./spec/sessions.bend as S
 import ./spec/lockout.bend as L
+import ./spec/filter.bend as F
 
 # PROOF: role_route answers False for Act before it looks at anything else.
 def Laws.no_actions(role, m, ghs):
@@ -429,3 +430,85 @@ def Laws.tenth_failure_locks(k):
 # PROOF: outside a lockout, the right password resets the throttle.
 def Laws.success_resets(f, w):
   {==}
+
+# The filters keep a row only when its test said True. Each step lemma takes
+# that test's answer `k` with the equation that it is the answer: when kept,
+# the equation turns the test into True and the rest is the induction
+# hypothesis; when dropped, the hypothesis is the goal.
+law row_step:
+  for +h: F.Name
+  for k: Bool
+  for +a: Bool
+  for +b: Bool
+  for +c: Bool
+  for rest: +List<F.Name>
+  {F.all_ok(rest, a, b, c) == True{} : Bool} -> {F.ok(h, a, b, c) == k : Bool} -> {F.all_ok(F.keep_row(k, h, rest), a, b, c) == True{} : Bool}
+
+def row_step(h, k, a, b, c, rest):
+  match k:
+    case True{}:
+      ih => e =>
+        %Equal.sym(Bool, F.ok(h, a, b, c), True{}, e) : {Bool.and(_, F.all_ok(rest, a, b, c)) == True{} : Bool}
+        ih
+    case False{}:
+      ih => e => ih
+
+# PROOF: induction on the rows, with row_step.
+def Laws.role_rows_in_namespaces(xs, a, b, c):
+  match xs:
+    case Nil{}:
+      {==}
+    case Con{+h, +t}:
+      row_step(h, F.ok(h, a, b, c), a, b, c, F.rows(t, a, b, c))(Laws.role_rows_in_namespaces(t, a, b, c))({==})
+
+law flux_step:
+  for +h: +List<F.Name>
+  for k: Bool
+  for +a: Bool
+  for +b: Bool
+  for +c: Bool
+  for rest: +List<+List<F.Name>>
+  {F.all_flux_ok(rest, a, b, c) == True{} : Bool} -> {F.flux_ok(h, a, b, c) == k : Bool} -> {F.all_flux_ok(F.keep_list(k, h, rest), a, b, c) == True{} : Bool}
+
+def flux_step(h, k, a, b, c, rest):
+  match k:
+    case True{}:
+      ih => e =>
+        %Equal.sym(Bool, F.flux_ok(h, a, b, c), True{}, e) : {Bool.and(_, F.all_flux_ok(rest, a, b, c)) == True{} : Bool}
+        ih
+    case False{}:
+      ih => e => ih
+
+# PROOF: induction on the objects, with flux_step.
+def Laws.role_flux_in_namespaces(xs, a, b, c):
+  match xs:
+    case Nil{}:
+      {==}
+    case Con{+h, +t}:
+      flux_step(h, F.flux_ok(h, a, b, c), a, b, c, F.flux(t, a, b, c))(Laws.role_flux_in_namespaces(t, a, b, c))({==})
+
+law guest_step:
+  for +h: +List<F.Name>
+  for k: Bool
+  for +a: Bool
+  for +b: Bool
+  for +c: Bool
+  for rest: +List<+List<F.Name>>
+  {F.all_tagged(rest, a, b, c) == True{} : Bool} -> {F.any_ok(h, a, b, c) == k : Bool} -> {F.all_tagged(F.keep_list(k, h, rest), a, b, c) == True{} : Bool}
+
+def guest_step(h, k, a, b, c, rest):
+  match k:
+    case True{}:
+      ih => e =>
+        %Equal.sym(Bool, F.any_ok(h, a, b, c), True{}, e) : {Bool.and(_, F.all_tagged(rest, a, b, c)) == True{} : Bool}
+        ih
+    case False{}:
+      ih => e => ih
+
+# PROOF: induction on the guests, with guest_step.
+def Laws.role_guests_tagged(xs, a, b, c):
+  match xs:
+    case Nil{}:
+      {==}
+    case Con{+h, +t}:
+      guest_step(h, F.any_ok(h, a, b, c), a, b, c, F.guests(t, a, b, c))(Laws.role_guests_tagged(t, a, b, c))({==})
