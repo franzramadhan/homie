@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-24 | #71 | v0.10.0 |
+| implemented | 2026-10-24 | #82 | v0.10.0 |
 
 > Show what is out of date: package updates and pending reboots on Proxmox
 > nodes, the Kubernetes distribution, Flux and Helm charts, each against
