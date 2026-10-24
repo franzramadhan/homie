@@ -117,10 +117,10 @@ fn common_name(name: &str) -> String {
 fn parse(der: &[u8], role: &str, public: bool) -> Option<Cert> {
     use x509_cert::ext::pkix::{SubjectAltName, name::GeneralName};
     let c = x509_cert::Certificate::from_der(der).ok()?;
-    let tbs = &c.tbs_certificate;
+    let tbs = c.tbs_certificate();
     let secs = |t: x509_cert::time::Time| t.to_unix_duration().as_secs() as i64;
     let names = if role == "leaf" {
-        match tbs.get::<SubjectAltName>() {
+        match tbs.get_extension::<SubjectAltName>() {
             Ok(Some((_, san))) => san
                 .0
                 .into_iter()
@@ -135,16 +135,16 @@ fn parse(der: &[u8], role: &str, public: bool) -> Option<Cert> {
         Vec::new()
     };
     // a leaf with only SANs (no CN) is named by its first DNS name
-    let subject = match common_name(&tbs.subject.to_string()) {
+    let subject = match common_name(&tbs.subject().to_string()) {
         cn if cn.is_empty() => names.first().cloned().unwrap_or_default(),
         cn => cn,
     };
     Some(Cert {
         role: role.into(),
         subject,
-        issuer: common_name(&tbs.issuer.to_string()),
-        not_before: secs(tbs.validity.not_before),
-        not_after: secs(tbs.validity.not_after),
+        issuer: common_name(&tbs.issuer().to_string()),
+        not_before: secs(tbs.validity().not_before),
+        not_after: secs(tbs.validity().not_after),
         names,
         public,
     })
