@@ -7,7 +7,7 @@
 <meta name="description" content="Homie is a single Rust binary that shows Proxmox, Kubernetes, Flux, Grafana alerts, logs, updates, certificates and security findings on one calm page, with a few safe actions.">
 <meta property="og:title" content="Homie: one page for the whole homelab">
 <meta property="og:description" content="Proxmox, Kubernetes, GitOps, alerts, logs and security findings on one page. A single Rust binary, no database.">
-<meta property="og:image" content="demo.gif">
+<meta property="og:image" content="demo.png">
 <link rel="icon" href="logo.svg" type="image/svg+xml">
 <style>
   /* tokens from the app's DESIGN.md: one accent, status colors only for status */
@@ -58,7 +58,7 @@
   .hint { font-size: 13px; color: var(--ink-subtle); margin-top: 14px; }
 
   .shot { margin: 40px auto 0; border: 1px solid var(--hairline); border-radius: 10px; overflow: hidden; background: var(--surface-1); max-width: 1000px; }
-  .shot img { display: block; width: 100%; height: auto; }
+  .shot video { display: block; width: 100%; height: auto; }
   .shot figcaption { font-size: 12px; color: var(--ink-subtle); padding: 8px 12px; border-top: 1px solid var(--hairline); }
 
   section { padding: 64px 0; border-top: 1px solid var(--hairline); }
@@ -128,8 +128,8 @@
     <p class="hint">The demo is the author's real lab, read-only. The lab sleeps from 23:30 to 06:00 WIB (UTC+7).</p>
 
     <figure class="shot">
-      <img src="demo.gif" width="1280" height="740" alt="Homie walkthrough: overview cards, Proxmox guests, Kubernetes workloads, Flux objects, alerts and log search" loading="eager">
-      <figcaption>A full instance, a few fields blurred. Overview, Proxmox, Kubernetes, Flux, alerts and log search.</figcaption>
+      <video src="demo.mp4" poster="demo.png" width="1280" height="742" autoplay muted loop playsinline aria-label="Homie walkthrough: overview, Proxmox guests, Kubernetes workloads, Flux, GitHub workflows, alerts, logs, security findings, Tailscale devices and pending updates"></video>
+      <figcaption>A full instance. Names, addresses and versions are blurred. Overview, Proxmox, Kubernetes, Flux, workflows, alerts, logs, security, Tailscale and updates.</figcaption>
     </figure>
   </div>
 

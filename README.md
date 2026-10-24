@@ -14,9 +14,9 @@ actions and deep links to the specialist UIs for everything else.
 to the Infrastructure, Workloads and GitOps pages, three namespaces and the
 guests tagged `demo`. The lab sleeps from 23:30 to 06:00 WIB (UTC+7).
 
-![Homie: overview, Proxmox guests, Kubernetes workloads, Flux, alerts and log search](docs/demo.gif)
+![Homie: overview, Proxmox guests, Kubernetes workloads, Flux, workflows, alerts, logs, security, Tailscale and updates](docs/demo.gif)
 
-<sub>A full instance (some fields blurred). The demo shows fewer pages.</sub>
+<sub>A full instance (names, addresses and versions blurred). The demo shows fewer pages.</sub>
 
 Homie is a single Rust binary with the web UI embedded. It has no database.
 It runs:
