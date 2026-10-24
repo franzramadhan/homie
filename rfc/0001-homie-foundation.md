@@ -520,7 +520,7 @@ endpoints = true                       # the integrations' own HTTPS endpoints
 proxmox = true                         # package list and reboot pending per node
 # github_token = { env = "GITHUB_TOKEN" }  # raises the GitHub rate limit
 # ignore = []                          # chart globs never looked up
-# [updates.upstream]                   # third-party lookups, all off: kubernetes, distro, flux, charts
+# [updates.upstream]                   # third-party lookups, all off: kubernetes, distro, flux, charts, images (RFC 0021)
 # [[updates.registries]]               # host, username, password for private OCI registries
 # [[updates.charts]]                   # name, repo: charts installed with plain helm install
 # kubernetes.<name>.distro = "auto"    # none | k0s | k3s | rke2 | talos | eks | gke | aks | { github = "owner/repo" }

@@ -460,12 +460,18 @@ impl Lab {
                         Ok(c) => r.kubernetes.push(c),
                         Err(e) => r.errors.push(format!("{}: {e}", k.name)),
                     }
-                    match updates::charts(&k.name, client, u).await {
+                    match updates::charts(&k.name, client.clone(), u).await {
                         Ok(c) => r.charts.extend(c),
                         Err(e) => r.errors.push(format!("{}: charts: {e}", k.name)),
                     }
+                    if u.upstream.images {
+                        match updates::images(&k.name, client, u).await {
+                            Ok(i) => r.images.extend(i),
+                            Err(e) => r.errors.push(format!("{}: images: {e}", k.name)),
+                        }
+                    }
                 }
-                if u.upstream.charts {
+                if u.upstream.charts || u.upstream.images {
                     let mut creds = std::collections::BTreeMap::new();
                     for reg in &u.registries {
                         creds.insert(
@@ -473,7 +479,10 @@ impl Lab {
                             (reg.username.resolve().await?, reg.password.resolve().await?),
                         );
                     }
-                    updates::chart_latest(&mut r.charts, &creds, &mut r.errors).await;
+                    if u.upstream.charts {
+                        updates::chart_latest(&mut r.charts, &creds, &mut r.errors).await;
+                    }
+                    updates::image_latest(&mut r.images, &creds, &mut r.errors).await;
                 }
                 serde_json::to_value(r)?
             }

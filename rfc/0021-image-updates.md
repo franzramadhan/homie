@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-24 | #73 | v0.11.0 |
+| accepted | 2026-10-24 | #73 | v0.10.0 |
 
 > Show which running container images have a newer version. Versions
 > only: images on a moving tag such as `latest` are flagged as
@@ -60,6 +60,18 @@ Registries, credentials and ignore globs are the RFC 0020 keys.
 | | |
 |---|---|
 | `msg="upstream" kind="image" repo result ms` | as RFC 0020 |
+
+## Changes during implementation
+
+- Display: an Images section on the Updates page (RFC 0020) and a line on
+  the Updates card, instead of an "Update" column on the Workloads page.
+  Typing "unversioned" in the table filter lists the images to pin.
+- The `v` prefix is part of the shape, for charts and distributions too.
+- Workloads are named from the pod's owner: a ReplicaSet as its
+  Deployment, anything else by kind and name, a bare pod as itself.
+- The first lookup is slow on a real cluster (52 images, 74 s through
+  four parallel lookups in the reference lab), then cached 12 hours.
+- Released with RFC 0020 in v0.10.0.
 
 ## Alternatives
 

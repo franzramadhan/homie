@@ -201,7 +201,19 @@ export type ChartUpdate = {
   source: string | null;
   latest: Latest;
 };
-export type Updates = { proxmox: PveUpdate[]; kubernetes: ClusterUpdate[]; charts: ChartUpdate[]; errors: string[] };
+export type ImageUpdate = {
+  cluster: string;
+  image: string;
+  registry: string;
+  repository: string;
+  tag: string | null;
+  pinned: boolean;
+  /** latest, stable, no tag: only the version to pin to is shown (RFC 0021) */
+  unversioned: boolean;
+  used_by: string[];
+  latest: Latest;
+};
+export type Updates = { proxmox: PveUpdate[]; kubernetes: ClusterUpdate[]; charts: ChartUpdate[]; images: ImageUpdate[]; errors: string[] };
 export type ChainCert = {
   role: "leaf" | "intermediate" | "root" | "unused";
   subject: string;

@@ -111,7 +111,10 @@ pub fn latest(installed: &str, candidates: &[String]) -> Latest {
         .iter()
         .filter_map(|c| parse(c).map(|v| (c, v)))
         .filter(|(_, v)| {
-            !v.prerelease() && v.nums.len() == inst.nums.len() && v.build().0 == inst_build
+            !v.prerelease()
+                && v.prefix == inst.prefix
+                && v.nums.len() == inst.nums.len()
+                && v.build().0 == inst_build
         })
         .map(|(c, v)| {
             let k = key(&v, v.build().1);
@@ -454,8 +457,22 @@ mod tests {
         assert!(latest("v1.37.1", &c).is_empty());
         assert!(latest("garbage", &c).is_empty());
         // same shape only
-        let c = s(&["2.9.1", "2.10.0", "2.10.0-beta.1"]);
+        let c = s(&[
+            "2.9.1",
+            "2.10.0",
+            "2.10.0-beta.1",
+            "v2.11.0",
+            "2.12.0-alpine",
+            "2.12",
+        ]);
         assert_eq!(latest("2.9.0", &c).newest.as_deref(), Some("2.10.0"));
+        // image shapes: the suffix and the prefix must match
+        assert_eq!(
+            latest("2.9.0-alpine", &c).newest.as_deref(),
+            Some("2.12.0-alpine")
+        );
+        assert_eq!(latest("v2.9.0", &c).newest.as_deref(), Some("v2.11.0"));
+        assert_eq!(latest("2.9", &c).newest.as_deref(), Some("2.12"));
     }
 
     #[test]
