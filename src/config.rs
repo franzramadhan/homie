@@ -975,6 +975,9 @@ pub fn validate(cfg: &Config) -> Result<()> {
     };
     if let Some(d) = &cfg.demo {
         role_known("demo.role", &d.role)?;
+        if d.max_sessions == 0 {
+            return Err("demo.max_sessions must be at least 1".into());
+        }
         if cfg.auth.is_none() && cfg.local_login.is_none() {
             return Err("demo: needs a login method ([auth] or [local_login])".into());
         }
@@ -1367,6 +1370,14 @@ mod tests {
             max_sessions: 1,
         });
         assert!(validate(&cfg).is_err(), "unknown demo role");
+        cfg.demo = Some(Demo {
+            role: "demo".into(),
+            max_sessions: 0,
+        });
+        assert!(
+            validate(&cfg).is_err_and(|e| e.to_string().contains("max_sessions")),
+            "a demo cap of 0"
+        );
         cfg.demo = Some(Demo {
             role: "demo".into(),
             max_sessions: 1,
