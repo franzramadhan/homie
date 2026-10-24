@@ -2,12 +2,12 @@
 //! behind it, computed from a query's data. The UI shows this tone, so the
 //! page and anything else that reads it (notifications) cannot disagree.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::cache::Envelope;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Tone {
     Ok,
