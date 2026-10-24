@@ -2,6 +2,7 @@
 // Certificates (RFC 0018): every TLS chain Homie has seen or probed.
 
 import { useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { act, get, useMeta, useQ, type CertRow, type Certs, type Guest, type PveOverview, type Sparks } from "../api";
 import { Badge, Bar, Button, Confirm, DataTable, Ext, Section, Source, Spark, bytes, duration, type Col } from "../ui";
@@ -9,6 +10,16 @@ import { Badge, Bar, Button, Confirm, DataTable, Ext, Section, Source, Spark, by
 type Action = "start" | "shutdown" | "reboot" | "stop";
 
 type Status = { text: string; tone: "info" | "ok" | "bad" };
+
+/** The Proxmox UI's own console page (RFC 0023), with the user's Proxmox login. */
+function pveConsole(ui: string, node: string, guest?: Guest): string {
+  const q: Record<string, string> = guest
+    ? guest.type === "lxc"
+      ? { console: "lxc", xtermjs: "1", vmid: String(guest.vmid), vmname: guest.name, node }
+      : { console: "kvm", novnc: "1", vmid: String(guest.vmid), vmname: guest.name, node, resize: "scale" }
+    : { console: "shell", xtermjs: "1", node };
+  return `${ui.replace(/\/$/, "")}/?${new URLSearchParams(q)}`;
+}
 
 // Guests with an action in flight, kept outside React so a table re-render
 // cannot re-enable the buttons halfway through a task.
@@ -176,6 +187,30 @@ function Cluster({ name }: { name: string }) {
           { id: "uptime", accessorFn: (g) => g.uptime, header: "Uptime", cell: ({ row }) => duration(row.original.uptime) },
           { id: "tags", accessorFn: (g) => g.tags.join(" "), header: "Tags", cell: ({ row }) => <span className="text-xs whitespace-normal text-ink-subtle">{row.original.tags.join(", ")}</span> },
         ];
+        // links need a Proxmox login and leak names, so never for a role (RFC 0016)
+        const ui = m?.role ? "" : d.ui_url;
+        const embedded = d.can_console && !m?.role;
+        if (ui || embedded) {
+          guestCols.push({
+            id: "console",
+            header: "Console",
+            enableSorting: false,
+            cell: ({ row }) => {
+              const g = row.original;
+              if (g.status !== "running") return null;
+              return (
+                <span className="flex gap-2 text-xs">
+                  {embedded && (
+                    <Link to="/console/$pve/$node/$type/$vmid" params={{ pve: name, node: g.node, type: g.type, vmid: String(g.vmid) }} className="underline decoration-ink-faint underline-offset-2 hover:decoration-ink">
+                      open
+                    </Link>
+                  )}
+                  {ui && <Ext href={pveConsole(ui, g.node, g)}>{embedded ? "in Proxmox" : "console"}</Ext>}
+                </span>
+              );
+            },
+          });
+        }
         if (d.can_power) {
           guestCols.push({
             id: "actions",
@@ -195,7 +230,14 @@ function Cluster({ name }: { name: string }) {
               {d.nodes.map((n) => (
                 <div key={n.name} className="rounded-control border border-hairline p-3 text-sm">
                   <div className="mb-2 flex items-center justify-between">
-                    <span className="font-medium">{n.name}</span>
+                    <span className="font-medium">
+                      {n.name}
+                      {ui && n.online && (
+                        <span className="ml-2 text-xs font-normal">
+                          <Ext href={pveConsole(ui, n.name)}>shell</Ext>
+                        </span>
+                      )}
+                    </span>
                     <Badge tone={n.online ? "ok" : "bad"}>{n.online ? `up ${duration(n.uptime)}` : "offline"}</Badge>
                   </div>
                   {n.online && (

@@ -465,6 +465,8 @@ ca_file = ""
 protected_tags = []
 ui_url = ""                            # deep links; default first endpoint
 quiet = false
+console = false                        # RFC 0023: embedded guest consoles; the token needs VM.Console
+console_max_minutes = 60
 
 [kubernetes.<name>]                    # optional, repeatable
 auth = "kubeconfig"                    # kubeconfig | in_cluster | forward_token

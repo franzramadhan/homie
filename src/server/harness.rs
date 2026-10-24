@@ -359,6 +359,7 @@ impl Homie {
             auth: Auth::new(&cfg).await.unwrap(),
             cfg,
             github_states: Default::default(),
+            consoles: Default::default(),
         };
         tweak(&mut state);
         let state = Arc::new(state);

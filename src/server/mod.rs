@@ -2,6 +2,7 @@
 
 mod api;
 mod assets;
+mod console;
 mod github;
 mod guard;
 #[cfg(test)]
@@ -30,6 +31,8 @@ pub struct AppState {
     /// GitHub integration, per session)
     pub github_states:
         std::sync::Mutex<std::collections::HashMap<String, (String, std::time::Instant)>>,
+    /// consoles opened and not yet connected (RFC 0023), by single-use id
+    pub consoles: std::sync::Mutex<std::collections::HashMap<String, console::Pending>>,
 }
 
 pub type Shared = Arc<AppState>;
@@ -41,6 +44,8 @@ pub fn router(state: Shared) -> Router {
         .route("/api/stream", get(live::stream))
         .route("/api/act/pve/{name}/power", post(api::pve_power))
         .route("/api/act/pve/{name}/task", get(api::pve_task))
+        .route("/api/act/pve/{name}/console", post(console::open))
+        .route("/api/act/pve/{name}/console/{id}", get(console::connect))
         .route("/api/act/flux/{name}/reconcile", post(api::flux_reconcile))
         .route("/api/act/argocd/{name}/refresh", post(api::argocd_refresh))
         .route("/api/logs", post(api::search_logs))
@@ -86,6 +91,7 @@ pub async fn run(cfg: Config) -> Result<()> {
         cache,
         auth,
         github_states: Default::default(),
+        consoles: Default::default(),
     });
     let persist = state.clone();
     tokio::spawn(async move { persist.cache.persist_loop().await });
