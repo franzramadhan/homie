@@ -319,8 +319,7 @@ pub async fn targets(n: &Notify) -> Result<Vec<Target>> {
 
 /// The overview queries to evaluate, as `(kind, name)`. Kubernetes cards of
 /// a forward_token cluster need a ServiceAccount to read as.
-pub fn cards(state: &Shared, n: &Notify) -> Vec<(String, String)> {
-    let lab = &state.lab;
+pub fn cards(lab: &crate::integrations::Lab, n: &Notify) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     let mut push = |k: &str, n: &str| out.push((k.to_string(), n.to_string()));
     let kube_ok = |k: &crate::integrations::kubernetes::Kube| {
@@ -430,7 +429,7 @@ pub async fn run(state: Shared) {
         service_account: n.kubernetes_service_account.clone(),
         ..Default::default()
     };
-    let cards = cards(&state, &n);
+    let cards = cards(&state.lab, &n);
     tracing::info!(msg = "notify", cards = cards.len(), targets = targets.len());
     let path = state_file(state.cfg.state_dir.as_deref());
     let mut states = load(path.as_deref());

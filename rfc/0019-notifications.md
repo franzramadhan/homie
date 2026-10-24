@@ -100,7 +100,8 @@ No `[notify]` section, no evaluator.
   workflows without a visitor.
 - Kubernetes cards of a `forward_token` cluster without
   `kubernetes_service_account` are left out with a `msg="notify skipped"`
-  line at start, instead of in `homie check`.
+  line at start. Since v0.10.2 `homie check` also resolves the targets
+  (without sending) and prints a `warn` line for each such cluster.
 
 ## Alternatives
 
