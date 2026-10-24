@@ -13,6 +13,7 @@ mod status;
 #[cfg(test)]
 mod testkit;
 mod tls;
+mod upstream;
 
 use std::{path::PathBuf, process::ExitCode};
 
