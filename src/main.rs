@@ -8,6 +8,7 @@ mod quiet;
 mod roles;
 mod secret;
 mod server;
+mod status;
 #[cfg(test)]
 mod testkit;
 

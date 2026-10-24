@@ -10,6 +10,9 @@ export type Envelope<T> = {
   stale: boolean;
   quiet: boolean;
   error: string | null;
+  /** the overview card's status, computed by the server (RFC 0019) */
+  tone?: "ok" | "warn" | "bad" | "quiet";
+  reasons?: string[];
 };
 
 export type Meta = {
