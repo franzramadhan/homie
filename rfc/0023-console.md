@@ -34,10 +34,14 @@ guest. RFC 0001 named consoles a later milestone; no RFC was written.
   guest rows. It opens `/console/{pve}/{node}/{type}/{vmid}`: a full-height
   page with the guest name, status, a **Ctrl+Alt+Del** button for VMs, and a
   link back.
-- VMs use noVNC (`vncproxy`). Containers use xterm.js (`termproxy`). VMs
-  with a serial console can pick xterm.js instead.
+- Containers use xterm.js (`termproxy`). VMs with `serial0` use xterm.js on
+  the serial port (`termproxy`), the others noVNC (`vncproxy`). A toggle on
+  the console page switches a serial VM to noVNC for boot screens,
+  installers and desktops. Serial is the default because it carries text,
+  not screen pixels: far less traffic, no frame lag on a slow link, sharp
+  text and normal copy and paste.
 - Flow, with the Proxmox ticket never sent to the browser:
-  1. `POST /api/act/pve/{name}/console` with `{node, type, vmid, confirm}`
+  1. `POST /api/act/pve/{name}/console` with `{node, type, vmid, mode}`
      (write checks: X-Homie header, same-site Origin). Homie calls
      `vncproxy` or `termproxy` with `websocket=1` and keeps the returned
      port and ticket in memory under a random id, bound to the session,
@@ -45,10 +49,11 @@ guest. RFC 0001 named consoles a later milestone; no RFC was written.
   2. `GET /api/act/pve/{name}/console/{id}` upgrades to a WebSocket (Origin
      checked against the Host). Homie opens `vncwebsocket` on the same node
      with its API token and the ticket, then copies frames both ways.
-- Guards, the same as power actions (RFC 0001):
+- Guards:
   - The button shows only when the token holds `VM.Console`
     (`can_console`, read from the token's permissions like `can_power`).
-  - Protected guests (`protected_tags`) need their name typed first.
+  - No typed confirm, protected guests included: opening a console changes
+    nothing on the guest, and the guest's own login still stands in the way.
   - Roles with `actions = false` and demo sessions get 403 and no button.
   - A console ends after `console_max_minutes` (default 60), when the
     session ends, or on logout.
@@ -77,7 +82,7 @@ Token privilege: add `VM.Console` to the role from RFC 0001
 |---|---|
 | `msg="console" user=... pve=... guest=... result=open` | a console was opened |
 | `msg="console" ... result=closed seconds=... bytes=...` | it closed, with how long and how much traffic |
-| `msg="console" ... result=denied reason=...` | role, protected guest without confirm, no `VM.Console`, expired id |
+| `msg="console" ... result=denied reason=...` | role, demo, no `VM.Console`, expired id |
 
 ## Alternatives
 
@@ -94,23 +99,20 @@ Token privilege: add `VM.Console` to the role from RFC 0001
 
 - **Tests:** link templates and encoding; the console id is single use,
   expires after 30 s and is bound to its session; Origin check on the
-  upgrade; role, demo and protected-guest denials; `can_console` from the
+  upgrade; role and demo denials; serial or noVNC from the guest config; `can_console` from the
   permissions; the proxy copies frames both ways and closes both sides
   (against a local WebSocket server).
 - **Build check first:** confirm that `vncwebsocket` and `termproxy` accept an
   API token plus the ticket on Proxmox 8 and 9. Forum reports disagree. If a
   token cannot open them, section 2 goes back to this RFC before any more
   code.
-- **End to end:** a throwaway test guest only, never a protected guest
-  without the typed confirm.
+- **End to end:** a throwaway test guest, a container and a VM with
+  `serial0`.
 - **Rollout:** links in the next minor release; the embed behind
   `console = true`, off by default.
 - **Off switch:** `console = false`, or remove `VM.Console` from the token.
 
-## Open questions
+## Decisions
 
-1. Should a console need the typed confirm for every guest, not only
-   protected ones? A console can do anything a logged-in user on that guest
-   can.
-2. Serial console for VMs: pick per guest in the UI, or use xterm.js when
-   the VM has `serial0` and noVNC otherwise?
+1. No typed confirm for consoles, protected guests included.
+2. Serial VMs open in xterm.js by default, with a toggle to noVNC.
