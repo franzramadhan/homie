@@ -15,9 +15,11 @@ const pveColumns: Col<PveUpdate>[] = [
   {
     id: "updates",
     header: "package updates",
-    accessorFn: (r) => r.updates,
+    accessorFn: (r) => r.updates ?? -1,
     cell: ({ row }) =>
-      row.original.updates === 0 ? (
+      row.original.updates === null ? (
+        <span className="text-ink-subtle">unknown</span>
+      ) : row.original.updates === 0 ? (
         "none"
       ) : (
         <details className="text-xs">

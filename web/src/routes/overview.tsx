@@ -243,10 +243,11 @@ function UpdatesCard() {
       to="/updates"
       env={q.data}
       summary={(d) => {
-        const pkgs = d.proxmox.reduce((n, p) => n + p.updates, 0);
+        const pkgs = d.proxmox.reduce((n, p) => n + (p.updates ?? 0), 0);
+        const listed = d.proxmox.filter((p) => p.updates !== null);
         const behind = d.charts.filter((c) => available(c.latest)).length;
         return [
-          ...(d.proxmox.length ? [`${pkgs} package updates on ${d.proxmox.filter((p) => p.updates).length}/${d.proxmox.length} nodes`] : []),
+          ...(listed.length ? [`${pkgs} package updates on ${listed.filter((p) => p.updates).length}/${listed.length} nodes`] : []),
           ...d.proxmox.filter((p) => p.reboot).map((p) => `${p.node}: reboot pending`),
           ...d.kubernetes.map((c) => {
             const a = available(c.distro_latest) || available(c.kubernetes_latest);

@@ -145,6 +145,10 @@ newest overall are shown ("1.27.5 / 1.29.0 available").
   minutes. Upstream hosts go through the same HTTP client as integrations,
   so they show on the certificates page too.
 - The YAML parser for `index.yaml` is `serde_yaml_ng`.
+- `GET /nodes/{node}/apt/update` needs `Sys.Modify`, not `Sys.Audit` as
+  assumed above. Homie keeps the read-only `PVEAuditor` role: without
+  `Sys.Modify` the package count is unknown (with a note on the page) and
+  reboot pending still comes from `apt/versions` (`Sys.Audit`). (v0.10.1)
 
 ## Alternatives
 

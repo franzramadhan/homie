@@ -441,7 +441,7 @@ impl Lab {
                 };
                 if u.proxmox {
                     for p in self.proxmox.values() {
-                        match updates::proxmox(p).await {
+                        match updates::proxmox(p, &mut r.errors).await {
                             Ok(n) => r.proxmox.extend(n),
                             Err(e) => r.errors.push(format!("{}: {e}", p.name)),
                         }
