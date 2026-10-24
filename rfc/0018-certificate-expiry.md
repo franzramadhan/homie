@@ -18,17 +18,32 @@ certificates have no issuer status at all.
 
 ## Proposal
 
-The served certificate is the source of truth: Homie connects, completes or
-fails the TLS handshake, and reads the leaf certificate. Issuer-specific
-status is an optional extra.
+The served chain is the source of truth: Homie connects to a hostname,
+completes or fails the TLS handshake, and reads every certificate in the
+chain. Anything that answers TLS on a hostname is covered the same way
+(Ingress, Gateway API, a LoadBalancer Service, a VM, an appliance).
+Issuer-specific status is an optional extra.
 
 - **Capture.** Homie's rustls config gets a `ServerCertVerifier` that
-  records the leaf certificate, then delegates to the normal
-  `WebPkiServerVerifier` (or to the configured CA, or accepts with
-  `tls_verify = false`). The certificate is recorded even when verification
-  fails, so an expired or untrusted certificate is still shown, with the
-  verification error as the reason. Parsed with `x509-cert`: subject, SANs,
-  issuer, `notBefore`, `notAfter`.
+  records what the server sent, then verifies it. The record is kept even
+  when verification fails, so an expired or untrusted certificate is still
+  shown, with the verification error as the reason. Parsed with
+  `x509-cert`: subject, SANs, issuer, `notBefore`, `notAfter`.
+- **Whole chain.** Verification goes through `webpki::EndEntityCert::verify_for_usage`,
+  which returns the path it built (`VerifiedPath`): the leaf, the
+  intermediates it used and the trust anchor. A trust anchor carries no
+  validity dates, so Homie maps it back to the full root certificate it
+  came from (the bundled Mozilla roots in `webpki-root-certs` or the
+  `ca_file`, matched by subject and public key) and reads that root's
+  `notAfter`. The row shows the earliest expiry in the chain and which
+  certificate it is ("intermediate R11 expires in 20 days"). Rows expand to
+  the full chain.
+- **Chain problems.** A server that omits an intermediate fails path
+  building: "incomplete chain" (red), with the issuer name that was
+  missing. Intermediates the server sent but the path did not need are
+  listed as "unused" (no status). With `tls_verify = false` there is no
+  path: only the certificates the server sent are shown, and the root is
+  "unverified".
 - **Targets**, three kinds, all read the same way:
   - **Integration endpoints**: every HTTPS URL Homie already uses (Proxmox
     nodes, OpenBao, Grafana, healthchecks, ...). Recorded on the normal
@@ -36,17 +51,25 @@ status is an optional extra.
   - **Listed targets**: `[[certificates.targets]]` with `host` (the name
     sent as SNI and checked against the SANs), optional `port` (443) and
     `address` (connect here instead of resolving `host`, like
-    `tls_server_name`). For anything else on the network.
-  - **Discovered targets** (opt-in per cluster): the hostnames in Ingress
-    `spec.tls[].hosts` and Gateway API listeners with TLS, probed through
-    `discover_address` (the ingress controller or gateway Service), with
-    each hostname as SNI. Works for any controller without reading Secrets.
+    `tls_server_name`). For anything else on the network, including
+    LoadBalancer Services: their API has no hostname, so they are listed
+    by the name that points at them.
+  - **Discovered targets** (opt-in per cluster): only a source of
+    hostnames, the check stays the generic one. Ingress
+    `spec.tls[].hosts`, and Gateway API listeners with `protocol: HTTPS`
+    or `TLS` (`spec.listeners[].hostname`; a wildcard listener contributes
+    the hostnames of its attached HTTPRoutes and TLSRoutes). Each hostname
+    is resolved and probed like a listed target. `discover_address`
+    (optional) connects to one address instead, with each hostname as SNI,
+    for clusters whose pods cannot reach the public path. No Secrets are
+    read.
 - A probe is a handshake only (no HTTP request), every 6 h per target, 5 s
   timeout, at most 4 at a time. A failed connection keeps the last known
   certificate and shows "unreachable".
 - **Status**: amber when `notAfter` is within `warn_days` (default 14), the
   certificate is not yet valid, or the name does not match; red within 3
-  days, expired, or not trusted by the configured roots. Every row shows
+  days, expired, an incomplete chain, or not trusted by the configured
+  roots. Thresholds apply to every certificate in the chain. Every row shows
   the words ("expires in 9 days", "expired 2 days ago", "name mismatch").
 - **cert-manager** (optional, off by default): when the CRD exists and
   `kubernetes.<name>.cert_manager = true`, a Certificate whose `Ready`
@@ -73,7 +96,7 @@ status is an optional extra.
 | `certificates.targets[].address` | `host` | connect here instead (IP or name) |
 | `certificates.targets[].ca_file` | none | extra roots for this target |
 | `kubernetes.<name>.certificates.discover` | `false` | probe Ingress and Gateway TLS hostnames |
-| `kubernetes.<name>.certificates.discover_address` | - | `host:port` of the ingress controller or gateway |
+| `kubernetes.<name>.certificates.discover_address` | none | connect here (`host:port`) instead of resolving each hostname |
 | `kubernetes.<name>.cert_manager` | `false` | add "renewal failing" from Certificate conditions |
 
 ### Logs and metrics
@@ -92,13 +115,17 @@ status is an optional extra.
 | Reading `kubernetes.io/tls` Secrets | Needs Secret read access across namespaces; the probe needs none |
 | Blackbox exporter + Grafana alert | Works, but every target is configured twice and labs without Prometheus get nothing |
 | Hand-written DER walk for `notAfter` | Parsing untrusted bytes; `x509-cert` (RustCrypto, `der` already in the tree) |
+| `WebPkiServerVerifier` from rustls | Does not return the path it built, so the intermediates used and the root are unknown |
+| Discovering LoadBalancer Services | No hostname in the API; the `external-dns` annotation is a convention, not a standard. A listed target by hostname covers it |
 
 ## Testing and rollout
 
 - **Tests:** the recording verifier (valid, expired, untrusted, name
   mismatch, not yet valid) against local rustls servers with generated
-  certificates; threshold mapping; target discovery from Ingress and
-  Gateway fixtures; the cert-manager "renewal failing" merge; role hiding;
+  certificates; chain cases (expiring intermediate, expiring private root
+  from `ca_file`, missing intermediate, extra unused intermediate);
+  anchor-to-root mapping; threshold mapping; hostname discovery from
+  Ingress, Gateway listener and wildcard-plus-route fixtures; the cert-manager "renewal failing" merge; role hiding;
   unreachable keeps the last certificate.
 - **Rollout:** integration endpoints on by default, nothing to configure.
   Listed and discovered targets need config and egress in network
@@ -109,7 +136,8 @@ status is an optional extra.
 
 ## Open questions
 
-1. Discovery for LoadBalancer Services with TLS on a known port, or only
-   Ingress and Gateway?
-2. Probe intermediate certificates too (an expiring intermediate breaks
-   every leaf under it)?
+1. Should the `external-dns.alpha.kubernetes.io/hostname` annotation on
+   LoadBalancer Services be an opt-in discovery source later?
+2. A Mozilla root nearing expiry is replaced by a Homie upgrade (new
+   `webpki-root-certs`), not by the lab: show it as neutral instead of
+   amber?
