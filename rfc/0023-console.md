@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| draft | 2026-10-24 | #N | - |
+| accepted | 2026-10-24 | #90 | - |
 
 > Open a guest's console from Homie: a link to the Proxmox console for every
 > guest and node, and, when turned on, the guest console embedded in Homie
