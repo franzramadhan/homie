@@ -61,18 +61,18 @@ fn host_only(host: &str) -> &str {
 /// Without login, only loopback names and the public_url host may reach
 /// Homie, so a page on another site cannot rebind its DNS name to 127.0.0.1
 /// and read the API.
-fn host_allowed(state: &Shared, host: &str) -> bool {
+fn host_allowed(cfg: &crate::config::Config, host: &str) -> bool {
     let host = host_only(host);
     if matches!(host, "localhost" | "127.0.0.1" | "[::1]") {
         return true;
     }
-    match url::Url::parse(&state.cfg.public_url)
+    match url::Url::parse(&cfg.public_url)
         .ok()
         .and_then(|u| u.host_str().map(String::from))
     {
         Some(public) => host == public || host == format!("[{public}]"),
         // allow_unauthenticated behind a proxy, with no public_url to compare against
-        None => state.cfg.allow_unauthenticated,
+        None => cfg.allow_unauthenticated,
     }
 }
 
@@ -83,7 +83,7 @@ pub async fn host(State(state): State<Shared>, req: Request, next: Next) -> Resp
             .get(header::HOST)
             .and_then(|h| h.to_str().ok())
             .unwrap_or_default();
-        if !host_allowed(&state, host) {
+        if !host_allowed(&state.cfg, host) {
             return deny(StatusCode::MISDIRECTED_REQUEST, "unexpected Host header");
         }
     }
@@ -135,7 +135,7 @@ pub fn cross_origin(state: &Shared, headers: &HeaderMap) -> bool {
                     Some(p) => format!("{}:{p}", u.host_str().unwrap_or_default()),
                     None => u.host_str().unwrap_or_default().to_string(),
                 };
-                host_allowed(state, &host)
+                host_allowed(&state.cfg, &host)
             }),
         };
         return !ok;
@@ -318,6 +318,48 @@ mod tests {
                             );
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// Keeps `host_allowed` equal to `host_allowed` in spec/guard.bend, whose
+    /// laws (LAWS.bend) are proven by `bend PROOF.bend`.
+    #[test]
+    fn hosts_match_spec() {
+        // (Host header, the model's Host)
+        let hosts = [
+            ("localhost:7777", "Loopback"),
+            ("127.0.0.1", "Loopback"),
+            ("[::1]:8080", "Loopback"),
+            ("homie.example", "Public"),
+            ("homie.example:443", "Public"),
+            ("evil.example", "Elsewhere"),
+            ("homie.example.evil.example", "Elsewhere"),
+            ("", "Elsewhere"),
+        ];
+        let model = |h: &str, public_url: bool, allow: bool| match h {
+            "Loopback" => true,
+            "Public" => public_url || allow,
+            _ => !public_url && allow,
+        };
+        for (host, class) in hosts {
+            for public_url in [false, true] {
+                for allow in [false, true] {
+                    let cfg = crate::config::Config {
+                        public_url: if public_url {
+                            "http://homie.example".into()
+                        } else {
+                            String::new()
+                        },
+                        allow_unauthenticated: allow,
+                        ..Default::default()
+                    };
+                    assert_eq!(
+                        host_allowed(&cfg, host),
+                        model(class, public_url, allow),
+                        "{host} public_url={public_url} allow={allow}"
+                    );
                 }
             }
         }

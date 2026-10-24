@@ -32,7 +32,7 @@ pub struct AppState {
     pub github_states:
         std::sync::Mutex<std::collections::HashMap<String, (String, std::time::Instant)>>,
     /// consoles opened and not yet connected (RFC 0023), by single-use id
-    pub consoles: std::sync::Mutex<std::collections::HashMap<String, console::Pending>>,
+    pub consoles: console::Consoles,
 }
 
 pub type Shared = Arc<AppState>;

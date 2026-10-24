@@ -2,6 +2,9 @@
 import Base
 import ./LAWS.bend as Laws
 import ./spec/roles.bend as R
+import ./spec/guard.bend as G
+import ./spec/console.bend as C
+import ./spec/power.bend as P
 
 # PROOF: role_route answers False for Act before it looks at anything else.
 def Laws.no_actions(role, m, ghs):
@@ -236,4 +239,92 @@ def Laws.other_methods_refused(r, role, ghs):
     case R.Act{}:
       {==}
     case R.Unknown{}:
+      {==}
+
+# PROOF: Bool.and(False, _) is False at once.
+def Laws.write_needs_header(o):
+  {==}
+
+# PROOF: case analysis on the header: foreign(Foreign) is True, so the second
+# operand is False.
+def Laws.write_refuses_foreign_origin(x):
+  match x:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+# PROOF: case analysis on public_url: with it, Elsewhere is False; without it,
+# both sides are allow_unauthenticated.
+def Laws.foreign_host_refused(p, a):
+  match p:
+    case True{}:
+      {==}
+    case False{}:
+      match a:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+
+# PROOF: kept is False, so granted starts with Bool.and(False, _).
+def Laws.console_id_single_use(p, f, s, v, f2, s2, v2):
+  {==}
+
+# PROOF: case analysis on present and fresh until the session operand, False.
+def Laws.console_needs_session(p, f, v):
+  match p:
+    case False{}:
+      {==}
+    case True{}:
+      match f:
+        case False{}:
+          {==}
+        case True{}:
+          {==}
+
+# PROOF: case analysis on present, fresh and session down to the last
+# operand, False.
+def Laws.console_needs_same_pve(p, f, s):
+  match p:
+    case False{}:
+      {==}
+    case True{}:
+      match f:
+        case False{}:
+          {==}
+        case True{}:
+          match s:
+            case False{}:
+              {==}
+            case True{}:
+              {==}
+
+# PROOF: case analysis on present, then the fresh operand is False.
+def Laws.console_expires(p, s, v):
+  match p:
+    case False{}:
+      {==}
+    case True{}:
+      {==}
+
+# PROOF: both sides compute to False.
+def Laws.console_needs_same_origin():
+  {==}
+
+# PROOF: Stop answers `typed`, False here.
+def Laws.stop_needs_name(p):
+  {==}
+
+# PROOF: case analysis on the action: Bool.or(False, Bool.not(True)) for
+# the others, `typed` (False) for Stop.
+def Laws.protected_needs_name(a):
+  match a:
+    case P.Start{}:
+      {==}
+    case P.Shutdown{}:
+      {==}
+    case P.Reboot{}:
+      {==}
+    case P.Stop{}:
       {==}
