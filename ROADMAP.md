@@ -24,4 +24,5 @@ the RFCs it implements. Versions stay 0.x (alpha) until a 1.0 is decided.
 | [0017](rfc/0017-github-session-watches.md) | Personal GitHub watches per session (demo Workflows page) | implemented | v0.7.0 |
 | [0018](rfc/0018-certificate-expiry.md) | Certificate expiry (TLS probes, any issuer) | implemented | v0.8.0 |
 | [0019](rfc/0019-notifications.md) | Notifications (ntfy, Slack-compatible, webhook) | accepted | v0.9.0 |
-| - | Console, per-user Proxmox tickets | not written | later |
+| [0021](rfc/0021-image-updates.md) | Image updates (versions, unversioned tags flagged) | accepted | v0.11.0 |
+| - | Console, per-user Proxmox tickets, notifications | not written | later |
