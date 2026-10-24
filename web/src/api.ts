@@ -173,7 +173,8 @@ export type Latest = { patch: string | null; newest: string | null };
 export type PveUpdate = {
   cluster: string;
   node: string;
-  updates: number;
+  /** null: the token may not read the list (needs Sys.Modify) */
+  updates: number | null;
   packages: { package: string; installed: string; new: string }[];
   running_kernel: string;
   newest_kernel: string | null;

@@ -41,7 +41,9 @@ pub struct Package {
 pub struct PveNode {
     cluster: String,
     node: String,
-    updates: usize,
+    /// `None` when the token may not read the list (`apt/update` needs
+    /// `Sys.Modify`)
+    updates: Option<usize>,
     packages: Vec<Package>,
     running_kernel: String,
     newest_kernel: Option<String>,
@@ -110,9 +112,9 @@ fn newest_kernel(versions: &Value) -> Option<String> {
         .max_by_key(|v| kernel_key(v))
 }
 
-fn node_updates(cluster: &str, node: &str, update: &Value, versions: &Value) -> PveNode {
+fn node_updates(cluster: &str, node: &str, update: Option<&Value>, versions: &Value) -> PveNode {
     let packages: Vec<Package> = update
-        .as_array()
+        .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .map(|p| Package {
@@ -133,7 +135,7 @@ fn node_updates(cluster: &str, node: &str, update: &Value, versions: &Value) -> 
     PveNode {
         cluster: cluster.into(),
         node: node.into(),
-        updates: packages.len(),
+        updates: update.map(|_| packages.len()),
         packages,
         reboot: newest
             .as_deref()
@@ -145,7 +147,10 @@ fn node_updates(cluster: &str, node: &str, update: &Value, versions: &Value) -> 
 
 /// Package updates and reboot pending per online node. The lists are what
 /// the node's daily `pveupdate` found: Homie never refreshes them.
-pub async fn proxmox(p: &Proxmox) -> Result<Vec<PveNode>> {
+/// Package lists are read only when the token may (`apt/update` needs
+/// `Sys.Modify`, which Homie does not ask for); reboot pending needs only
+/// `Sys.Audit`. Problems go to `errors`, once per cluster and kind.
+pub async fn proxmox(p: &Proxmox, errors: &mut Vec<String>) -> Result<Vec<PveNode>> {
     let status = p.get("/cluster/status").await?;
     let nodes: Vec<String> = status
         .as_array()
@@ -163,10 +168,34 @@ pub async fn proxmox(p: &Proxmox) -> Result<Vec<PveNode>> {
         (n, u, v)
     }))
     .await;
-    lists
-        .into_iter()
-        .map(|(n, u, v)| Ok(node_updates(&p.name, n, &u?, &v?)))
-        .collect()
+    let mut out = Vec::new();
+    let mut noted = HashSet::new();
+    for (n, u, v) in lists {
+        let v = match v {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(format!("{}/{n}: {e}", p.name));
+                continue;
+            }
+        };
+        let u = match u {
+            Ok(u) => Some(u),
+            Err(e) => {
+                let why = if e.to_string().contains("Sys.Modify") {
+                    "package lists need Sys.Modify on the token (reboot pending is still shown)"
+                        .to_string()
+                } else {
+                    format!("package list: {e}")
+                };
+                if noted.insert(why.clone()) {
+                    errors.push(format!("{}: {why}", p.name));
+                }
+                None
+            }
+        };
+        out.push(node_updates(&p.name, n, u.as_ref(), &v));
+    }
+    Ok(out)
 }
 
 /// Distribution, its installed version, and where its releases are. A new
@@ -672,11 +701,14 @@ mod tests {
         ]);
         let update =
             json!([{"Package": "bind9-host", "OldVersion": "1:9.20.29", "Version": "1:9.20.30"}]);
-        let n = node_updates("lab", "pve-01", &update, &versions);
+        let n = node_updates("lab", "pve-01", Some(&update), &versions);
         assert_eq!(n.newest_kernel.as_deref(), Some("7.0.14-25"));
         assert_eq!(n.running_kernel, "7.0.14-23-pve");
         assert!(n.reboot);
-        assert_eq!(n.updates, 1);
+        assert_eq!(n.updates, Some(1));
+        // without Sys.Modify: no list, the reboot still shows
+        let unlisted = node_updates("lab", "pve-01", None, &versions);
+        assert_eq!((unlisted.updates, unlisted.reboot), (None, true));
         assert_eq!(
             n.packages[0],
             Package {
@@ -687,7 +719,7 @@ mod tests {
         );
         let mut current = versions.clone();
         current[0]["RunningKernel"] = json!("7.0.14-25-pve");
-        assert!(!node_updates("lab", "pve-01", &json!([]), &current).reboot);
+        assert!(!node_updates("lab", "pve-01", Some(&json!([])), &current).reboot);
         // PVE 7 names
         let old = json!([{"Package": "pve-kernel-5.15.158-2-pve", "CurrentState": "Installed"}]);
         assert_eq!(newest_kernel(&old).as_deref(), Some("5.15.158-2"));
