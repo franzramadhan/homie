@@ -51,18 +51,29 @@ Issuer-specific status is an optional extra.
   - **Listed targets**: `[[certificates.targets]]` with `host` (the name
     sent as SNI and checked against the SANs), optional `port` (443) and
     `address` (connect here instead of resolving `host`, like
-    `tls_server_name`). For anything else on the network, including
-    LoadBalancer Services: their API has no hostname, so they are listed
-    by the name that points at them.
-  - **Discovered targets** (opt-in per cluster): only a source of
-    hostnames, the check stays the generic one. Ingress
-    `spec.tls[].hosts`, and Gateway API listeners with `protocol: HTTPS`
-    or `TLS` (`spec.listeners[].hostname`; a wildcard listener contributes
-    the hostnames of its attached HTTPRoutes and TLSRoutes). Each hostname
-    is resolved and probed like a listed target. `discover_address`
-    (optional) connects to one address instead, with each hostname as SNI,
-    for clusters whose pods cannot reach the public path. No Secrets are
-    read.
+    `tls_server_name`). For anything else on the network.
+  - **Discovered targets** (opt-in per cluster). A source only yields
+    hostnames; the check stays the generic one. Sources are picked in
+    `sources`, so a lab turns on what it runs:
+    - `ingress`: `spec.tls[].hosts`.
+    - `gateway`: Gateway API listeners with `protocol: HTTPS` or `TLS`
+      (`spec.listeners[].hostname`); a wildcard listener contributes the
+      hostnames of its attached HTTPRoutes and TLSRoutes.
+    - `annotations`: hostnames from annotations on Services (LoadBalancer
+      and any other type), Ingresses and Gateways. The keys are
+      configurable; the default is external-dns'
+      `external-dns.alpha.kubernetes.io/hostname` (comma-separated, as
+      external-dns reads it). A key like `homie.dev/tls-hosts` lets a lab
+      mark anything by hand. The port comes from the Service's port named
+      `https` or `tls`, else 443.
+  - Each hostname is resolved and probed like a listed target.
+    `discover_address` (optional) connects to one address instead, with
+    each hostname as SNI, for clusters whose pods cannot reach the public
+    path. No Secrets are read. A hostname found by several sources is
+    probed once and lists all of them as its source.
+  - In the code a source is one function from the cluster to a list of
+    `(host, port, source)`; a new convention is a new function and a new
+    `sources` value, nothing else changes.
 - A probe is a handshake only (no HTTP request), every 6 h per target, 5 s
   timeout, at most 4 at a time. A failed connection keeps the last known
   certificate and shows "unreachable".
@@ -95,7 +106,9 @@ Issuer-specific status is an optional extra.
 | `certificates.targets[].port` | `443` | |
 | `certificates.targets[].address` | `host` | connect here instead (IP or name) |
 | `certificates.targets[].ca_file` | none | extra roots for this target |
-| `kubernetes.<name>.certificates.discover` | `false` | probe Ingress and Gateway TLS hostnames |
+| `kubernetes.<name>.certificates.discover` | `false` | probe discovered hostnames |
+| `kubernetes.<name>.certificates.sources` | `["ingress", "gateway", "annotations"]` | hostname sources to use |
+| `kubernetes.<name>.certificates.annotations` | `["external-dns.alpha.kubernetes.io/hostname"]` | annotation keys read by the `annotations` source |
 | `kubernetes.<name>.certificates.discover_address` | none | connect here (`host:port`) instead of resolving each hostname |
 | `kubernetes.<name>.cert_manager` | `false` | add "renewal failing" from Certificate conditions |
 
@@ -116,7 +129,8 @@ Issuer-specific status is an optional extra.
 | Blackbox exporter + Grafana alert | Works, but every target is configured twice and labs without Prometheus get nothing |
 | Hand-written DER walk for `notAfter` | Parsing untrusted bytes; `x509-cert` (RustCrypto, `der` already in the tree) |
 | `WebPkiServerVerifier` from rustls | Does not return the path it built, so the intermediates used and the root are unknown |
-| Discovering LoadBalancer Services | No hostname in the API; the `external-dns` annotation is a convention, not a standard. A listed target by hostname covers it |
+| Discovering LoadBalancer Services by `status.loadBalancer.ingress` | That hostname is the cloud load balancer's name, which the served certificate rarely covers |
+| A plugin interface (traits, dynamic loading) for sources | One function per source and a config list give the same choice without an extension API to keep stable |
 
 ## Testing and rollout
 
@@ -125,19 +139,19 @@ Issuer-specific status is an optional extra.
   certificates; chain cases (expiring intermediate, expiring private root
   from `ca_file`, missing intermediate, extra unused intermediate);
   anchor-to-root mapping; threshold mapping; hostname discovery from
-  Ingress, Gateway listener and wildcard-plus-route fixtures; the cert-manager "renewal failing" merge; role hiding;
+  Ingress, Gateway listener, wildcard-plus-route and annotation fixtures
+  (comma-separated values, custom keys, port selection, a host found by
+  two sources probed once); the cert-manager "renewal failing" merge; role hiding;
   unreachable keeps the last certificate.
 - **Rollout:** integration endpoints on by default, nothing to configure.
   Listed and discovered targets need config and egress in network
-  policies. Discovery needs `get, list` on Ingresses and Gateways (already
-  readable in most setups); cert-manager needs `get, list` on Certificates.
+  policies. Discovery needs `get, list` on the kinds its sources read
+  (Ingresses, Gateways and routes, Services); cert-manager needs `get, list` on Certificates.
 - **Off switch:** `certificates.endpoints = false`, no `targets`,
   `discover = false`.
 
 ## Open questions
 
-1. Should the `external-dns.alpha.kubernetes.io/hostname` annotation on
-   LoadBalancer Services be an opt-in discovery source later?
-2. A Mozilla root nearing expiry is replaced by a Homie upgrade (new
+1. A public root nearing expiry is replaced by a Homie upgrade (new
    `webpki-root-certs`), not by the lab: show it as neutral instead of
    amber?
