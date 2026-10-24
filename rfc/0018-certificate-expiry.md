@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-24 | #69 | v0.8.0 |
+| implemented | 2026-10-24 | #75 | v0.8.0 |
 
 > Show when TLS certificates expire, read from the TLS handshake itself, so
 > it works for any setup: cert-manager, an ingress controller's own ACME,
