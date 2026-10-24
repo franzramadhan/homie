@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-24 | #73 | v0.10.0 |
+| implemented | 2026-10-24 | #83 | v0.10.0 |
 
 > Show which running container images have a newer version. Versions
 > only: images on a moving tag such as `latest` are flagged as
