@@ -316,6 +316,47 @@ mod tests {
         assert!(auth.user(&second).await.is_some());
     }
 
+    /// Keeps `demo_login` equal to `demo_after` and `demo_role` in
+    /// spec/sessions.bend, whose laws (LAWS.bend) are proven by
+    /// `bend PROOF.bend`.
+    #[tokio::test]
+    async fn demo_cap_matches_spec() {
+        for n in 0..5 {
+            for m in 0..4 {
+                let demo = |max_sessions| {
+                    Some(crate::config::Demo {
+                        role: "demo".into(),
+                        max_sessions,
+                    })
+                };
+                let mut auth = Auth {
+                    oidc: None,
+                    local: None,
+                    public_url: Url::parse("https://homie.example").unwrap(),
+                    roles: Default::default(),
+                    demo: demo(100),
+                    local_role: None,
+                    sessions: Mutex::new(HashMap::new()),
+                };
+                for _ in 0..n {
+                    auth.demo_login().unwrap();
+                }
+                auth.demo = demo(1 + m);
+                let sid = auth.demo_login().unwrap();
+                let count = auth
+                    .sessions
+                    .lock()
+                    .unwrap()
+                    .values()
+                    .filter(|s| s.demo)
+                    .count();
+                assert_eq!(count, 1 + n.min(m), "n={n} m={m}");
+                let u = auth.user(&sid).await.unwrap();
+                assert_eq!(u.role.as_deref(), Some("demo"), "n={n} m={m}");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn no_login_method_means_no_auth() {
         let cfg = crate::server::harness::config("");

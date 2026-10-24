@@ -192,6 +192,68 @@ mod tests {
         }
     }
 
+    /// Keeps `allows` equal to `allows` in spec/queries.bend, whose laws
+    /// (LAWS.bend) are proven by `bend PROOF.bend`: every query kind against
+    /// every set of pages.
+    #[test]
+    fn allows_matches_spec() {
+        let pages = [
+            "infra",
+            "workloads",
+            "gitops",
+            "alerts",
+            "security",
+            "tailscale",
+            "workflows",
+            "services",
+            "outage",
+        ];
+        let model = |kind: &str| match kind {
+            "pve" | "spark-pve" => Some("infra"),
+            "k8s" | "spark-k8s" => Some("workloads"),
+            "flux" => Some("gitops"),
+            "alerts" => Some("alerts"),
+            "security" => Some("security"),
+            "tailscale" => Some("tailscale"),
+            "github" => Some("workflows"),
+            "openbao" | "cnpg" => Some("services"),
+            "healthchecks" => Some("outage"),
+            _ => None,
+        };
+        let kinds = [
+            "pve",
+            "spark-pve",
+            "k8s",
+            "spark-k8s",
+            "flux",
+            "alerts",
+            "security",
+            "tailscale",
+            "github",
+            "openbao",
+            "cnpg",
+            "healthchecks",
+            "helm",
+            "argocd",
+            "certs",
+            "updates",
+            "",
+        ];
+        for set in 0..1u32 << pages.len() {
+            let role = Role {
+                pages: (0..pages.len())
+                    .filter(|i| set & 1 << i != 0)
+                    .map(|i| pages[i].to_string())
+                    .collect(),
+                ..demo()
+            };
+            for kind in kinds {
+                let want = model(kind).is_some_and(|p| role.pages.iter().any(|x| x == p));
+                assert_eq!(allows(&role, kind), want, "{kind} {:?}", role.pages);
+            }
+        }
+    }
+
     #[test]
     fn addresses_are_redacted() {
         assert_eq!(

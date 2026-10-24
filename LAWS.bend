@@ -5,6 +5,9 @@ import ./spec/roles.bend as R
 import ./spec/guard.bend as G
 import ./spec/console.bend as C
 import ./spec/power.bend as P
+import ./spec/queries.bend as Q
+import ./spec/sessions.bend as S
+import ./spec/lockout.bend as L
 
 # LAW: a role never reaches an action route (power, reconcile, refresh), with
 # any method, any role and either GitHub store.
@@ -109,3 +112,61 @@ law stop_needs_name:
 law protected_needs_name:
   for a: P.Action
   {P.proceeds(a, True{}, False{}) == False{} : Bool}
+
+# LAW: Helm, Argo CD and unknown queries are never served to a role, whatever
+# its pages.
+law queries_never_for_roles:
+  for r: Q.Pages
+  {Bool.or(Q.allows(r, Q.Helm{}), Bool.or(Q.allows(r, Q.Argocd{}), Q.allows(r, Q.Other{}))) == False{} : Bool}
+
+# LAW: a role without pages runs no query.
+law no_pages_no_queries:
+  for k: Q.Query
+  {Q.allows(Q.Pages{False{}, False{}, False{}, False{}, False{}, False{}, False{}, False{}, False{}}, k) == False{} : Bool}
+
+# LAW: with a login method, a request without a session is refused.
+law no_session_refused:
+  for r: S.RoleRef
+  {S.access(False{}, r) == S.Refused{} : S.Access}
+
+# LAW: a session whose role left the config is refused, never given full
+# access.
+law gone_role_refused:
+  for l: Bool
+  {S.access(l, S.Gone{}) == S.Refused{} : S.Access}
+
+# LAW: a demo session is scoped to the demo role, never full access.
+law demo_is_scoped:
+  {S.access(True{}, S.demo_role()) == S.Scoped{} : S.Access}
+
+# LAW: after a demo login there are at most max_sessions demo sessions
+# (a cap of 1 + m, whatever n existed before).
+law demo_cap:
+  for n: Nat
+  for m: Nat
+  {Nat.is_le(S.demo_after(n, m), 1n+m) == True{} : Bool}
+
+# LAW: during a lockout even the right password is refused.
+law lockout_refuses_right_password:
+  for f: Nat
+  for ok: Bool
+  {L.granted(L.Throttle{f, True{}}, ok) == False{} : Bool}
+
+# LAW: an attempt during a lockout does not end it.
+law lockout_holds:
+  for f: Nat
+  for ok: Bool
+  for w: Bool
+  {L.locked(L.after(L.Throttle{f, True{}}, ok, w)) == True{} : Bool}
+
+# LAW: a failure in the window of nine or more earlier failures starts a
+# lockout.
+law tenth_failure_locks:
+  for k: Nat
+  {L.locked(L.after(L.Throttle{Nat.add(9n, k), False{}}, False{}, True{})) == True{} : Bool}
+
+# LAW: a successful login outside a lockout clears the failures.
+law success_resets:
+  for f: Nat
+  for w: Bool
+  {L.after(L.Throttle{f, False{}}, True{}, w) == L.Throttle{0n, False{}} : L.Throttle}

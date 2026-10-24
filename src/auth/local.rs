@@ -226,6 +226,55 @@ mod tests {
         );
     }
 
+    /// Keeps `verify` equal to `granted` and `after` in spec/lockout.bend,
+    /// whose laws (LAWS.bend) are proven by `bend PROOF.bend`.
+    #[tokio::test]
+    async fn lockout_matches_spec() {
+        crate::server::harness::logs();
+        let l = Local::new(&cfg(Some(hash("s3cret-long-enough").unwrap())), None)
+            .await
+            .unwrap();
+        let b = [false, true];
+        for f in [0, 1, MAX_FAILURES - 2, MAX_FAILURES - 1, MAX_FAILURES] {
+            for locked in b {
+                for fresh in b {
+                    for ok in b {
+                        let now = Instant::now();
+                        *l.throttle.lock().unwrap() = Throttle {
+                            failures: f,
+                            first: Some(if fresh {
+                                now
+                            } else {
+                                now.checked_sub(FAILURE_WINDOW + Duration::from_secs(1))
+                                    .unwrap()
+                            }),
+                            locked_until: locked.then(|| now + Duration::from_secs(60)),
+                        };
+                        let password = if ok { "s3cret-long-enough" } else { "wrong" };
+                        let got = l.verify("homie", password).await.is_ok();
+                        let (granted, failures, still_locked) = if locked {
+                            (false, f, true)
+                        } else if ok {
+                            (true, 0, false)
+                        } else {
+                            let n = if fresh { f + 1 } else { 1 };
+                            (false, n, n >= MAX_FAILURES)
+                        };
+                        let t = l.throttle.lock().unwrap();
+                        let case = format!("f={f} locked={locked} fresh={fresh} ok={ok}");
+                        assert_eq!(got, granted, "{case}");
+                        assert_eq!(t.failures, failures, "{case}");
+                        assert_eq!(
+                            t.locked_until.is_some_and(|u| u > Instant::now()),
+                            still_locked,
+                            "{case}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[tokio::test]
     async fn wrong_credentials_and_lockout() {
         crate::server::harness::logs();
