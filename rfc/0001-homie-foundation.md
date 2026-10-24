@@ -570,7 +570,7 @@ quiet_hosts = []
 [demo]                                 # optional: "Try the demo" on the login page
 # (and [local_login] role = "demo" gives the password user that role too)
 # role = "demo"
-# max_sessions = 200                   # one hour each
+# max_sessions = 200                   # one hour each, at least 1
 
 [healthchecks]                         # optional
 url = "https://healthchecks.io"
