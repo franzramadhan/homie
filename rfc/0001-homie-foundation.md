@@ -477,7 +477,7 @@ headlamp_cluster = "main"              # {cluster} in link templates
 # cnpg_max_backup_age_hours = 26       # RFC 0011: older last backup is amber
 # argocd_url = ""                      # RFC 0005: deep links to Argo CD Applications
 # cert_manager = false                 # RFC 0018: "renewal failing" from Certificate conditions
-# [kubernetes.<name>.certificates]     # RFC 0018: discover, sources, annotations, discover_address
+# [kubernetes.<name>.certificates]     # RFC 0018: discover, sources, annotations, discover_address, ca_file
 
 # [openbao.<name>]                     # RFC 0011: url + TLS options, quiet; unauthenticated health
 quiet = false
