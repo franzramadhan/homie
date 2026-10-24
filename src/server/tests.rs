@@ -583,6 +583,58 @@ async fn a_role_missing_from_the_lab_fails_closed() {
     );
 }
 
+/// Keeps the session check in `guard::session` equal to `access` in
+/// spec/sessions.bend, whose laws (LAWS.bend) are proven by `bend PROOF.bend`.
+#[tokio::test]
+async fn session_access_matches_spec() {
+    let toml = |url: &str| {
+        format!(
+            "public_url = \"{url}\"\n{}[demo]\nrole = \"viewer\"\n{VIEWER}",
+            local_login(None)
+        )
+    };
+    let lab = Homie::start(toml).await;
+    let gone = Homie::start_with(toml, |state| state.lab.roles.clear()).await;
+    #[derive(Debug, PartialEq)]
+    enum Access {
+        Full,
+        Scoped,
+        Refused,
+    }
+    let model = |logged_in: bool, role: &str| match (logged_in, role) {
+        (false, _) => Access::Refused,
+        (true, "NoRole") => Access::Full,
+        (true, "Known") => Access::Scoped,
+        _ => Access::Refused,
+    };
+    let seen = |r: super::harness::Answer| match (r.status, r.json["role"].as_str()) {
+        (200, None) => Access::Full,
+        (200, Some(_)) => Access::Scoped,
+        (401 | 403, _) => Access::Refused,
+        (s, _) => panic!("unexpected {s}: {}", r.text),
+    };
+    for (h, role, login) in [
+        (&lab, "NoRole", "/auth/local"),
+        (&lab, "Known", "/auth/demo"),
+        (&gone, "NoRole", "/auth/local"),
+        (&gone, "Gone", "/auth/demo"),
+    ] {
+        h.set_cookie(None);
+        assert_eq!(
+            seen(h.get("/api/meta").await),
+            model(false, role),
+            "{role} logged out"
+        );
+        let status = if login == "/auth/local" {
+            h.login().await.status
+        } else {
+            h.post(login, json!({})).await.status
+        };
+        assert_eq!(status, 204, "{role} login");
+        assert_eq!(seen(h.get("/api/meta").await), model(true, role), "{role}");
+    }
+}
+
 #[tokio::test]
 async fn oidc_login_allowlists_and_roles() {
     let backend = backend().await;

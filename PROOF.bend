@@ -5,6 +5,9 @@ import ./spec/roles.bend as R
 import ./spec/guard.bend as G
 import ./spec/console.bend as C
 import ./spec/power.bend as P
+import ./spec/queries.bend as Q
+import ./spec/sessions.bend as S
+import ./spec/lockout.bend as L
 
 # PROOF: role_route answers False for Act before it looks at anything else.
 def Laws.no_actions(role, m, ghs):
@@ -328,3 +331,101 @@ def Laws.protected_needs_name(a):
       {==}
     case P.Stop{}:
       {==}
+
+# PROOF: open the role: all three map to NoPage, which has() answers False.
+def Laws.queries_never_for_roles(r):
+  match r:
+    case Q.Pages{i, w, g, a, s, t, wf, sv, o}:
+      {==}
+
+# PROOF: case analysis on the query: every page field is False.
+def Laws.no_pages_no_queries(k):
+  match k:
+    case Q.Pve{}:
+      {==}
+    case Q.SparkPve{}:
+      {==}
+    case Q.K8s{}:
+      {==}
+    case Q.SparkK8s{}:
+      {==}
+    case Q.Flux{}:
+      {==}
+    case Q.Alerts{}:
+      {==}
+    case Q.Security{}:
+      {==}
+    case Q.Tailscale{}:
+      {==}
+    case Q.Github{}:
+      {==}
+    case Q.Openbao{}:
+      {==}
+    case Q.Cnpg{}:
+      {==}
+    case Q.Healthchecks{}:
+      {==}
+    case Q.Helm{}:
+      {==}
+    case Q.Argocd{}:
+      {==}
+    case Q.Other{}:
+      {==}
+
+# PROOF: no session is Refused before the role is looked at.
+def Laws.no_session_refused(r):
+  {==}
+
+# PROOF: case analysis on the session: Refused either way.
+def Laws.gone_role_refused(l):
+  match l:
+    case False{}:
+      {==}
+    case True{}:
+      {==}
+
+# PROOF: demo_role() is Known, which access() scopes.
+def Laws.demo_is_scoped():
+  {==}
+
+# PROOF: Nat.is_le(1 + min(n, m), 1 + m) is Nat.is_le(min(n, m), m): induction
+# on n and m.
+law min_le:
+  for n: Nat
+  for m: Nat
+  {Nat.is_le(Nat.min(n, m), m) == True{} : Bool}
+
+def min_le(n, m):
+  match n m:
+    case 0n 0n:
+      {==}
+    case 0n 1n+q:
+      {==}
+    case 1n+p 0n:
+      {==}
+    case 1n+p 1n+q:
+      min_le(p, q)
+
+def Laws.demo_cap(n, m):
+  min_le(n, m)
+
+# PROOF: granted() is Bool.and(Bool.not(True), _), False at once.
+def Laws.lockout_refuses_right_password(f, ok):
+  {==}
+
+# PROOF: after() keeps a running lockout before it looks at the attempt.
+def Laws.lockout_holds(f, ok, w):
+  {==}
+
+# PROOF: case analysis on k: 9 + k + 1 failures compare with 10 as k with 0,
+# which is EQ or GT.
+def Laws.tenth_failure_locks(k):
+  match k:
+    case 0n:
+      {==}
+    case 1n+p:
+      {==}
+
+# PROOF: outside a lockout, the right password resets the throttle.
+def Laws.success_resets(f, w):
+  {==}
