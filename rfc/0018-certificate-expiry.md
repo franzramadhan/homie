@@ -80,8 +80,20 @@ Issuer-specific status is an optional extra.
 - **Status**: amber when `notAfter` is within `warn_days` (default 14), the
   certificate is not yet valid, or the name does not match; red within 3
   days, expired, an incomplete chain, or not trusted by the configured
-  roots. Thresholds apply to every certificate in the chain. Every row shows
-  the words ("expires in 9 days", "expired 2 days ago", "name mismatch").
+  roots. Every row shows the words ("expires in 9 days", "expired 2 days
+  ago", "name mismatch"). Thresholds per place in the chain, by who can act
+  on them:
+
+  | Certificate | Tone |
+  |---|---|
+  | Leaf, intermediate | amber within `warn_days` (14), red within 3 days or expired |
+  | Private root (from any `ca_file`) | amber within `root_warn_days` (90): rotating a root means redistributing it to every client |
+  | Public root (bundled `webpki-root-certs`) | neutral, date shown, never changes the tone |
+
+  A public root is Homie's own trust store, replaced by a Homie upgrade;
+  certificate authorities move to new roots years before the old ones
+  expire. A chain the server sends through an old cross-signed root (the
+  2021 DST Root CA X3 case) still shows, as an expiring intermediate.
 - **cert-manager** (optional, off by default): when the CRD exists and
   `kubernetes.<name>.cert_manager = true`, a Certificate whose `Ready`
   condition is False adds "renewal failing: <message>" to the row of its
@@ -99,7 +111,8 @@ Issuer-specific status is an optional extra.
 
 | Key | Default | |
 |---|---|---|
-| `certificates.warn_days` | `14` | amber threshold |
+| `certificates.warn_days` | `14` | amber threshold for leaf and intermediate certificates |
+| `certificates.root_warn_days` | `90` | amber threshold for private roots |
 | `certificates.interval` | `"6h"` | probe period for listed and discovered targets |
 | `certificates.endpoints` | `true` | record integration endpoint certificates |
 | `certificates.targets[].host` | - | name sent as SNI and checked |
@@ -130,6 +143,7 @@ Issuer-specific status is an optional extra.
 | Hand-written DER walk for `notAfter` | Parsing untrusted bytes; `x509-cert` (RustCrypto, `der` already in the tree) |
 | `WebPkiServerVerifier` from rustls | Does not return the path it built, so the intermediates used and the root are unknown |
 | Discovering LoadBalancer Services by `status.loadBalancer.ingress` | That hostname is the cloud load balancer's name, which the served certificate rarely covers |
+| One threshold for the whole chain | 14 days is too late to rotate a private root, and a public root's expiry is not the lab's to fix |
 | A plugin interface (traits, dynamic loading) for sources | One function per source and a config list give the same choice without an extension API to keep stable |
 
 ## Testing and rollout
@@ -138,7 +152,8 @@ Issuer-specific status is an optional extra.
   mismatch, not yet valid) against local rustls servers with generated
   certificates; chain cases (expiring intermediate, expiring private root
   from `ca_file`, missing intermediate, extra unused intermediate);
-  anchor-to-root mapping; threshold mapping; hostname discovery from
+  anchor-to-root mapping; threshold mapping per chain position (public
+  root never sets the tone, private root at `root_warn_days`); hostname discovery from
   Ingress, Gateway listener, wildcard-plus-route and annotation fixtures
   (comma-separated values, custom keys, port selection, a host found by
   two sources probed once); the cert-manager "renewal failing" merge; role hiding;
@@ -149,9 +164,3 @@ Issuer-specific status is an optional extra.
   (Ingresses, Gateways and routes, Services); cert-manager needs `get, list` on Certificates.
 - **Off switch:** `certificates.endpoints = false`, no `targets`,
   `discover = false`.
-
-## Open questions
-
-1. A public root nearing expiry is replaced by a Homie upgrade (new
-   `webpki-root-certs`), not by the lab: show it as neutral instead of
-   amber?
