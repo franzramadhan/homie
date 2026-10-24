@@ -131,24 +131,23 @@ async fn writes_match_spec() {
     })
     .await;
     // (Origin header, the model's Origin), per instance
-    // without login only the host counts: scheme and port do not
+    // without login a loopback origin counts by host, any port; the
+    // public_url host needs its scheme and port too
     let same_open = [
         "http://homie.example",
-        "https://homie.example:8443",
         "http://localhost:7777",
+        "http://localhost:8080",
         "http://127.0.0.1",
     ];
     let same_login = ["http://homie.example"];
     let foreign = [
+        "https://homie.example",
+        "http://homie.example:8443",
         "http://evil.example",
         "http://homie.example.evil.example",
         "null",
     ];
-    let foreign_login = [
-        "https://homie.example",
-        "http://homie.example:8443",
-        "http://localhost:7777",
-    ];
+    let foreign_login = ["http://localhost:7777"];
     for (h, same, extra) in [
         (&open, &same_open[..], &[][..]),
         (&login, &same_login[..], &foreign_login[..]),
