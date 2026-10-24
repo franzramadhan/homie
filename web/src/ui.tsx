@@ -232,10 +232,10 @@ export function DataTable<T extends RowData>({ columns, data, filter = true, emp
 
 /** External link. Only http(s) URLs become links, so a `javascript:` URL from
  * config or a backend can never run. */
-export function Ext({ href, children }: { href: string | null | undefined; children: ReactNode }) {
+export function Ext({ href, title, children }: { href: string | null | undefined; title?: string; children: ReactNode }) {
   if (!href || !/^https?:\/\//i.test(href)) return <>{children}</>;
   return (
-    <a className="underline decoration-ink-faint underline-offset-2 hover:decoration-ink" href={href} target="_blank" rel="noreferrer">
+    <a className="underline decoration-ink-faint underline-offset-2 hover:decoration-ink" href={href} title={title} aria-label={title} target="_blank" rel="noreferrer">
       {children}
     </a>
   );
