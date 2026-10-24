@@ -17,7 +17,7 @@ own RFC.
 ## Proposal
 
 - **Follow** button next to Search on `/logs`. On: the page runs the search
-  once, then asks every `logs.tail_seconds` (default 2 s) for lines newer
+  once, then asks every `logs.tail_seconds` (default 5 s) for lines newer
   than the newest one it holds and prepends them. Off, a closed tab, or a
   hidden tab (`visibilitychange`) stops the polling.
 - The page keeps at most `logs.max_rows` lines; older ones drop off the
@@ -45,7 +45,7 @@ own RFC.
 
 | Key | Default | |
 |---|---|---|
-| `logs.tail_seconds` | `2` | poll interval while following, 1 to 60 |
+| `logs.tail_seconds` | `5` | poll interval while following, 2 to 60 |
 | `logs.tail_max_minutes` | `30` | a tail stops after this; `0` hides the Follow button |
 
 ### Logs and metrics
@@ -53,7 +53,7 @@ own RFC.
 | | |
 |---|---|
 | `msg="logs" tail=true` | the first poll of a tail, at info |
-| `msg="logs" tail=true` (later polls) | at debug only, so a tail does not add a line every 2 s |
+| `msg="logs" tail=true` (later polls) | at debug only, so a tail does not add a line every poll |
 
 ## Alternatives
 
@@ -73,6 +73,7 @@ own RFC.
   new, search behaves as before.
 - **Off switch:** `logs.tail_max_minutes = 0`.
 
-## Open questions
+## Decisions
 
-1. Default interval 2 s, or 5 s to be gentler on small Loki installs?
+1. Default interval 5 s, minimum 2 s: homelab log stores are small, and a
+   few seconds of delay is fine for watching a rollout.
