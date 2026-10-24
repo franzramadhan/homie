@@ -30,6 +30,8 @@ export type Meta = {
   grafana: { name: string; quiet: boolean; url: string; insecure: string | null }[];
   openbao: { name: string; quiet: boolean; url: string; insecure: string | null }[];
   logs: { label: string; type: "victorialogs" | "loki"; pod_query: string | null; node_query: string | null }[];
+  /** live tail (RFC 0022); max_minutes 0 hides Follow */
+  log_tail: { seconds: number; max_minutes: number; max_rows: number };
   security: string[];
   tailscale: boolean;
   github: { watch: number; helper: boolean; store: "configmap" | "file" | "session" | null; install_url: string | null } | null;

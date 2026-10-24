@@ -613,6 +613,9 @@ fn default_ignore_alerts() -> Vec<String> {
 pub struct Logs {
     pub datasources: Vec<LogSource>,
     pub max_rows: usize,
+    /// live tail (RFC 0022): poll interval and how long a tail runs; 0 turns it off
+    pub tail_seconds: u64,
+    pub tail_max_minutes: u64,
 }
 
 impl Default for Logs {
@@ -620,6 +623,8 @@ impl Default for Logs {
         Self {
             datasources: Vec::new(),
             max_rows: 1000,
+            tail_seconds: 5,
+            tail_max_minutes: 30,
         }
     }
 }
@@ -1151,6 +1156,9 @@ pub fn validate(cfg: &Config) -> Result<()> {
             return Err(format!("security.{preset}.grafana: no [grafana.{g}]").into());
         }
     }
+    if !(2..=60).contains(&cfg.logs.tail_seconds) {
+        return Err("logs.tail_seconds must be 2 to 60".into());
+    }
     let mut labels = std::collections::HashSet::new();
     for s in &cfg.logs.datasources {
         if !cfg.grafana.contains_key(&s.grafana) {
@@ -1495,6 +1503,10 @@ mod tests {
                 format!("{grafana}[[logs.datasources]]\nlabel = \"L\"\ngrafana = \"g\"\ndatasource = \"d\"\ntype = \"loki\"\n\
                          [[logs.datasources]]\nlabel = \"L\"\ngrafana = \"g\"\ndatasource = \"e\"\ntype = \"victorialogs\"\n"),
                 "label \"L\" used twice",
+            ),
+            (
+                "[logs]\ntail_seconds = 1\n".into(),
+                "logs.tail_seconds must be 2 to 60",
             ),
             (
                 "[tailscale]\noauth_client_id = \"id\"\n".into(),

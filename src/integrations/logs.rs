@@ -17,6 +17,9 @@ pub struct SearchRequest {
     pub minutes: i64,
     #[serde(default)]
     pub limit: Option<usize>,
+    /// live tail (RFC 0022): only lines from this time on, at most 5 minutes back
+    #[serde(default)]
+    pub since: Option<String>,
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -33,6 +36,7 @@ pub struct SearchResult {
 }
 
 const MAX_MINUTES: i64 = 7 * 24 * 60;
+const MAX_SINCE_SECONDS: i64 = 5 * 60;
 
 /// Terminal color codes (ESC [ ... m) make log lines unreadable in a table.
 fn strip_ansi(s: &str) -> String {
@@ -52,8 +56,9 @@ fn strip_ansi(s: &str) -> String {
     out
 }
 
-/// Checks the request against the server-side caps.
-pub fn validate(req: &SearchRequest, max_rows: usize) -> Result<usize> {
+/// Checks the request against the server-side caps: the row limit and the
+/// start of the window.
+pub fn validate(req: &SearchRequest, max_rows: usize) -> Result<(usize, jiff::Timestamp)> {
     let q = req.query.trim();
     if q.is_empty() || q.len() > 4096 {
         return Err("query must be 1 to 4096 characters".into());
@@ -61,7 +66,18 @@ pub fn validate(req: &SearchRequest, max_rows: usize) -> Result<usize> {
     if !(1..=MAX_MINUTES).contains(&req.minutes) {
         return Err("time range must be 1 minute to 7 days".into());
     }
-    Ok(req.limit.unwrap_or(max_rows).clamp(1, max_rows))
+    let now = jiff::Timestamp::now();
+    let start = match &req.since {
+        None => now - jiff::SignedDuration::from_mins(req.minutes),
+        Some(s) => {
+            let since: jiff::Timestamp = s.parse().map_err(|_| "since must be an RFC 3339 time")?;
+            since.clamp(
+                now - jiff::SignedDuration::from_secs(MAX_SINCE_SECONDS),
+                now,
+            )
+        }
+    };
+    Ok((req.limit.unwrap_or(max_rows).clamp(1, max_rows), start))
 }
 
 fn victorialogs_rows(rows: Vec<serde_json::Map<String, Value>>) -> Vec<Row> {
@@ -114,11 +130,13 @@ pub async fn search(
     src: &LogSource,
     req: &SearchRequest,
     limit: usize,
+    start: jiff::Timestamp,
 ) -> Result<SearchResult> {
     let query = req.query.trim();
     let mut rows = match src.kind {
         LogKind::Victorialogs => {
-            let start = (jiff::Timestamp::now().as_second() - req.minutes * 60).to_string();
+            // RFC 3339 keeps the nanoseconds a tail's `since` carries
+            let start = start.to_string();
             // one extra row tells whether the result was cut
             let lim = (limit + 1).to_string();
             victorialogs_rows(
@@ -131,7 +149,7 @@ pub async fn search(
         }
         LogKind::Loki => {
             let body = g
-                .loki_range(&src.datasource, query, req.minutes * 60, limit + 1)
+                .loki_range(&src.datasource, query, start.as_nanosecond(), limit + 1)
                 .await?;
             if body["status"] != "success" {
                 return Err(format!(
@@ -161,12 +179,27 @@ mod tests {
             query: q.into(),
             minutes: m,
             limit: l,
+            since: None,
         };
-        assert_eq!(validate(&req("a", 15, None), 1000).unwrap(), 1000);
-        assert_eq!(validate(&req("a", 15, Some(5000)), 1000).unwrap(), 1000);
+        assert_eq!(validate(&req("a", 15, None), 1000).unwrap().0, 1000);
+        assert_eq!(validate(&req("a", 15, Some(5000)), 1000).unwrap().0, 1000);
         assert!(validate(&req(" ", 15, None), 1000).is_err());
         assert!(validate(&req("a", 0, None), 1000).is_err());
         assert!(validate(&req("a", MAX_MINUTES + 1, None), 1000).is_err());
+
+        // a tail's `since`: kept when recent, at most 5 minutes back, never ahead
+        let tail = |since: &str| {
+            let mut r = req("a", 15, None);
+            r.since = Some(since.into());
+            validate(&r, 1000).map(|v| v.1)
+        };
+        let now = jiff::Timestamp::now();
+        let recent = now - jiff::SignedDuration::from_secs(10);
+        assert_eq!(tail(&recent.to_string()).unwrap(), recent);
+        let old = tail("2020-01-01T00:00:00Z").unwrap();
+        assert!((now.as_second() - MAX_SINCE_SECONDS - old.as_second()).abs() < 5);
+        assert!(tail("2999-01-01T00:00:00Z").unwrap() >= now);
+        assert!(tail("yesterday").is_err());
 
         assert_eq!(
             strip_ansi("\u{1b}[90mtime\u{1b}[0m INF \u{1b}[1mmsg"),
@@ -199,8 +232,8 @@ mod tests {
 
         let vl = |Query(q): Query<HashMap<String, String>>| async move {
             assert_eq!((q["query"].as_str(), q["limit"].as_str()), ("error", "3"));
-            let start: i64 = q["start"].parse().unwrap();
-            assert!((jiff::Timestamp::now().as_second() - start - 900).abs() < 5);
+            let start: jiff::Timestamp = q["start"].parse().unwrap();
+            assert!((jiff::Timestamp::now().as_second() - start.as_second() - 900).abs() < 5);
             [
                 r#"{"_time": "2026-10-22T08:00:01Z", "_msg": "b", "_stream": "{unit=\"x\"}"}"#,
                 r#"{"_time": "2026-10-22T08:00:03Z", "_msg": "\u001b[31mc\u001b[0m"}"#,
@@ -210,6 +243,12 @@ mod tests {
         };
         let loki = |Path(uid): Path<String>, Query(q): Query<HashMap<String, String>>| async move {
             assert_eq!(q["limit"], "3");
+            let start: i128 = q["start"].parse().unwrap();
+            let ago = jiff::Timestamp::now().as_nanosecond() - start;
+            assert!(
+                (ago / 1_000_000_000 - 900).abs() < 5,
+                "start is 15 minutes back"
+            );
             Json(match uid.as_str() {
                 "lk" => json!({"status": "success", "data": {"result": [
                     {"stream": {"unit": "x"}, "values": [["1792656000000000000", "old"]]},
@@ -258,14 +297,25 @@ mod tests {
             query: query.into(),
             minutes: 15,
             limit: None,
+            since: None,
         }
+    }
+
+    async fn run(
+        g: &Grafana,
+        src: &LogSource,
+        req: &SearchRequest,
+        limit: usize,
+    ) -> Result<SearchResult> {
+        let (_, start) = validate(req, 1000)?;
+        search(g, src, req, limit, start).await
     }
 
     #[tokio::test]
     async fn search_victorialogs_newest_first_and_truncated() {
         let g = grafana().await;
         let src = source(LogKind::Victorialogs, "vl");
-        let r = search(&g, &src, &request("  error "), 2).await.unwrap();
+        let r = run(&g, &src, &request("  error "), 2).await.unwrap();
         assert!(r.truncated);
         let msgs: Vec<_> = r.rows.iter().map(|r| r.message.as_str()).collect();
         assert_eq!(msgs, ["c", "a"]);
@@ -274,7 +324,7 @@ mod tests {
     #[tokio::test]
     async fn search_loki() {
         let g = grafana().await;
-        let r = search(
+        let r = run(
             &g,
             &source(LogKind::Loki, "lk"),
             &request("{unit=~\".+\"}"),
@@ -292,12 +342,12 @@ mod tests {
             }
         );
         assert_eq!(r.rows[1].message, "old");
-        let e = search(&g, &source(LogKind::Loki, "lk-bad"), &request("x"), 2)
+        let e = run(&g, &source(LogKind::Loki, "lk-bad"), &request("x"), 2)
             .await
             .err()
             .unwrap();
         assert_eq!(e.to_string(), "query failed: parse error at line 1");
-        let e = search(&g, &source(LogKind::Loki, "other"), &request("x"), 2)
+        let e = run(&g, &source(LogKind::Loki, "other"), &request("x"), 2)
             .await
             .err()
             .unwrap();

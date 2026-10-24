@@ -55,6 +55,20 @@ own RFC.
 | `msg="logs" tail=true` | the first poll of a tail, at info |
 | `msg="logs" tail=true` (later polls) | at debug only, so a tail does not add a line every poll |
 
+## Changes during implementation
+
+- Results stay newest first, also with `since`, and no `direction=forward`:
+  VictoriaLogs' `limit` and Loki's backward direction both keep the newest
+  lines, so a burst larger than `logs.max_rows` keeps those, and the page
+  says that some lines were skipped.
+- The first search of a tail is an ordinary search and logs as one; only
+  the polls with `since` carry `tail=true`, at debug.
+- No separate follow links on pods and nodes: `follow=1` in the URL starts
+  following, and the Follow button is next to Search.
+- A hidden tab skips its polls instead of ending the tail; the
+  `tail_max_minutes` timer keeps running.
+- `/api/meta` sends `log_tail: {seconds, max_minutes, max_rows}`.
+
 ## Alternatives
 
 | Option | Why not |

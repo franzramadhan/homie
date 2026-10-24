@@ -246,12 +246,13 @@ impl Grafana {
             .collect()
     }
 
-    /// LogQL range query through a Loki datasource, newest first.
+    /// LogQL range query through a Loki datasource from `start` (Unix
+    /// nanoseconds) to now, newest first.
     pub async fn loki_range(
         &self,
         datasource: &str,
         query: &str,
-        seconds: i64,
+        start: i128,
         limit: usize,
     ) -> Result<Value> {
         let path = format!(
@@ -259,7 +260,6 @@ impl Grafana {
             enc(datasource)
         );
         let end = jiff::Timestamp::now().as_nanosecond();
-        let start = end - i128::from(seconds) * 1_000_000_000;
         let (start, end, limit) = (start.to_string(), end.to_string(), limit.to_string());
         let params = [
             ("query", query),
@@ -411,8 +411,8 @@ mod tests {
             }
         };
         let loki = |Query(q): Query<HashMap<String, String>>| async move {
-            let span = q["end"].parse::<i128>().unwrap() - q["start"].parse::<i128>().unwrap();
-            assert_eq!(span, 300 * 1_000_000_000);
+            assert_eq!(q["start"], "42");
+            assert!(q["end"].parse::<i128>().unwrap() > 42);
             assert_eq!(
                 (q["limit"].as_str(), q["direction"].as_str()),
                 ("10", "backward")
@@ -531,7 +531,7 @@ mod tests {
         assert!(rows[1].is_empty(), "a non-object row is an empty row");
         assert!(g.logsql("garbage", "*").await.is_err());
 
-        let body = g.loki_range("lk", "{unit=\"x\"}", 300, 10).await.unwrap();
+        let body = g.loki_range("lk", "{unit=\"x\"}", 42, 10).await.unwrap();
         assert_eq!(body["query"], "{unit=\"x\"}");
     }
 
