@@ -279,6 +279,28 @@ fn summarize(kind: &str, d: &Value, now: jiff::Timestamp) -> Option<(Tone, Vec<S
                 Tone::Ok
             }
         }
+        "certs" => {
+            let mut tone = Tone::Ok;
+            for r in arr(&d["rows"]) {
+                let t = match text(&r["status"]) {
+                    "bad" => Tone::Bad,
+                    "warn" => Tone::Warn,
+                    _ => continue,
+                };
+                tone = tone.max(t);
+                let why = arr(&r["reasons"])
+                    .iter()
+                    .map(text)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                reasons.push(format!("{}: {why}", text(&r["host"])));
+            }
+            for e in arr(&d["errors"]) {
+                reasons.push(text(e).into());
+                tone = tone.max(Tone::Warn);
+            }
+            tone
+        }
         _ => return None,
     };
     Some((tone, reasons))
@@ -519,6 +541,36 @@ mod tests {
         assert_eq!(
             tone("healthchecks", d),
             (Tone::Bad, vec!["down: a".into(), "late: b".into()])
+        );
+    }
+
+    #[test]
+    fn certificates() {
+        assert_eq!(
+            tone(
+                "certs",
+                json!({"rows": [{"host": "a", "status": "ok"}], "errors": []})
+            )
+            .0,
+            Tone::Ok
+        );
+        let d = json!({"rows": [{"host": "a", "status": "warn", "reasons": ["expires in 9 days"]},
+                                {"host": "b", "status": "bad", "reasons": ["expired", "renewal failing: x"]}],
+                       "errors": []});
+        assert_eq!(
+            tone("certs", d),
+            (
+                Tone::Bad,
+                vec![
+                    "a: expires in 9 days".into(),
+                    "b: expired, renewal failing: x".into()
+                ]
+            )
+        );
+        let d = json!({"rows": [], "errors": ["lab: discovery: forbidden"]});
+        assert_eq!(
+            tone("certs", d),
+            (Tone::Warn, vec!["lab: discovery: forbidden".into()])
         );
     }
 

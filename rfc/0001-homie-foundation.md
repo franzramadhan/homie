@@ -476,6 +476,8 @@ headlamp_cluster = "main"              # {cluster} in link templates
 # [kubernetes.<name>.metrics]          # RFC 0012: grafana, datasource, cpu, memory, node_label
 # cnpg_max_backup_age_hours = 26       # RFC 0011: older last backup is amber
 # argocd_url = ""                      # RFC 0005: deep links to Argo CD Applications
+# cert_manager = false                 # RFC 0018: "renewal failing" from Certificate conditions
+# [kubernetes.<name>.certificates]     # RFC 0018: discover, sources, annotations, discover_address
 
 # [openbao.<name>]                     # RFC 0011: url + TLS options, quiet; unauthenticated health
 quiet = false
@@ -506,6 +508,13 @@ min_level = 7
 [security.debsecan]
 grafana = "<name>"
 datasource = "<uid>"
+
+[certificates]                         # RFC 0018: expiry from TLS handshakes
+warn_days = 14                         # leaf and intermediates
+root_warn_days = 90                    # roots from a ca_file; bundled public roots never
+interval_hours = 6                     # probe period for listed and discovered targets
+endpoints = true                       # the integrations' own HTTPS endpoints
+# [[certificates.targets]]             # host, port (443), address, ca_file
 
 [logs]                                 # optional, RFC 0008
 max_rows = 1000

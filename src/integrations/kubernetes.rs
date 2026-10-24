@@ -30,6 +30,8 @@ pub struct Kube {
     pub metrics: Option<config::NodeMetrics>,
     pub cnpg_max_backup_age_hours: f64,
     pub argocd_url: Option<String>,
+    pub certificates: config::CertDiscovery,
+    pub cert_manager: bool,
     base: Config,
     shared: Option<Client>,
 }
@@ -159,6 +161,8 @@ impl Kube {
                 .map(|u| u.trim_end_matches('/').to_string()),
             metrics: cfg.metrics.clone(),
             cnpg_max_backup_age_hours: cfg.cnpg_max_backup_age_hours,
+            certificates: cfg.certificates.clone(),
+            cert_manager: cfg.cert_manager,
             argocd_url: cfg.argocd_url.clone(),
             links: super::links::Links::new(
                 &cfg.links,

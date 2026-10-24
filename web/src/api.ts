@@ -34,6 +34,8 @@ export type Meta = {
   tailscale: boolean;
   github: { watch: number; helper: boolean; store: "configmap" | "file" | "session" | null; install_url: string | null } | null;
   healthchecks: { url: string } | null;
+  /** certificate expiry (RFC 0018); never for a role */
+  certificates: boolean;
 };
 
 export type PveNode = {
@@ -165,6 +167,28 @@ export type Device = {
 };
 export type Check = { name: string; status: string; last_ping: string | null; next_ping: string | null };
 
+export type ChainCert = {
+  role: "leaf" | "intermediate" | "root" | "unused";
+  subject: string;
+  issuer: string;
+  not_before: number;
+  not_after: number;
+  names?: string[];
+  /** a bundled public root: replaced by a Homie upgrade, never amber */
+  public?: boolean;
+};
+export type CertRow = {
+  host: string;
+  port: number;
+  sources: string[];
+  status: "ok" | "warn" | "bad";
+  reasons: string[];
+  expires: string | null;
+  expires_cert: string | null;
+  issuer: string;
+  chain: ChainCert[];
+};
+export type Certs = { rows: CertRow[]; errors: string[] };
 export type BaoHealth = { state: string; initialized: boolean; sealed: boolean; version: string; cluster_name: string };
 export type PgCluster = {
   namespace: string;

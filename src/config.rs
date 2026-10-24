@@ -45,6 +45,8 @@ pub struct Config {
     /// the passwordless "Try the demo" login (RFC 0016)
     pub demo: Option<Demo>,
     pub healthchecks: Option<Healthchecks>,
+    /// certificate expiry from TLS handshakes (RFC 0018)
+    pub certificates: Certificates,
 }
 
 impl Default for Config {
@@ -70,6 +72,7 @@ impl Default for Config {
             roles: BTreeMap::new(),
             demo: None,
             healthchecks: None,
+            certificates: Certificates::default(),
         }
     }
 }
@@ -279,8 +282,95 @@ pub struct Kubernetes {
     /// Node CPU and memory history for sparklines (RFC 0012)
     #[serde(default)]
     pub metrics: Option<NodeMetrics>,
+    /// TLS hostnames found in this cluster, probed for expiry (RFC 0018)
+    #[serde(default)]
+    pub certificates: CertDiscovery,
+    /// "renewal failing" from cert-manager Certificate conditions (RFC 0018)
+    #[serde(default)]
+    pub cert_manager: bool,
     #[serde(default)]
     pub quiet: bool,
+}
+
+/// Certificate expiry (RFC 0018): thresholds and the targets to probe.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Certificates {
+    /// amber for leaf and intermediate certificates
+    pub warn_days: u32,
+    /// amber for roots from a `ca_file`; bundled public roots never are
+    pub root_warn_days: u32,
+    /// how often a listed or discovered target is probed again
+    pub interval_hours: u32,
+    /// record the certificates of the integrations' own endpoints
+    pub endpoints: bool,
+    pub targets: Vec<CertTarget>,
+}
+
+impl Default for Certificates {
+    fn default() -> Self {
+        Self {
+            warn_days: 14,
+            root_warn_days: 90,
+            interval_hours: 6,
+            endpoints: true,
+            targets: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CertTarget {
+    /// sent as SNI and checked against the certificate's names
+    pub host: String,
+    #[serde(default = "default_tls_port")]
+    pub port: u16,
+    /// connect here instead of resolving `host`
+    #[serde(default)]
+    pub address: Option<String>,
+    #[serde(default)]
+    pub ca_file: Option<PathBuf>,
+}
+
+fn default_tls_port() -> u16 {
+    443
+}
+
+/// Where a cluster's TLS hostnames come from. Each source only yields
+/// hostnames; they are probed like listed targets.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CertDiscovery {
+    pub discover: bool,
+    pub sources: Vec<CertSource>,
+    /// annotation keys read by the `annotations` source
+    pub annotations: Vec<String>,
+    /// `host:port` to connect to instead of resolving each hostname
+    pub discover_address: Option<String>,
+}
+
+impl Default for CertDiscovery {
+    fn default() -> Self {
+        Self {
+            discover: false,
+            sources: vec![
+                CertSource::Ingress,
+                CertSource::Gateway,
+                CertSource::Annotations,
+            ],
+            annotations: vec!["external-dns.alpha.kubernetes.io/hostname".into()],
+            discover_address: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CertSource {
+    Ingress,
+    Gateway,
+    Annotations,
 }
 
 /// PromQL range queries, one series per node, for sparklines.
@@ -761,6 +851,20 @@ pub fn validate(cfg: &Config) -> Result<()> {
         }
     }
 
+    let c = &cfg.certificates;
+    if c.interval_hours == 0 {
+        return Err("certificates.interval_hours must be 1 or more".into());
+    }
+    for t in &c.targets {
+        if t.host.trim().is_empty() || t.host.contains(['/', ':']) {
+            return Err(format!(
+                "certificates.targets: host {:?} must be a name, without scheme or port",
+                t.host
+            )
+            .into());
+        }
+    }
+
     for (name, p) in &cfg.proxmox {
         if p.endpoints.is_empty() {
             return Err(format!("proxmox.{name}.endpoints is empty").into());
@@ -803,6 +907,16 @@ pub fn validate(cfg: &Config) -> Result<()> {
                 )
                 .into());
             }
+        }
+        if let Some(a) = &k.certificates.discover_address
+            && !a
+                .rsplit_once(':')
+                .is_some_and(|(h, p)| !h.is_empty() && p.parse::<u16>().is_ok())
+        {
+            return Err(format!(
+                "kubernetes.{name}.certificates.discover_address: {a:?} must be host:port"
+            )
+            .into());
         }
         if k.auth_mode() == KubeAuth::ForwardToken && cfg.auth.is_none() {
             return Err(format!("kubernetes.{name}: auth = \"forward_token\" needs [auth]").into());
