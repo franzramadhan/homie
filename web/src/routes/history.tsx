@@ -5,12 +5,25 @@
 import { useMeta, useQ, type HistoryRow } from "../api";
 import { Badge, DataTable, Source } from "../ui";
 
+const exportLink = "rounded-control border border-hairline-strong px-2 py-0.5 text-xs text-ink-muted hover:text-ink";
+
 export function History() {
   const m = useMeta().data;
   const q = useQ<HistoryRow[]>("history", "_");
   if (!m?.history) return null;
   return (
-    <Source title="History" query={q} right={!m.history.kept && <Badge tone="muted">not kept across restarts: no state_dir</Badge>}>
+    <Source title="History" query={q} right={
+        <>
+          {!m.history.kept && <Badge tone="muted">not kept across restarts: no state_dir</Badge>}
+          <a className={exportLink} href="/api/history?format=json" download>
+            Export JSON
+          </a>
+          <a className={exportLink} href="/api/history?format=csv" download>
+            Export CSV
+          </a>
+        </>
+      }
+    >
       {(rows) => (
         <DataTable
           data={rows}

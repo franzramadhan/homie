@@ -1607,6 +1607,33 @@ async fn history_for_roles_and_the_demo() {
         r.text
     );
     assert_eq!(r.json[1]["error"], "not available in this view");
+    // exports: the same rows, no session digest
+    let date = jiff::Timestamp::now().strftime("%Y-%m-%d").to_string();
+    let j = h.get("/api/history?format=json").await;
+    assert_eq!(j.json, r.json);
+    assert_eq!(j.headers["content-type"], "application/json");
+    assert_eq!(
+        j.headers["content-disposition"],
+        format!("attachment; filename=\"homie-history-{date}.json\"").as_str()
+    );
+    let c = h.get("/api/history?format=csv").await;
+    assert_eq!(c.headers["content-type"], "text/csv; charset=utf-8");
+    assert_eq!(
+        c.headers["content-disposition"],
+        format!("attachment; filename=\"homie-history-{date}.csv\"").as_str()
+    );
+    let lines: Vec<&str> = c.text.split("\r\n").collect();
+    assert_eq!(lines[0], "time,user,action,target,result,error");
+    assert_eq!(lines.len(), rows.len() + 2, "{}", c.text);
+    assert!(
+        lines[2].contains(
+            ",another user,console.open,pve/lab/pve1/101,denied,not available in this view"
+        )
+    );
+    for t in [&j.text, &c.text] {
+        assert!(!t.contains("homie") && !t.contains("session"), "{t}");
+    }
+    assert_eq!(h.get("/api/history?format=xml").await.status, 400);
     let q = h.get("/api/q/history/_").await.json;
     assert_eq!(q["data"], r.json);
     assert_eq!(
@@ -1632,6 +1659,16 @@ async fn history_for_roles_and_the_demo() {
     h.set_cookie(admin);
     let rows = history(&h).await;
     assert_eq!(rows.len(), 11, "{rows:?}");
+    // a full user's JSON export is the stored entries, session digests too
+    let j = h.get("/api/history?format=json").await.json;
+    let entries: Vec<super::history::Entry> = serde_json::from_value(j).unwrap();
+    assert_eq!(entries, h.state.history.entries());
+    assert!(entries.iter().any(|e| e.session.is_some()));
+    let c = h.get("/api/history?format=csv").await.text;
+    assert!(
+        c.contains(",homie,pve.guest.start,pve/lab/pve1/102,ok,"),
+        "{c}"
+    );
     assert!(rows.contains(&"homie pve.guest.start pve/lab/pve1/102 ok".to_string()));
     assert!(rows.contains(&"homie login local ok".to_string()));
     assert_eq!(

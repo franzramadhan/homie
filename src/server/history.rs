@@ -12,8 +12,8 @@ use std::{
 
 use axum::{
     Extension, Json,
-    extract::{Request, State},
-    http::StatusCode,
+    extract::{Query, Request, State},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
@@ -353,16 +353,80 @@ pub(super) async fn envelope(state: &Shared, caller: &Caller) -> Option<Envelope
     })
 }
 
-/// `GET /api/history`: the rows alone, for scripts.
-pub async fn list(State(state): State<Shared>, Extension(caller): Extension<Caller>) -> Response {
-    match envelope(&state, &caller).await {
-        Some(env) => Json(env.data).into_response(),
-        None => (
+#[derive(Deserialize)]
+pub struct Export {
+    format: Option<String>,
+}
+
+/// One CSV cell (RFC 4180), with a leading `'` on a cell a spreadsheet
+/// would read as a formula.
+fn cell(v: &Value) -> String {
+    let mut s = v.as_str().unwrap_or_default().to_string();
+    if s.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+        s.insert(0, '\'');
+    }
+    if s.contains([',', '"', '\r', '\n']) {
+        s = format!("\"{}\"", s.replace('"', "\"\""));
+    }
+    s
+}
+
+fn csv(rows: &[Value]) -> String {
+    const COLUMNS: [&str; 6] = ["time", "user", "action", "target", "result", "error"];
+    let mut text = COLUMNS.join(",") + "\r\n";
+    for r in rows {
+        text += &COLUMNS.map(|c| cell(&r[c])).join(",");
+        text += "\r\n";
+    }
+    text
+}
+
+/// `GET /api/history`: the rows alone, for scripts. `?format=json|csv` as a
+/// download. A full user's JSON is the entries as `history.jsonl` keeps
+/// them, newest first, so `jq -c 'reverse[]'` turns it back into that file.
+pub async fn list(
+    State(state): State<Shared>,
+    Extension(caller): Extension<Caller>,
+    Query(q): Query<Export>,
+) -> Response {
+    let Some(env) = envelope(&state, &caller).await else {
+        return (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "the history is off or not in this view" })),
         )
-            .into_response(),
-    }
+            .into_response();
+    };
+    let rows = match env.data {
+        Some(Value::Array(rows)) => rows,
+        _ => Vec::new(),
+    };
+    let (kind, body) = match q.format.as_deref() {
+        None => return Json(rows).into_response(),
+        Some("json") if caller.role.is_none() => (
+            "application/json",
+            serde_json::to_string(&state.history.entries()).expect("entries serialize"),
+        ),
+        Some("json") => ("application/json", Value::Array(rows).to_string()),
+        Some("csv") => ("text/csv; charset=utf-8", csv(&rows)),
+        Some(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "format is json or csv" })),
+            )
+                .into_response();
+        }
+    };
+    let ext = q.format.unwrap_or_default();
+    let date = jiff::Timestamp::now().strftime("%Y-%m-%d");
+    let file = format!("attachment; filename=\"homie-history-{date}.{ext}\"");
+    (
+        [
+            (header::CONTENT_TYPE, kind.to_string()),
+            (header::CONTENT_DISPOSITION, file),
+        ],
+        body,
+    )
+        .into_response()
 }
 
 /// A role's refused action (403 in the guard), recorded as `denied` with the
@@ -547,6 +611,47 @@ mod tests {
         assert_eq!(e.user.unwrap().len(), MAX_TEXT);
         assert_eq!(e.error.unwrap().len(), MAX_TEXT);
         assert_eq!(session("a").len(), 16);
+    }
+
+    #[test]
+    fn csv_quotes_and_neutralizes_formulas() {
+        let row = json!({"time": "2026-10-25T01:02:03Z", "user": "=cmd|' /C calc'!A0",
+            "action": "+x", "target": "a,b", "result": "denied",
+            "error": "say \"no\"\r\nthen -1"});
+        let none = json!({"time": "t", "user": null, "action": "@a", "target": "\tx",
+            "result": "-", "error": null});
+        assert_eq!(
+            csv(&[row, none]),
+            "time,user,action,target,result,error\r\n\
+             2026-10-25T01:02:03Z,'=cmd|' /C calc'!A0,'+x,\"a,b\",denied,\"say \"\"no\"\"\r\nthen -1\"\r\n\
+             t,,'@a,'\tx,'-,\r\n"
+        );
+        assert_eq!(cell(&json!("\rx")), "\"'\rx\"");
+        assert_eq!(cell(&json!("plain")), "plain");
+    }
+
+    #[test]
+    fn a_full_export_restores_the_file() {
+        let dir = crate::server::harness::temp_dir("history-export");
+        let h = History::new(&cfg(None, 10)).unwrap();
+        for n in 0..3 {
+            h.push(entry(n));
+        }
+        h.push(Entry::new(
+            None,
+            None,
+            "login",
+            "oidc",
+            "denied",
+            Some("no".into()),
+        ));
+        let export = serde_json::to_string(&h.entries()).unwrap();
+        // jq -c 'reverse[]' export.json > <state_dir>/history.jsonl
+        let lines: Vec<Value> = serde_json::from_str(&export).unwrap();
+        let text: String = lines.iter().rev().map(|l| format!("{l}\n")).collect();
+        std::fs::write(dir.join("history.jsonl"), text).unwrap();
+        let restored = History::new(&cfg(Some(&dir), 10)).unwrap();
+        assert_eq!(restored.entries(), h.entries());
     }
 
     #[test]
