@@ -44,6 +44,8 @@ export type Meta = {
   forecast: boolean;
   /** the action history (RFC 0027); `kept` false: memory only */
   history: { kept: boolean } | null;
+  /** the map page (RFC 0028) */
+  map: boolean;
 };
 
 export type PveNode = {

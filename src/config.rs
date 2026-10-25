@@ -61,6 +61,8 @@ pub struct Config {
     pub forecast: Forecast,
     /// who did what and when (RFC 0027)
     pub history: History,
+    /// the lab as a pixel village (RFC 0028)
+    pub map: Map,
     /// the file the config came from, logged once logging is set up
     #[serde(skip)]
     pub file: Option<PathBuf>,
@@ -97,6 +99,7 @@ impl Default for Config {
             updates: Updates::default(),
             forecast: Forecast::default(),
             history: History::default(),
+            map: Map::default(),
         }
     }
 }
@@ -131,7 +134,7 @@ pub struct Auth {
 
 /// Pages a role can be given. The Overview is always there, with the cards
 /// of the allowed pages only.
-pub const PAGES: [&str; 11] = [
+pub const PAGES: [&str; 12] = [
     "infra",
     "workloads",
     "gitops",
@@ -144,6 +147,8 @@ pub const PAGES: [&str; 11] = [
     "outage",
     // RFC 0027
     "history",
+    // RFC 0028
+    "map",
 ];
 
 /// A read-only view (RFC 0016). Roles never run actions.
@@ -367,6 +372,20 @@ impl Default for History {
             enabled: true,
             size: 1000,
         }
+    }
+}
+
+/// The map page (RFC 0028).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Map {
+    /// `false`: no page, no nav entry
+    pub enabled: bool,
+}
+
+impl Default for Map {
+    fn default() -> Self {
+        Self { enabled: true }
     }
 }
 

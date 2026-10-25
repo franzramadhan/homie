@@ -81,6 +81,11 @@ the tokens switch with `prefers-color-scheme`.
    "scheduled off").
 5. **Contrast is tested.** `bun run check:contrast` (CI) keeps text at 4.5:1
    and the accent ring and meter fills at 3:1 in both themes.
+6. **One exception: the Map canvas** (RFC 0028). Inside its `<canvas>`
+   only, a fixed pixel palette is decorative. Status there still uses the
+   status colors (their dark values, which read on grass), always with a
+   word in a label next to it. Everything around the canvas follows the
+   rules above.
 
 ## Components
 

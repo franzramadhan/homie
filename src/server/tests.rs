@@ -1709,3 +1709,29 @@ async fn history_off() {
     assert_eq!(h.get("/api/meta").await.json["history"], Value::Null);
     assert!(h.state.history.entries().is_empty());
 }
+
+/// RFC 0028: on by default, off by config, and only for roles that list it.
+#[tokio::test]
+async fn map_page() {
+    let on = Homie::start(|_| {
+        "public_url = \"http://homie.example\"\nallow_unauthenticated = true\n".into()
+    })
+    .await;
+    assert_eq!(on.get("/api/meta").await.json["map"], json!(true));
+    let off = Homie::start(|_| {
+        "public_url = \"http://homie.example\"\nallow_unauthenticated = true\n[map]\nenabled = false\n".into()
+    })
+    .await;
+    assert_eq!(off.get("/api/meta").await.json["map"], json!(false));
+    for (pages, map) in [("[\"infra\"]", false), ("[\"infra\", \"map\"]", true)] {
+        let r = Homie::start(|url| {
+            format!(
+                "public_url = \"{url}\"\n{}[roles.blind]\npages = {pages}\n",
+                local_login(Some("blind"))
+            )
+        })
+        .await;
+        assert_eq!(r.login().await.status, 204);
+        assert_eq!(r.get("/api/meta").await.json["map"], json!(map), "{pages}");
+    }
+}
