@@ -573,6 +573,8 @@ export function startMap(cv: HTMLCanvasElement, on: { near(b: Building | null): 
   const keys = new Set<Dir>();
   let active: Building | null = null;
   let hover: Building | null = null;
+  // a tapped building: its popup opens when homie reaches the door
+  let target: Building | null = null;
   const solidPx = (x: number, y: number) => {
     const tx = Math.floor(x / T), ty = Math.floor(y / T);
     return tx < 0 || ty < 0 || tx >= W || ty >= H || solid[ty][tx];
@@ -620,6 +622,7 @@ export function startMap(cv: HTMLCanvasElement, on: { near(b: Building | null): 
   const onDown = (e: PointerEvent) => {
     cv.focus({ preventScroll: true });
     const [x, y] = toMap(e), tx = Math.floor(x / T), ty = Math.floor(y / T), id = plotAt(tx, ty);
+    target = id;
     if (id) walkTo(...PLOTS[id].door);
     else if (!solid[ty]?.[tx]) walkTo(tx, ty);
   };
@@ -627,7 +630,7 @@ export function startMap(cv: HTMLCanvasElement, on: { near(b: Building | null): 
   const onKey = (e: KeyboardEvent) => {
     if (MOVE[e.code]) {
       keys.add(MOVE[e.code]);
-      hero.path = null;
+      hero.path = target = null;
       e.preventDefault();
     } else if (["Enter", "NumpadEnter", "Space", "KeyE"].includes(e.code) && active) {
       on.open(active);
@@ -685,6 +688,10 @@ export function startMap(cv: HTMLCanvasElement, on: { near(b: Building | null): 
     if (near !== active) {
       active = near;
       on.near(near);
+    }
+    if (target && target === active && !hero.path?.length) {
+      on.open(target);
+      target = null;
     }
   }
 

@@ -2,8 +2,8 @@
 // queries, server tone and summary lines as its Overview card; the canvas in
 // ../mapdraw.ts only draws them.
 
-import { Link, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "@tanstack/react-router";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { useMeta, useQ, type Envelope, type HistoryRow, type K8sOverview, type PveOverview, type Updates } from "../api";
 import { MAP_H, MAP_W, PLOTS, startMap, type Building, type Looks, type MapHandle } from "../mapdraw";
 import { ago, Badge, sourceTone, type Tone } from "../ui";
@@ -65,13 +65,19 @@ const pending = (d: Updates) =>
 
 export function MapPage() {
   const m = useMeta().data;
-  const navigate = useNavigate();
   const [spots, setSpots] = useState<Record<string, Spot>>({});
   const [active, setActive] = useState<Building | null>(null);
+  const [popup, setPopup] = useState<Building | null>(null);
   const cv = useRef<HTMLCanvasElement>(null);
   const map = useRef<MapHandle | null>(null);
-  const open = useRef((b: Building) => void navigate({ to: PLACES[b].to }));
-  open.current = (b) => void navigate({ to: PLACES[b].to });
+  const go = useRef<HTMLAnchorElement>(null);
+  // walking away from the door closes its popup
+  useEffect(() => setPopup((p) => (p === active ? p : null)), [active]);
+  useEffect(() => go.current?.focus(), [popup]);
+  const close = () => {
+    setPopup(null);
+    cv.current?.focus();
+  };
   const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   const report = useCallback<Report>(
@@ -103,7 +109,7 @@ export function MapPage() {
 
   useEffect(() => {
     if (!cv.current) return;
-    const h = startMap(cv.current, { near: setActive, open: (b) => open.current(b) }, reduce);
+    const h = startMap(cv.current, { near: setActive, open: setPopup }, reduce);
     map.current = h;
     return () => h.stop();
   }, [reduce, !!m]);
@@ -165,7 +171,6 @@ export function MapPage() {
     </section>
   );
 
-  const here = active && groups.get(active);
   return (
     <div className="space-y-3">
       {feeds}
@@ -197,33 +202,52 @@ export function MapPage() {
               );
             })}
           </div>
+          {popup && groups.has(popup) && <Popup b={popup} spots={groups.get(popup)!} go={go} close={close} />}
         </div>
-        <div className="min-h-20 border-t border-hairline p-3 text-sm" aria-live="polite">
-          {here && active ? (
-            <>
-              <div className="flex flex-wrap items-center gap-2">
-                <b className="font-semibold">{PLACES[active].name}</b>
-                <button className="ml-auto rounded-control bg-accent px-2.5 py-0.5 text-xs text-on-accent hover:bg-accent-hover" onClick={() => open.current(active)}>
-                  Open {PLACES[active].page}
-                </button>
-              </div>
-              <ul className="mt-1 space-y-0.5 text-ink-muted">
-                {here.map((s) => (
-                  <li key={s.label}>
-                    <span className="text-ink">{s.label}</span> <Badge tone={s.tone}>{s.word}</Badge> {s.lines.slice(0, 3).join(", ")}
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-1 text-xs text-ink-subtle">Enter opens {PLACES[active].page}.</p>
-            </>
-          ) : (
-            <p className="text-ink-subtle">
-              {order.length ? "Click the map, then walk with the arrow keys or WASD. Enter at a door opens its page; tapping a building walks homie there." : "Nothing is configured yet, so the village is empty. Add a section to the config and restart."}
-            </p>
-          )}
-        </div>
+        <p className="border-t border-hairline px-3 py-2 text-xs text-ink-subtle" aria-live="polite">
+          {!order.length
+            ? "Nothing is configured yet, so the village is empty. Add a section to the config and restart."
+            : popup
+              ? `Enter opens ${PLACES[popup].page}, Esc closes.`
+              : active
+                ? `${PLACES[active].name}: press Enter.`
+              : "Click the map, then walk with the arrow keys or WASD. Enter at a door shows what is inside; tapping a building walks homie there."}
+        </p>
       </div>
       {!reduce && list}
+    </div>
+  );
+}
+
+/** What is inside a building: each instance and a link to its page. Esc closes it. */
+function Popup({ b, spots, go, close }: { b: Building; spots: Spot[]; go: RefObject<HTMLAnchorElement | null>; close: () => void }) {
+  const [dx, dy] = PLOTS[b].door;
+  const left = ((dx + 0.5) * 16) / MAP_W;
+  const shift = left < 0.25 ? "-translate-x-[10%]" : left > 0.75 ? "-translate-x-[90%]" : "-translate-x-1/2";
+  return (
+    <div
+      role="dialog"
+      aria-label={PLACES[b].name}
+      className={`absolute z-10 w-72 max-w-[90%] -translate-y-full ${shift} rounded-card border border-hairline bg-surface-1 p-3 text-sm shadow-lg`}
+      style={{ left: `${left * 100}%`, top: `${((dy * 16) / MAP_H) * 100}%` }}
+      onKeyDown={(e) => e.key === "Escape" && (e.stopPropagation(), close())}
+    >
+      <b className="font-semibold">{PLACES[b].name}</b>
+      <ul className="mt-1 space-y-0.5 text-ink-muted">
+        {spots.map((s) => (
+          <li key={s.label}>
+            <span className="text-ink">{s.label}</span> <Badge tone={s.tone}>{s.word}</Badge> {s.lines.slice(0, 3).join(", ")}
+          </li>
+        ))}
+      </ul>
+      <div className="mt-2 flex items-center gap-2">
+        <Link ref={go} to={PLACES[b].to} className="rounded-control bg-accent px-2.5 py-0.5 text-xs text-on-accent hover:bg-accent-hover focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1">
+          Open {PLACES[b].page}
+        </Link>
+        <button className="text-xs text-ink-subtle hover:text-ink" onClick={close}>
+          Close (Esc)
+        </button>
+      </div>
     </div>
   );
 }
