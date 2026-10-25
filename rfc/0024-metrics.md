@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-25 | #104 | |
+| implemented | 2026-10-25 | #104, #105 | v0.12.0 |
 
 > An opt-in Prometheus `/metrics` endpoint on its own listener: card status,
 > query health, certificate expiry, pending update counts and Homie's own
