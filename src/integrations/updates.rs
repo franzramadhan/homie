@@ -957,6 +957,327 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn proxmox_errors_once_per_kind() {
+        use axum::{extract::Path, http::StatusCode, response::IntoResponse, routing::get};
+        let status = json!({"data": [
+            {"type": "cluster", "name": "lab"},
+            {"type": "node", "name": "n1", "online": 1},
+            {"type": "node", "name": "n2", "online": 1},
+            {"type": "node", "name": "n3", "online": 1},
+            {"type": "node", "name": "n4", "online": 1},
+            {"type": "node", "name": "n5", "online": 1},
+            {"type": "node", "name": "off", "online": 0}]});
+        let app = axum::Router::new()
+            .route(
+                "/api2/json/cluster/status",
+                get(move || async move { axum::Json(status) }),
+            )
+            .route(
+                "/api2/json/nodes/{node}/apt/versions",
+                get(|Path(n): Path<String>| async move {
+                    match n.as_str() {
+                        "n3" => (StatusCode::FORBIDDEN, "no").into_response(),
+                        _ => axum::Json(json!({"data": []})).into_response(),
+                    }
+                }),
+            )
+            .route(
+                "/api2/json/nodes/{node}/apt/update",
+                get(|Path(n): Path<String>| async move {
+                    match n.as_str() {
+                        "n4" => (StatusCode::BAD_REQUEST, "boom").into_response(),
+                        "n5" => axum::Json(json!({"data": [{"Package": "curl"}]})).into_response(),
+                        _ => (
+                            StatusCode::FORBIDDEN,
+                            "Permission check failed (/, Sys.Modify)",
+                        )
+                            .into_response(),
+                    }
+                }),
+            );
+        let url = serve(app).await;
+        let cfg: crate::config::Proxmox =
+            serde_json::from_value(json!({"endpoints": [url], "token": "u@pve!t=x"})).unwrap();
+        let p = Proxmox::new("lab", &cfg).await.unwrap();
+        let mut errors = Vec::new();
+        let nodes = proxmox(&p, &mut errors).await.unwrap();
+        let rows: Vec<_> = nodes.iter().map(|n| (n.node.as_str(), n.updates)).collect();
+        assert_eq!(
+            rows,
+            [("n1", None), ("n2", None), ("n4", None), ("n5", Some(1))]
+        );
+        assert_eq!(
+            errors,
+            [
+                "lab: package lists need Sys.Modify on the token (reboot pending is still shown)",
+                "lab/n3: HTTP 403 Forbidden: no",
+                "lab: package list: HTTP 400 Bad Request: boom",
+            ]
+        );
+    }
+
+    fn node(name: &str, kubelet: &str) -> Value {
+        json!({"metadata": {"name": name}, "spec": {"providerID": format!("acme://{name}")},
+               "status": {"nodeInfo": {"architecture": "amd64", "bootID": "b", "containerRuntimeVersion": "c",
+                   "kernelVersion": "k", "kubeProxyVersion": "", "kubeletVersion": kubelet, "machineID": "m",
+                   "operatingSystem": "linux", "osImage": "Linux", "systemUUID": "u"}}})
+    }
+
+    fn version(git: &str) -> Value {
+        json!({"major": "1", "minor": "996", "gitVersion": git, "gitCommit": "abc",
+               "gitTreeState": "clean", "buildDate": "2026-01-01T00:00:00Z",
+               "goVersion": "go1.23", "compiler": "gc", "platform": "linux/amd64"})
+    }
+
+    async fn kube(url: &str, distro: Value) -> Kube {
+        let cfg: crate::config::Kubernetes = serde_json::from_value(json!({
+            "auth": "kubeconfig",
+            "kubeconfig": crate::server::harness::kubeconfig(url),
+            "distro": distro,
+        }))
+        .unwrap();
+        Kube::new("lab", &cfg).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn cluster_versions_against_upstream() {
+        // upstream answers come from the cache (fixed hosts); the stable
+        // file is seeded the same way in upstream.rs
+        upstream::seed("dl.k8s.io:stable-1.996", &["v1.996.4"]);
+        upstream::seed("dl.k8s.io:stable", &["v1.998.1"]);
+        upstream::seed("github:acme-test/distro", &["v1.996.2+k0s.0"]);
+        upstream::seed("github:fluxcd/flux2", &["v2.6.1", "v2.7.0"]);
+        let ns = json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "flux-system", "labels": {"app.kubernetes.io/version": "v2.6.0"}}});
+        let url = serve(
+            route("/version", version("v1.996.1+k0s"))
+                .merge(route(
+                    "/api/v1/nodes",
+                    klist(
+                        "Node",
+                        json!([node("a", "v1.996.1+k0s"), node("b", "v1.996.0+k0s")]),
+                    ),
+                ))
+                .merge(route("/api/v1/namespaces/flux-system", ns)),
+        )
+        .await;
+        let k = kube(&url, json!({"github": "acme-test/distro"})).await;
+        let mut cfg = Updates::default();
+        cfg.upstream.kubernetes = true;
+        cfg.upstream.distro = true;
+        cfg.upstream.flux = true;
+        let mut errors = Vec::new();
+        let c = cluster(&k, kube_client(&url), &cfg, Some("t"), &mut errors)
+            .await
+            .unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(c.skew);
+        assert_eq!(c.nodes[1].kubelet, "v1.996.0+k0s");
+        assert_eq!(c.distro, "custom");
+        assert_eq!(c.kubernetes_latest.patch.as_deref(), Some("v1.996.4"));
+        assert_eq!(c.kubernetes_latest.newest.as_deref(), Some("v1.998.1"));
+        assert_eq!(c.distro_latest.patch.as_deref(), Some("v1.996.2+k0s.0"));
+        assert_eq!(c.flux.as_deref(), Some("v2.6.0"));
+        assert_eq!(c.flux_latest.newest.as_deref(), Some("v2.7.0"));
+    }
+
+    #[tokio::test]
+    async fn cluster_lookup_failures() {
+        // no version to look up: an error row, not a failed cluster
+        let url = serve(
+            route("/version", version("garbage"))
+                .merge(route("/api/v1/nodes", klist("Node", json!([]))))
+                // a Flux namespace without labels: no version
+                .merge(route(
+                    "/api/v1/namespaces/flux-system",
+                    json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "flux-system"}}),
+                )),
+        )
+        .await;
+        let k = kube(&url, json!("auto")).await;
+        let mut cfg = Updates::default();
+        cfg.upstream.kubernetes = true;
+        let mut errors = Vec::new();
+        let c = cluster(&k, kube_client(&url), &cfg, None, &mut errors)
+            .await
+            .unwrap();
+        assert_eq!(errors, ["lab: kubernetes: no Kubernetes version"]);
+        assert_eq!((c.flux, c.kubernetes_latest), (None, Latest::default()));
+        // nodes that cannot be listed fail the cluster
+        let url = serve(
+            route("/version", version("v1.996.1"))
+                .fallback(|| async { axum::http::StatusCode::INTERNAL_SERVER_ERROR }),
+        )
+        .await;
+        let k = kube(&url, json!("auto")).await;
+        assert!(
+            cluster(&k, kube_client(&url), &cfg, None, &mut errors)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn charts_without_history_and_plain_helm() {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        let hr = json!([
+            {"metadata": {"namespace": "obs", "name": "loki"},
+             "spec": {"chart": {"spec": {"chart": "loki", "sourceRef": {"kind": "GitRepository", "name": "x"}}}}}]);
+        let apps = json!([{"metadata": {"namespace": "argocd", "name": "web"},
+            "spec": {"destination": {"namespace": "web"},
+                     "source": {"repoURL": "https://git.example.com/web.git", "path": "deploy"},
+                     "sources": [{"repoURL": "https://charts.example.com", "chart": "web", "targetRevision": "1.0.0"}]}}]);
+        // a Helm release Secret, its JSON not gzipped
+        let secret = |ns: &str, name: &str, chart: &str| {
+            let doc = json!({"name": name, "namespace": ns, "version": 1, "info": {"status": "deployed"},
+                             "chart": {"metadata": {"name": chart, "version": "2.0.0"}}});
+            let blob = STANDARD.encode(STANDARD.encode(doc.to_string()));
+            json!({"metadata": {"name": format!("sh.helm.release.v1.{name}.v1"), "namespace": ns,
+                                "labels": {"owner": "helm", "name": name, "version": "1"}},
+                   "type": "helm.sh/release.v1", "data": {"release": blob}})
+        };
+        let secrets = json!([
+            secret("obs", "loki", "loki"),
+            secret("dns", "pihole", "pihole"),
+            secret("dns", "other", "other"),
+        ]);
+        let url = serve(
+            route(
+                "/apis/helm.toolkit.fluxcd.io/v2/helmreleases",
+                klist("HelmRelease", hr),
+            )
+            .merge(route(
+                "/apis/argoproj.io/v1alpha1/applications",
+                klist("Application", apps),
+            ))
+            .merge(route("/api/v1/secrets", klist("Secret", secrets)))
+            .fallback(|| async {
+                let body = json!({"kind": "Status", "apiVersion": "v1", "metadata": {}, "status": "Failure",
+                                  "message": "not found", "reason": "NotFound", "code": 404});
+                (axum::http::StatusCode::NOT_FOUND, axum::Json(body))
+            }),
+        )
+        .await;
+        let cfg = Updates {
+            charts: vec![
+                crate::config::ChartRepo {
+                    name: "pihole".into(),
+                    repo: "https://charts.example.com/pihole".into(),
+                },
+                crate::config::ChartRepo {
+                    name: "loki".into(),
+                    repo: "https://charts.example.com/loki".into(),
+                },
+            ],
+            ..Default::default()
+        };
+        let got = charts("lab", kube_client(&url), &cfg).await.unwrap();
+        let rows: Vec<_> = got
+            .iter()
+            .map(|c| {
+                (
+                    c.namespace.as_str(),
+                    c.release.as_str(),
+                    c.managed_by.as_str(),
+                    c.source.as_deref(),
+                )
+            })
+            .collect();
+        // loki is Flux's, not a second plain release
+        assert_eq!(
+            rows,
+            [
+                ("obs", "loki", "flux", None),
+                ("web", "web", "argocd", Some("https://charts.example.com")),
+                (
+                    "dns",
+                    "pihole",
+                    "helm",
+                    Some("https://charts.example.com/pihole")
+                ),
+            ]
+        );
+        // a list that fails (not an absent CRD) fails the charts
+        let url = serve(
+            axum::Router::new()
+                .fallback(|| async { axum::http::StatusCode::INTERNAL_SERVER_ERROR }),
+        )
+        .await;
+        assert!(charts("lab", kube_client(&url), &cfg).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn chart_lookup_errors_once_per_repository() {
+        let url = serve(axum::Router::new()).await;
+        let chart = |source: Option<String>| Chart {
+            cluster: "lab".into(),
+            namespace: "apps".into(),
+            release: "app".into(),
+            chart: "app".into(),
+            version: "1.0.0".into(),
+            managed_by: "helm".into(),
+            source,
+            latest: Latest::default(),
+        };
+        let mut c = vec![
+            chart(None),
+            chart(Some(url.clone())),
+            chart(Some(url.clone())),
+        ];
+        let mut errors = Vec::new();
+        chart_latest(&mut c, &BTreeMap::new(), &mut errors).await;
+        assert_eq!(
+            errors,
+            [format!("lab: chart app from {url}: HTTP 404 Not Found")]
+        );
+        assert!(c.iter().all(|c| c.latest == Latest::default()));
+    }
+
+    #[tokio::test]
+    async fn images_of_other_owners() {
+        let pods = json!([
+            {"metadata": {"namespace": "db", "name": "pg-0", "ownerReferences": [{"kind": "StatefulSet", "name": "pg", "apiVersion": "apps/v1", "uid": "1"}]},
+             "spec": {"containers": [{"name": "c", "image": "postgres:17.1"}, {"name": "noimage"}]}}]);
+        let url = serve(route("/api/v1/pods", klist("Pod", pods))).await;
+        let got = images("lab", kube_client(&url), &Updates::default())
+            .await
+            .unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].used_by, ["db/statefulset/pg"]);
+    }
+
+    #[tokio::test]
+    async fn image_tags_from_the_registry() {
+        let tags = json!({"tags": ["1.27.3-alpine", "1.27.4-alpine", "1.28.0", "latest"]});
+        let url = serve(route("/v2/library/nginx/tags/list", tags)).await;
+        let image = |repository: &str, tag: Option<&str>, pinned: bool, unversioned: bool| Image {
+            cluster: "lab".into(),
+            image: repository.into(),
+            registry: url.clone(),
+            repository: repository.into(),
+            tag: tag.map(Into::into),
+            pinned,
+            unversioned,
+            used_by: Vec::new(),
+            latest: Latest::default(),
+        };
+        let mut i = vec![
+            image("library/nginx", Some("1.27.3-alpine"), false, false),
+            image("library/nginx", Some("latest"), false, true),
+            image("library/pinned", None, true, false),
+            image("library/gone", Some("1.0.0"), false, false),
+        ];
+        let mut errors = Vec::new();
+        image_latest(&mut i, &BTreeMap::new(), &mut errors).await;
+        assert_eq!(i[0].latest.patch.as_deref(), Some("1.27.4-alpine"));
+        assert_eq!(i[1].latest.newest.as_deref(), Some("1.28.0"));
+        assert_eq!(i[2].latest, Latest::default());
+        assert_eq!(
+            errors,
+            [format!("lab: image {url}/library/gone: HTTP 404 Not Found")]
+        );
+    }
+
     #[test]
     fn newest_plain_versions() {
         let t: Vec<String> = [
