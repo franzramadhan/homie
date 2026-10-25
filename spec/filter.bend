@@ -42,8 +42,8 @@ def keep_row(keep: Bool, +h: Name, rest: +List<Name>) -> +List<Name>:
     case False{}:
       rest
 
-# Kubernetes rows (workloads, unhealthy pods, events), by their namespace:
-# kept when the namespace is the role's
+# Kubernetes rows (workloads, unhealthy pods, events, volumes), by their
+# namespace: kept when the namespace is the role's
 def rows(xs: +List<Name>, +a: Bool, +b: Bool, +c: Bool) -> +List<Name>:
   match xs:
     case Nil{}:

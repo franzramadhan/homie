@@ -216,6 +216,8 @@ async fn meta_and_queries_with_full_access() {
     for q in [
         "spark-pve/lab",
         "spark-k8s/main",
+        "forecast-pve/lab",
+        "forecast-k8s/main",
         "k8s/main",
         "helm/main",
         "flux/main",

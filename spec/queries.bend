@@ -6,8 +6,10 @@ import Base
 type Query is Data:
   Pve{}
   SparkPve{}
+  ForecastPve{}
   K8s{}
   SparkK8s{}
+  ForecastK8s{}
   Flux{}
   Alerts{}
   Security{}
@@ -42,9 +44,13 @@ def page_of(k: Query) -> Page:
       Infra{}
     case SparkPve{}:
       Infra{}
+    case ForecastPve{}:
+      Infra{}
     case K8s{}:
       Workloads{}
     case SparkK8s{}:
+      Workloads{}
+    case ForecastK8s{}:
       Workloads{}
     case Flux{}:
       Gitops{}

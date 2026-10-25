@@ -1,7 +1,8 @@
-// Kubernetes: nodes, unhealthy pods, workloads, warning events, Helm releases.
+// Kubernetes: nodes, unhealthy pods, workloads, warning events, volumes
+// (RFC 0025), Helm releases.
 
-import { logsLink, useMeta, useQ, type HelmRelease, type K8sOverview, type Sparks } from "../api";
-import { Badge, Bar, DataTable, Ext, Source, Spark, ago, bytes } from "../ui";
+import { logsLink, useMeta, useQ, type HelmRelease, type K8sOverview, type Sparks, type Volume } from "../api";
+import { Badge, Bar, DataTable, Ext, FullIn, Source, Spark, ago, bytes, type Col } from "../ui";
 
 function LogsLink({ href }: { href: string | null }) {
   return href ? (
@@ -11,10 +12,21 @@ function LogsLink({ href }: { href: string | null }) {
   ) : null;
 }
 
-function Cluster({ name, metrics }: { name: string; metrics: boolean }) {
+function Cluster({ name, metrics, volumes }: { name: string; metrics: boolean; volumes: boolean }) {
   const meta = useMeta().data;
   const q = useQ<K8sOverview>("k8s", name);
   const sparks = useQ<Sparks>("spark-k8s", name, metrics).data?.data;
+  const vols = useQ<{ volumes: Volume[] }>("forecast-k8s", name, volumes);
+  const volumeCols: Col<Volume>[] = [
+    { accessorKey: "namespace", header: "Namespace" },
+    { accessorKey: "claim", header: "Claim" },
+    { id: "used", accessorFn: (v) => v.used / v.capacity, header: "Used", cell: ({ row }) => <Bar value={row.original.used} max={row.original.capacity} label={`${bytes(row.original.used)} / ${bytes(row.original.capacity)}`} /> },
+    { accessorKey: "capacity", header: "Capacity", cell: ({ row }) => bytes(row.original.capacity) },
+    ...(meta?.forecast
+      ? [{ id: "full", accessorFn: (v: Volume) => v.full_in ?? Number.MAX_VALUE, header: "Full in", cell: ({ row }: { row: { original: Volume } }) => <FullIn seconds={row.original.full_in} tone={row.original.tone} /> } as Col<Volume>]
+      : []),
+    { id: "week", header: "Week", enableSorting: false, cell: ({ row }) => <Spark values={row.original.spark} max={1} label="Used" period="last week" /> },
+  ];
   // Helm releases come from Secrets: never for a role (RFC 0016)
   const helm = useQ<HelmRelease[]>("helm", name, !meta?.role);
   return (
@@ -128,6 +140,11 @@ function Cluster({ name, metrics }: { name: string; metrics: boolean }) {
           </div>
         )}
       </Source>
+      {volumes && (
+        <Source title={`Volumes ${name}`} query={vols}>
+          {(d) => <DataTable data={d.volumes} columns={volumeCols} empty="No volumes in the query result" />}
+        </Source>
+      )}
       {!meta?.role && (
         <Source title={`Helm releases ${name}`} query={helm}>
           {(d) => (
@@ -157,7 +174,7 @@ export function Workloads() {
   return (
     <div className="space-y-6">
       {m.kubernetes.map((k) => (
-        <Cluster key={k.name} name={k.name} metrics={k.metrics} />
+        <Cluster key={k.name} name={k.name} metrics={k.metrics} volumes={k.volumes} />
       ))}
     </div>
   );

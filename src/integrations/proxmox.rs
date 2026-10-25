@@ -216,7 +216,7 @@ fn confirmation_needed(guest: &Guest, action: &str, confirm: Option<&str>) -> Op
 }
 
 /// Node names and UPIDs go into API paths: allow only what Proxmox produces.
-fn safe(x: &str) -> bool {
+pub(crate) fn safe(x: &str) -> bool {
     !x.is_empty()
         && x.chars()
             .all(|c| c.is_ascii_alphanumeric() || ":@!._-".contains(c))

@@ -4,12 +4,22 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { act, get, useMeta, useQ, type CertRow, type Certs, type Guest, type PveOverview, type Sparks } from "../api";
-import { Badge, Bar, Button, Confirm, DataTable, Ext, Section, Source, Spark, bytes, duration, type Col } from "../ui";
+import { act, get, useMeta, useQ, type CertRow, type Certs, type Guest, type PveOverview, type Sparks, type StorageForecast } from "../api";
+import { Badge, Bar, Button, Confirm, DataTable, Ext, FullIn, Section, Source, Spark, bytes, duration, type Col } from "../ui";
 
 type Action = "start" | "shutdown" | "reboot" | "stop";
 
 type Status = { text: string; tone: "info" | "ok" | "bad" };
+
+type StorageRow = PveOverview["storage"][number] & { forecast?: StorageForecast };
+
+/** The "Full in" column (RFC 0025); a storage without a forecast row has no data. */
+const fullIn: Col<StorageRow> = {
+  id: "full",
+  accessorFn: (s) => s.forecast?.full_in ?? Number.MAX_VALUE,
+  header: "Full in",
+  cell: ({ row }) => <FullIn seconds={row.original.forecast ? row.original.forecast.full_in : undefined} tone={row.original.forecast?.tone} />,
+};
 
 /** The Proxmox UI's own console page (RFC 0023), with the user's Proxmox login. */
 function pveConsole(ui: string, node: string, guest?: Guest): string {
@@ -132,6 +142,8 @@ function Cluster({ name }: { name: string }) {
   const m = useMeta().data;
   const q = useQ<PveOverview>("pve", name);
   const sparks = useQ<Sparks>("spark-pve", name).data?.data;
+  // roles see no storage (RFC 0016)
+  const forecast = useQ<{ storages: StorageForecast[] }>("forecast-pve", name, !!m?.forecast && !m.role).data?.data;
   const [status, setStatus] = useState<Status | null>(null);
 
   return (
@@ -272,12 +284,13 @@ function Cluster({ name }: { name: string }) {
                 <h3 className="mb-1 text-xs font-semibold text-ink-subtle uppercase">Storage</h3>
                 <DataTable
                   filter={false}
-                  data={d.storage}
+                  data={d.storage.map((s): StorageRow => ({ ...s, forecast: forecast?.storages.find((f) => f.storage === s.storage && (f.shared || f.node === s.node)) }))}
                   columns={[
                     { accessorKey: "storage", header: "Storage" },
                     { accessorKey: "node", header: "Node" },
                     { accessorKey: "plugintype", header: "Type" },
                     { id: "used", accessorFn: (s) => (s.maxdisk ? s.disk / s.maxdisk : 0), header: "Used", cell: ({ row }) => <Bar value={row.original.disk} max={row.original.maxdisk} label={`${bytes(row.original.disk)} / ${bytes(row.original.maxdisk)}`} /> },
+                    ...(m?.forecast ? [fullIn] : []),
                   ]}
                 />
               </div>

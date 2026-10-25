@@ -43,6 +43,7 @@ pub async fn meta(State(state): State<Shared>, Extension(caller): Extension<Call
         "kubernetes": some(page("workloads") || page("gitops"))(lab.kubernetes.values().map(|k| json!({
             "name": k.name, "quiet": k.quiet, "headlamp_url": if full { k.headlamp_url.as_deref() } else { None },
             "forward_token": full && k.forwards_token(), "metrics": k.metrics.is_some(),
+            "volumes": k.volumes().is_some(),
             "argocd_url": if full { k.argocd_url.as_deref() } else { None },
         })).collect()),
         "grafana": some(page("alerts"))(lab.grafana.values().map(|g| json!({
@@ -66,6 +67,8 @@ pub async fn meta(State(state): State<Shared>, Extension(caller): Extension<Call
         "certificates": full && lab.certificates_on(),
         // versions and package lists: never for a role (RFC 0020)
         "updates": full && lab.updates_on(),
+        // the "Full in" column (RFC 0025)
+        "forecast": lab.forecast.enabled,
     }))
     .into_response()
 }

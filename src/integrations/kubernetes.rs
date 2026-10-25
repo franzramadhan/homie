@@ -178,6 +178,11 @@ impl Kube {
         })
     }
 
+    /// The volume queries of the metrics datasource (RFC 0025), when set.
+    pub fn volumes(&self) -> Option<&config::NodeMetrics> {
+        self.metrics.as_ref().filter(|m| m.volume_used.is_some())
+    }
+
     pub fn forwards_token(&self) -> bool {
         self.mode == KubeAuth::ForwardToken
     }

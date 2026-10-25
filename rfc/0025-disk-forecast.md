@@ -63,6 +63,34 @@ Kubernetes PersistentVolumeClaims are not shown at all.
 | `msg="query" source="forecast-pve/<name>"` | as every query |
 | `homie_storage_full_seconds{source,storage}` | seconds until full, absent when there is no forecast |
 
+## Changes during implementation
+
+- Two named queries, `forecast-pve/<name>` and `forecast-k8s/<name>`,
+  each cached 15 minutes for the whole cluster (one entry, not one per
+  storage). Logs name them as every query does: `source="forecast-pve:<name>"`.
+  For roles they belong to the Infrastructure and Workloads pages
+  (`spec/queries.bend` has them too).
+- Proxmox points are what `rrddata?timeframe=week&cf=AVERAGE` returns,
+  hourly or coarser depending on the Proxmox version; the 24-point minimum
+  still applies. A storage whose history cannot be read is left out
+  ("no data" in the column).
+- Kubernetes: `volume_used` is read as a 7-day range at a 1 h step,
+  `volume_capacity` as an instant query (the current size). Setting only
+  one of the two is a config error.
+- Roles: `forecast-pve` returns no storages to a role without reading
+  Proxmox, as the overview shows a role no storage; `forecast-k8s` keeps
+  the role's namespaces only.
+- `forecast.enabled = false` hides the "Full in" column and the tone; the
+  Volumes table (used, capacity, the week) still shows when the two
+  queries are set.
+- Card reasons read `local@pve-01 full in 9 days` (`storage` alone for a
+  shared storage, `namespace/claim` for a volume). The column says
+  "within a day" under a day and "over a year" beyond 365 days.
+- `homie_storage_full_seconds` is read at scrape time through the shared
+  cache, so only with `metrics.cards` (RFC 0024). Labels: `source` is
+  `pve/<name>` or `k8s/<name>`, `storage` as in the card reasons.
+  `examples/metrics-alerts.yaml` has a rule for it.
+
 ## Alternatives
 
 | Option | Why not |

@@ -105,7 +105,7 @@ auth = "kubeconfig"
 kubeconfig = "{kc}"
 headlamp_url = "https://headlamp.example.com"
 argocd_url = "https://argocd.example.com"
-metrics = {{ grafana = "mon", datasource = "prom", cpu = "cpu", memory = "mem" }}
+metrics = {{ grafana = "mon", datasource = "prom", cpu = "cpu", memory = "mem", volume_used = "vu", volume_capacity = "vc" }}
 
 [grafana.mon]
 url = "{backend}"

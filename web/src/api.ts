@@ -26,7 +26,7 @@ export type Meta = {
   live_updates: boolean;
   quiet: { window: string; timezone: string; active: boolean } | null;
   proxmox: { name: string; quiet: boolean; ui_url: string; insecure: string | null }[];
-  kubernetes: { name: string; quiet: boolean; headlamp_url: string | null; forward_token: boolean; metrics: boolean; argocd_url: string | null }[];
+  kubernetes: { name: string; quiet: boolean; headlamp_url: string | null; forward_token: boolean; metrics: boolean; argocd_url: string | null; volumes: boolean }[];
   grafana: { name: string; quiet: boolean; url: string; insecure: string | null }[];
   openbao: { name: string; quiet: boolean; url: string; insecure: string | null }[];
   logs: { label: string; type: "victorialogs" | "loki"; pod_query: string | null; node_query: string | null }[];
@@ -40,6 +40,8 @@ export type Meta = {
   certificates: boolean;
   /** pending updates (RFC 0020); never for a role */
   updates: boolean;
+  /** the "Full in" column (RFC 0025) */
+  forecast: boolean;
 };
 
 export type PveNode = {
@@ -293,6 +295,10 @@ export function logsLink(m: Meta | undefined, kind: "pod_query" | "node_query", 
 }
 
 export type Series = { cpu: number[]; mem: number[] };
+
+/** Disk-full forecast (RFC 0025): seconds until full, null when steady. */
+export type StorageForecast = { storage: string; node: string; shared: boolean; used: number; total: number; full_in: number | null; tone: "ok" | "warn" | "bad" };
+export type Volume = { namespace: string; claim: string; used: number; capacity: number; full_in: number | null; tone: "ok" | "warn" | "bad"; spark: number[] };
 export type Sparks = { nodes: Record<string, Series>; guests?: Record<string, Series> };
 
 export class ApiError extends Error {}

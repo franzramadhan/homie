@@ -476,6 +476,8 @@ headlamp_url = ""                      # fills the link templates for Headlamp
 headlamp_cluster = "main"              # {cluster} in link templates
 # [kubernetes.<name>.links]            # RFC 0007: node, pod, workload, flux URL templates
 # [kubernetes.<name>.metrics]          # RFC 0012: grafana, datasource, cpu, memory, node_label
+#                                      # RFC 0025: volume_used, volume_capacity (PromQL, one series per volume),
+#                                      # volume_label = "persistentvolumeclaim", namespace_label = "namespace"
 # cnpg_max_backup_age_hours = 26       # RFC 0011: older last backup is amber
 # argocd_url = ""                      # RFC 0005: deep links to Argo CD Applications
 # cert_manager = false                 # RFC 0018: "renewal failing" from Certificate conditions
@@ -517,6 +519,11 @@ root_warn_days = 90                    # roots from a ca_file; bundled public ro
 interval_hours = 6                     # probe period for listed and discovered targets
 endpoints = true                       # the integrations' own HTTPS endpoints
 # [[certificates.targets]]             # host, port (443), address, ca_file
+
+[forecast]                             # RFC 0025: when storage fills up, from a week of usage
+enabled = true
+warn_days = 14                         # amber when full within this many days
+bad_days = 3                           # red when full within this many days
 
 [updates]                              # RFC 0020: read-only, nothing is installed
 proxmox = true                         # package list and reboot pending per node

@@ -204,6 +204,20 @@ pub async fn scrape(state: &Shared) -> String {
         if lab.updates_on() {
             c.push(("updates".into(), "_".into()));
         }
+        // not cards: the gauges of RFC 0025
+        if lab.forecast.enabled {
+            c.extend(
+                lab.proxmox
+                    .keys()
+                    .map(|n| ("forecast-pve".into(), n.clone())),
+            );
+            c.extend(
+                lab.kubernetes
+                    .iter()
+                    .filter(|(_, k)| k.volumes().is_some())
+                    .map(|(n, _)| ("forecast-k8s".into(), n.clone())),
+            );
+        }
         c
     });
     // a cold query (every image's upstream lookup) can outlast the scraper's
@@ -237,6 +251,8 @@ pub async fn scrape(state: &Shared) -> String {
         match (kind.as_str(), &env.data) {
             ("certs", Some(d)) => certs(&mut g, d),
             ("updates", Some(d)) => updates(&mut g, d),
+            ("forecast-pve", Some(d)) => full(&mut g, &format!("pve/{name}"), d),
+            ("forecast-k8s", Some(d)) => full(&mut g, &format!("k8s/{name}"), d),
             _ => {}
         }
     }
@@ -266,6 +282,17 @@ fn certs(g: &mut Families, d: &Value) {
                 &l,
                 t.as_second() as f64,
             );
+        }
+    }
+}
+
+/// Seconds until full per storage; absent without a forecast.
+fn full(g: &mut Families, source: &str, d: &Value) {
+    for r in arr(&d["storages"]).iter().chain(arr(&d["volumes"])) {
+        if let Some(s) = r["full_in"].as_f64() {
+            let storage = crate::integrations::forecast::label(r);
+            let l = [("source", source), ("storage", storage.as_str())];
+            gauge(g, "homie_storage_full_seconds", &l, s);
         }
     }
 }
@@ -391,6 +418,31 @@ mod tests {
         for leak in ["6.8.12", "v1.33", "2.0.0"] {
             assert!(!out.contains(leak), "{leak} leaked in\n{out}");
         }
+
+        let mut g = Families::new();
+        full(
+            &mut g,
+            "pve/lab",
+            &json!({"storages": [{"storage": "local", "node": "n1", "full_in": 86400.0},
+                                 {"storage": "nfs", "shared": true, "full_in": null}]}),
+        );
+        full(
+            &mut g,
+            "k8s/main",
+            &json!({"volumes": [{"namespace": "db", "claim": "data", "full_in": 60.0}]}),
+        );
+        let out = render(g);
+        assert!(
+            out.contains(
+                r#"homie_storage_full_seconds{source="pve/lab",storage="local@n1"} 86400"#
+            ),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"homie_storage_full_seconds{source="k8s/main",storage="db/data"} 60"#),
+            "{out}"
+        );
+        assert!(!out.contains("nfs"), "{out}");
 
         // a forward_token cluster without a user: no Kubernetes counts at all
         let mut g = Families::new();

@@ -55,6 +55,8 @@ pub struct Config {
     pub metrics: Option<Metrics>,
     /// `text` or `json`, one object per line (RFC 0024)
     pub log_format: LogFormat,
+    /// when storage fills up (RFC 0025)
+    pub forecast: Forecast,
     /// the file the config came from, logged once logging is set up
     #[serde(skip)]
     pub file: Option<PathBuf>,
@@ -89,6 +91,7 @@ impl Default for Config {
             log_format: LogFormat::Text,
             file: None,
             updates: Updates::default(),
+            forecast: Forecast::default(),
         }
     }
 }
@@ -493,6 +496,27 @@ pub enum NotifyKind {
     Webhook,
 }
 
+/// Disk-full forecast (RFC 0025): a straight line over a week of usage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Forecast {
+    pub enabled: bool,
+    /// amber when full within this many days
+    pub warn_days: u32,
+    /// red when full within this many days
+    pub bad_days: u32,
+}
+
+impl Default for Forecast {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            warn_days: 14,
+            bad_days: 3,
+        }
+    }
+}
+
 /// Certificate expiry (RFC 0018): thresholds and the targets to probe.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -588,6 +612,23 @@ pub struct NodeMetrics {
     /// label holding the node name in both series
     #[serde(default = "default_node_label")]
     pub node_label: String,
+    /// PersistentVolumeClaim usage, one series per volume (RFC 0025)
+    #[serde(default)]
+    pub volume_used: Option<String>,
+    #[serde(default)]
+    pub volume_capacity: Option<String>,
+    #[serde(default = "default_volume_label")]
+    pub volume_label: String,
+    #[serde(default = "default_namespace_label")]
+    pub namespace_label: String,
+}
+
+fn default_volume_label() -> String {
+    "persistentvolumeclaim".into()
+}
+
+fn default_namespace_label() -> String {
+    "namespace".into()
 }
 
 fn default_node_label() -> String {
@@ -1160,6 +1201,14 @@ pub fn validate(cfg: &Config) -> Result<()> {
             )
             .into());
         }
+        if let Some(m) = &k.metrics
+            && m.volume_used.is_some() != m.volume_capacity.is_some()
+        {
+            return Err(format!(
+                "kubernetes.{name}.metrics: set both volume_used and volume_capacity, or neither"
+            )
+            .into());
+        }
         let l = &k.links;
         for (key, t) in [
             ("node", &l.node),
@@ -1553,6 +1602,10 @@ mod tests {
             (
                 format!("{kube}metrics = {{ grafana = \"g\", datasource = \"d\", cpu = \"c\", memory = \"m\" }}\n"),
                 "kubernetes.k.metrics.grafana: no [grafana.g]",
+            ),
+            (
+                format!("[grafana.g]\nurl = \"https://g\"\ntoken = \"t\"\n{kube}metrics = {{ grafana = \"g\", datasource = \"d\", cpu = \"c\", memory = \"m\", volume_used = \"u\" }}\n"),
+                "kubernetes.k.metrics: set both volume_used and volume_capacity",
             ),
             (
                 format!("{kube}links = {{ pod = \"ftp://x\" }}\n"),

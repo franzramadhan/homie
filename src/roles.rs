@@ -11,8 +11,8 @@ use crate::config::Role;
 /// The page a named query belongs to. `None`: not for roles at all.
 pub fn page_of(kind: &str) -> Option<&'static str> {
     Some(match kind {
-        "pve" | "spark-pve" => "infra",
-        "k8s" | "spark-k8s" => "workloads",
+        "pve" | "spark-pve" | "forecast-pve" => "infra",
+        "k8s" | "spark-k8s" | "forecast-k8s" => "workloads",
         "flux" => "gitops",
         "alerts" => "alerts",
         "security" => "security",
@@ -134,6 +134,9 @@ pub fn filter(role: &Role, kind: &str, mut data: Value, pve: Option<&Value>) -> 
             }
             data["namespaces"] = role.namespaces.len().into();
         }
+        "forecast-k8s" => retain_rows(&mut data, "volumes", |r| ns_ok(&r["namespace"])),
+        // as on the overview: no storage for a role
+        "forecast-pve" => data["storages"] = Value::Array(Vec::new()),
         "flux" => {
             if let Some(items) = data.as_array_mut() {
                 // shown only when everything it deploys is in allowed namespaces
@@ -209,8 +212,8 @@ mod tests {
             "outage",
         ];
         let model = |kind: &str| match kind {
-            "pve" | "spark-pve" => Some("infra"),
-            "k8s" | "spark-k8s" => Some("workloads"),
+            "pve" | "spark-pve" | "forecast-pve" => Some("infra"),
+            "k8s" | "spark-k8s" | "forecast-k8s" => Some("workloads"),
             "flux" => Some("gitops"),
             "alerts" => Some("alerts"),
             "security" => Some("security"),
@@ -223,8 +226,10 @@ mod tests {
         let kinds = [
             "pve",
             "spark-pve",
+            "forecast-pve",
             "k8s",
             "spark-k8s",
+            "forecast-k8s",
             "flux",
             "alerts",
             "security",
@@ -299,6 +304,8 @@ mod tests {
                 .copied()
                 .filter(|n| has(&role.namespaces, n))
                 .collect();
+            let volumes = filter(&role, "forecast-k8s", json!({"volumes": rows}), None);
+            assert_eq!(volumes["volumes"], k8s["workloads"], "volumes");
             for key in ["workloads", "unhealthy_pods", "events"] {
                 let got: Vec<&str> = k8s[key]
                     .as_array()
@@ -433,6 +440,9 @@ mod tests {
         );
         assert_eq!(f["can_power"], false);
         assert!(f.get("ui_url").is_none());
+        let storages = json!({"storages": [{"storage": "local", "full_in": 1.0}]});
+        let f = filter(&demo(), "forecast-pve", storages, None);
+        assert_eq!(f["storages"], json!([]));
         let sparks = json!({"nodes": {"pve-01": {}}, "guests": {"1": {}, "2": {}}});
         let s = filter(&demo(), "spark-pve", sparks, Some(&pve));
         assert_eq!(s["guests"], json!({"1": {}}));
