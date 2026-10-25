@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| draft | 2026-10-25 | #N | - |
+| draft | 2026-10-25 | #112 | - |
 
 > Say when storage will be full, not only how full it is now: Proxmox
 > storages from their own history, Kubernetes volumes from a PromQL query.
