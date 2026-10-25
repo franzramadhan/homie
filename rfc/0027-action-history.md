@@ -22,7 +22,8 @@ the person.
   power actions, reconciles, console opened and closed, login (ok,
   failed, locked), and logout (new, also logged as `msg="logout"`). Each entry: time, user (email or `local`),
   action, target (`pve/<node>/<vmid>`, `flux/<cluster>/<ns>/<name>`),
-  result, and the error on failure. No request bodies, no tokens.
+  result (`ok`, `error`, `denied`), and the error on failure. No request
+  bodies, no tokens.
 - **Kept.** The last 1000 entries in memory and in
   `state_dir/history.jsonl` (append, trimmed to the cap at start), so a
   restart keeps them. Without `state_dir`: memory only, the page says so.
@@ -31,9 +32,14 @@ the person.
   existing SSE stream (RFC 0009). Failed entries in the bad tone.
 - **Who sees it.** Full users see everything. Roles see entries whose
   target is visible to them (their namespaces and tagged guests) and,
-  for logins, only their own; on the demo instance that is the demo's
-  own reconciles and power refusals. Other users' emails are never shown
-  to a role: they read as "another user".
+  for logins, only their own. Other users' emails are never shown to a
+  role: they read as "another user".
+- **Roles and the demo.** `history` is a page like the others (RFC 0016):
+  a role sees it when its `pages` list it. The demo instance lists it, so
+  visitors see the demo's reconciles, consoles and refused power actions,
+  every other visitor as "another user". Refused actions (403 for a role)
+  are recorded too, with result `denied`; the 1000-entry cap bounds what
+  a busy demo can write.
 - **API.** `GET /api/history` (same filtering), for scripts.
 
 ### Configuration
@@ -63,7 +69,8 @@ No new metric: the counters of RFC 0024 already count actions.
 
 - **Tests:** recording from each action path, the cap and trimming,
   reading a truncated last line, role filtering (targets and other
-  users' emails), the file permission (0600).
+  users' emails), refused actions recorded as `denied`, the file permission (0600).
 - **Rollout:** minor release, on by default; the file appears on the
-  first action.
+  first action. Roles gain the page by adding `history` to `pages`; the
+  reference demo config and `examples/` add it.
 - **Off switch:** `history.enabled = false`; deleting the file clears it.
