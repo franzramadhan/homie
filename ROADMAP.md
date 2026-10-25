@@ -30,5 +30,5 @@ the RFCs it implements. Versions stay 0.x (alpha) until a 1.0 is decided.
 | [0023](rfc/0023-console.md) | Proxmox consoles (links, embedded guest console) | implemented | v0.11.0 |
 | [0024](rfc/0024-metrics.md) | Metrics endpoint and JSON logs | implemented | v0.12.0 |
 | [0025](rfc/0025-disk-forecast.md) | Disk-full forecast (Proxmox storages, Kubernetes volumes) | accepted | - |
-| [0026](rfc/0026-release-notes.md) | Release notes and security marks on the Updates page | draft | - |
+| [0026](rfc/0026-release-notes.md) | Release notes and security marks on the Updates page | accepted | - |
 | - | Per-user Proxmox tickets | not written | later |
