@@ -578,7 +578,9 @@ pub async fn renewal_failures(client: &Client) -> Result<HashMap<String, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::integrations::Lab;
     use crate::testkit::{json, kube_client, list as klist, serve};
+    use axum::response::IntoResponse;
     use serde_json::json;
 
     const DAY: i64 = 86400;
@@ -874,6 +876,163 @@ mod tests {
         assert!(down.reasons[0].starts_with("unreachable: "), "{down:?}");
         // rows sort worst first
         assert!(c.rows.windows(2).all(|w| w[0].status >= w[1].status));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn when_counts_days() {
+        assert_eq!(when(-60), "expired today");
+        assert_eq!(when(-DAY - 60), "expired 1 day ago");
+        assert_eq!(when(60), "expires today");
+        assert_eq!(when(DAY + 60), "expires in 1 day");
+    }
+
+    #[test]
+    fn problems_without_dates() {
+        let mut early = cert("leaf", 60, false);
+        early.not_before = NOW + DAY;
+        assert_eq!(
+            judge(Some(seen(vec![early], None))),
+            (Tone::Warn, vec!["not valid yet".into()])
+        );
+        for (problem, tone, reason) in [
+            ("expired", Tone::Bad, "chain expired"),
+            ("not_yet_valid", Tone::Warn, "chain not valid yet"),
+            ("unknown_issuer", Tone::Bad, "untrusted"),
+            ("BadSignature", Tone::Bad, "BadSignature"),
+        ] {
+            assert_eq!(
+                judge(Some(seen(vec![], Some(problem)))),
+                (tone, vec![reason.into()]),
+                "{problem}"
+            );
+        }
+    }
+
+    /// A fake API server: `routes`, 500 for paths containing one of `fail`,
+    /// empty lists for the rest.
+    fn api(routes: axum::Router, fail: &'static [&'static str]) -> axum::Router {
+        routes.fallback(move |uri: axum::http::Uri| async move {
+            if fail.iter().any(|f| uri.path().contains(f)) {
+                return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "boom").into_response();
+            }
+            axum::Json(klist("Object", json!([]))).into_response()
+        })
+    }
+
+    #[tokio::test]
+    async fn gateway_route_reads_can_fail() {
+        let d = CertDiscovery {
+            discover: true,
+            sources: vec![CertSource::Gateway],
+            ..Default::default()
+        };
+        for fail in [&["httproutes"][..], &["tlsroutes"][..]] {
+            let client = kube_client(&serve(api(axum::Router::new(), fail)).await);
+            assert!(discover(&client, "lab", &d).await.is_err(), "{fail:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn collects_from_clusters() {
+        use crate::server::harness::{config, kubeconfig, temp_dir};
+        let pki = tls::tests::Pki::new(2045, 2040);
+        let dir = temp_dir("certs-clusters");
+        let ca = dir.join("ca.pem");
+        std::fs::write(&ca, &pki.root_pem).unwrap();
+        let (leaf, key) = pki.leaf(&["disc.example"], 2024, 2040);
+        let port = tls::tests::tls_server(vec![leaf, pki.inter.clone()], &key).await;
+
+        // a: one Ingress host, its Certificate failing to renew; b: every read fails
+        let a = serve(api(
+            json(
+                "/apis/networking.k8s.io/v1/ingresses",
+                klist("Ingress", json!([{"metadata": {"namespace": "web", "name": "site"},
+                    "spec": {"tls": [{"hosts": ["disc.example"]}]}}])),
+            )
+            .merge(json(
+                "/apis/cert-manager.io/v1/certificates",
+                klist("Certificate", json!([{"metadata": {"namespace": "web", "name": "site"},
+                    "spec": {"dnsNames": ["disc.example"]},
+                    "status": {"conditions": [{"type": "Ready", "status": "False", "message": "order failed"}]}}])),
+            )),
+            &[],
+        ))
+        .await;
+        let b = serve(api(axum::Router::new(), &["/"])).await;
+        // d: a host discovered without discover_address is probed as named
+        let d = serve(api(
+            json(
+                "/apis/networking.k8s.io/v1/ingresses",
+                klist(
+                    "Ingress",
+                    json!([{"metadata": {"namespace": "web", "name": "local"},
+                    "spec": {"tls": [{"hosts": ["127.0.0.1"]}]}}]),
+                ),
+            ),
+            &[],
+        ))
+        .await;
+        let lab = Lab::new(&config(&format!(
+            "[kubernetes.a]\nauth = \"kubeconfig\"\nkubeconfig = \"{}\"\ncert_manager = true\n\
+             certificates = {{ discover = true, discover_address = \"127.0.0.1:{port}\", ca_file = \"{}\" }}\n\
+             [kubernetes.b]\nauth = \"kubeconfig\"\nkubeconfig = \"{b}\"\ncertificates = {{ discover = true }}\n\
+             [kubernetes.c]\nauth = \"kubeconfig\"\nkubeconfig = \"{b}\"\ncert_manager = true\n\
+             [kubernetes.d]\nauth = \"kubeconfig\"\nkubeconfig = \"{}\"\ncertificates = {{ discover = true }}\n",
+            kubeconfig(&a).display(),
+            ca.display(),
+            kubeconfig(&d).display(),
+            b = kubeconfig(&b).display(),
+        )))
+        .await
+        .unwrap();
+        let k = |name: &str| {
+            let k = &lab.kubernetes[name];
+            (k, k.client(None))
+        };
+        let cfg = Certificates {
+            endpoints: false,
+            targets: vec![crate::config::CertTarget {
+                host: "noca.example".into(),
+                port: 2,
+                address: Some("127.0.0.1".into()),
+                ca_file: Some(dir.join("missing.pem")),
+            }],
+            ..Default::default()
+        };
+        let c = collect(
+            &cfg,
+            vec![
+                k("a"),
+                k("b"),
+                k("c"),
+                k("d"),
+                (&lab.kubernetes["b"], Err("no token".into())),
+            ],
+        )
+        .await;
+        let disc = c.rows.iter().find(|r| r.host == "disc.example").unwrap();
+        assert_eq!((disc.port, disc.status), (port, Tone::Warn), "{disc:?}");
+        assert_eq!(disc.sources, ["a/web/ingress/site"]);
+        assert_eq!(disc.reasons, ["renewal failing: order failed"]);
+        let local = c.rows.iter().find(|r| r.host == "127.0.0.1").unwrap();
+        assert_eq!(
+            (local.port, local.sources.as_slice()),
+            (443, &["d/web/ingress/local".to_string()][..])
+        );
+        assert!(
+            c.rows.iter().all(|r| r.sources != ["integration"]),
+            "endpoints are off"
+        );
+        let errors = c.errors.join("\n");
+        for e in [
+            "b: discovery: ",
+            "c: cert-manager: ",
+            "b: no token",
+            "noca.example:2: reading ",
+        ] {
+            assert!(errors.contains(e), "{e:?} not in {errors}");
+        }
         let _ = std::fs::remove_dir_all(dir);
     }
 }

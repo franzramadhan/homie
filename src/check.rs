@@ -317,4 +317,26 @@ mod tests {
         assert!(r.is_ok());
         assert!(out.contains("nothing configured"), "{out}");
     }
+
+    #[tokio::test]
+    async fn forward_token_clusters_and_session_watches() {
+        let backend = backend().await;
+        let kc = crate::server::harness::kubeconfig(&backend);
+        let (out, _) = check(&format!(
+            "public_url = \"http://localhost:7777\"\n[auth]\nissuer = \"http://127.0.0.1:9\"\nclient_id = \"homie\"\nallowed_emails = [\"me@example.com\"]\n\
+             [kubernetes.user]\nauth = \"forward_token\"\nkubeconfig = \"{}\"\n\
+             [github]\nclient_id = \"Iv1.x\"\nclient_secret = \"s\"\napi_url = \"{backend}\"\nstore = \"session\"\n\
+             [notify]\ntargets = [{{ type = \"webhook\", url = \"http://127.0.0.1:9/hook\" }}]\n",
+            kc.display()
+        ))
+        .await;
+        assert!(
+            line(&out, "ok    github").ends_with("each visitor signs in and picks their own"),
+            "{out}"
+        );
+        assert!(
+            line(&out, "warn  notify.user").contains("its cards are not evaluated"),
+            "{out}"
+        );
+    }
 }

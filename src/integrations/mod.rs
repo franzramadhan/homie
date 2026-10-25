@@ -656,4 +656,107 @@ mod tests {
             assert!(e.contains(error), "{e}");
         }
     }
+
+    /// A backend whose every answer is a 500.
+    async fn failing() -> String {
+        crate::testkit::serve(
+            axum::Router::new()
+                .fallback(|| async { (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "boom") }),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn updates_read_every_source() {
+        let backend = backend().await;
+        let lab = Lab::new(&config(&format!(
+            "[kubernetes.main]\nauth = \"kubeconfig\"\nkubeconfig = \"{}\"\n\
+             [proxmox.lab]\nendpoints = [\"{backend}\"]\ntoken = \"t\"\n\
+             [updates]\ngithub_token = \"ght\"\nupstream = {{ charts = true, images = true }}\n\
+             registries = [{{ host = \"registry.example\", username = \"u\", password = \"p\" }}]\n",
+            kubeconfig(&backend).display()
+        )))
+        .await
+        .unwrap();
+        let v = lab
+            .fetch("updates", "_", &Caller::default(), false)
+            .await
+            .unwrap();
+        assert_eq!(v["kubernetes"].as_array().unwrap().len(), 1, "{v}");
+        // a role without a ServiceAccount reads no cluster
+        let v = lab
+            .fetch("updates", "_", &role(&["workloads"], None), false)
+            .await
+            .unwrap();
+        assert!(
+            v["errors"]
+                .to_string()
+                .contains("main: this role has no kubernetes_service_account"),
+            "{v}"
+        );
+        // the notifier reads as its ServiceAccount
+        let notifier = Caller {
+            service_account: Some("homie/notifier".into()),
+            ..Default::default()
+        };
+        assert!(lab.fetch("k8s", "main", &notifier, false).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn failing_backends_are_errors() {
+        let bad = failing().await;
+        let lab = Lab::new(&config(&format!(
+            "[kubernetes.kube]\nauth = \"kubeconfig\"\nkubeconfig = \"{}\"\n\
+             [proxmox.pve]\nendpoints = [\"{bad}\"]\ntoken = \"t\"\n\
+             [github]\ntoken = \"t\"\napi_url = \"{bad}\"\nwatch = [{{ repo = \"a/b\", workflow = \"ci.yml\" }}]\n\
+             [healthchecks]\nurl = \"{bad}\"\napi_key = \"k\"\n\
+             [updates]\nupstream = {{ images = true }}\n",
+            kubeconfig(&bad).display()
+        )))
+        .await
+        .unwrap();
+        let anyone = Caller::default();
+        for (kind, name) in [
+            ("flux", "kube"),
+            ("argocd", "kube"),
+            ("cnpg", "kube"),
+            ("github", "_"),
+            ("healthchecks", "_"),
+        ] {
+            assert!(
+                lab.fetch(kind, name, &anyone, false).await.is_err(),
+                "{kind}/{name}"
+            );
+        }
+        let v = lab.fetch("updates", "_", &anyone, false).await.unwrap();
+        let errors = v["errors"].to_string();
+        for want in ["pve: ", "kube: ", "kube: charts: ", "kube: images: "] {
+            assert!(
+                errors.contains(&format!("\"{want}")),
+                "{want:?} not in {errors}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn session_workflows_follow_the_role() {
+        let lab = Lab::new(&config(
+            "[github]\nstore = \"session\"\nclient_id = \"c\"\nclient_secret = \"s\"\n\
+             [updates]\nproxmox = false\n",
+        ))
+        .await
+        .unwrap();
+        let cache = Cache::new(None).unwrap();
+        assert!(
+            lab.query(&cache, "github", "_", &role(&["infra"], None))
+                .await
+                .is_none()
+        );
+        // nothing to read: an empty report
+        let v = lab
+            .fetch("updates", "_", &Caller::default(), false)
+            .await
+            .unwrap();
+        assert_eq!(v["errors"], serde_json::json!([]));
+    }
 }

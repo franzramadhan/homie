@@ -1066,22 +1066,54 @@ async fn run_reports_a_busy_port_and_serves() {
     ));
     let e = super::run(cfg).await.unwrap_err().to_string();
     assert!(e.starts_with(&format!("listen {addr}")), "{e}");
+    // the metrics listener: a token that does not resolve, a busy port
+    let cfg = super::harness::config(
+        "listen = \"127.0.0.1:0\"\n[metrics]\nlisten = \"127.0.0.1:0\"\ntoken = { env = \"HOMIE_TEST_UNSET\" }\n",
+    );
+    assert!(super::run(cfg).await.is_err());
+    let cfg = super::harness::config(&format!(
+        "listen = \"127.0.0.1:0\"\n[metrics]\nlisten = \"{addr}\"\n"
+    ));
+    let e = super::run(cfg).await.unwrap_err().to_string();
+    assert!(e.starts_with(&format!("metrics.listen {addr}")), "{e}");
 
     drop(busy);
-    let cfg = super::harness::config(&format!("listen = \"{addr}\""));
+    // one plain, one with a metrics listener and notifications
+    let other = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let full = other.local_addr().unwrap();
+    drop(other);
+    let plain = tokio::spawn(super::run(super::harness::config(&format!(
+        "listen = \"{addr}\""
+    ))));
+    let cfg = super::harness::config(&format!(
+        "listen = \"{full}\"\n[metrics]\nlisten = \"127.0.0.1:0\"\ntoken = \"t\"\n\
+         [notify]\ntargets = [{{ type = \"webhook\", url = \"http://127.0.0.1:9/hook\" }}]\n"
+    ));
     let server = tokio::spawn(super::run(cfg));
-    let url = format!("http://{addr}/healthz");
-    let mut answered = false;
-    for _ in 0..50 {
-        if let Ok(r) = reqwest::get(&url).await {
-            assert_eq!(r.text().await.unwrap(), "ok");
-            answered = true;
-            break;
+    for a in [addr, full] {
+        let url = format!("http://{a}/healthz");
+        let mut answered = false;
+        for _ in 0..50 {
+            if let Ok(r) = reqwest::get(&url).await {
+                assert_eq!(r.text().await.unwrap(), "ok");
+                answered = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(answered, "{a}");
     }
-    server.abort();
-    assert!(answered);
+    // SIGTERM ends both cleanly; the handler is in place once they answer
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let killed = std::process::Command::new("kill")
+        .args(["-TERM", &std::process::id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    for s in [plain, server] {
+        let done = tokio::time::timeout(Duration::from_secs(10), s).await;
+        assert!(matches!(done, Ok(Ok(Ok(())))), "{done:?}");
+    }
 }
 
 #[tokio::test]

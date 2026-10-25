@@ -170,6 +170,17 @@ where
     r.map_err(Into::into)
 }
 
+/// Puts `versions` in the cache under `key`, as if fetched: the GitHub and
+/// dl.k8s.io hosts are fixed, so tests answer them from the cache.
+#[cfg(test)]
+pub fn seed(key: &str, versions: &[&str]) {
+    let v = versions.iter().map(|s| s.to_string()).collect();
+    CACHE
+        .lock()
+        .unwrap()
+        .insert(key.to_string(), (Instant::now(), Ok(v)));
+}
+
 fn tls() -> Tls {
     Tls {
         tls_verify: true,
@@ -511,6 +522,204 @@ mod tests {
         assert_eq!(c["realm"], "https://ghcr.io/token");
         assert_eq!(c["service"], "ghcr.io");
         assert_eq!(c["scope"], "repository:a/b:pull");
+        // an unterminated value ends the parse
+        assert!(challenge(r#"Bearer realm="https://ghcr.io/token"#).is_empty());
+    }
+
+    #[tokio::test]
+    async fn cached_github_and_kubernetes_lookups() {
+        // both stable files are seeded the same way in updates.rs
+        seed("dl.k8s.io:stable-1.997", &["v1.997.3"]);
+        seed("dl.k8s.io:stable", &["v1.998.1"]);
+        assert_eq!(
+            kubernetes("v1.997.1+k0s").await.unwrap(),
+            Latest {
+                patch: Some("v1.997.3".into()),
+                newest: Some("v1.998.1".into())
+            }
+        );
+        for bad in ["garbage", "v1"] {
+            let e = kubernetes(bad).await.unwrap_err().to_string();
+            assert_eq!(e, "no Kubernetes version");
+        }
+        seed("github:acme-test/upstream", &["v1.0.0", "v1.1.0"]);
+        assert_eq!(
+            github_releases("acme-test/upstream", Some("t"))
+                .await
+                .unwrap(),
+            ["v1.0.0", "v1.1.0"]
+        );
+        // a registry without a scheme is https
+        seed("oci:https://registry.test/org/app", &["2.0.0"]);
+        assert_eq!(
+            oci_tags("registry.test", "org/app", None).await.unwrap(),
+            ["2.0.0"]
+        );
+    }
+
+    #[tokio::test]
+    async fn chart_versions_by_repository_kind() {
+        seed("oci:https://charts.test/org/chart", &["1.0.0"]);
+        let asked = Mutex::new(Vec::new());
+        let creds = |host: &str| {
+            asked.lock().unwrap().push(host.to_string());
+            None
+        };
+        for repo in ["oci://charts.test/org/", "oci://charts.test/org/chart"] {
+            assert_eq!(
+                chart_versions(repo, "chart", creds).await.unwrap(),
+                ["1.0.0"]
+            );
+        }
+        assert_eq!(*asked.lock().unwrap(), ["charts.test", "charts.test"]);
+        let e = chart_versions("oci://charts.test", "charts.test", creds)
+            .await
+            .unwrap_err();
+        assert_eq!(e.to_string(), "oci:// URL without a repository");
+        let index =
+            "apiVersion: v1\nentries:\n  a:\n  - version: 0.1.0\n  b:\n  - version: 9.0.0\n";
+        let url = crate::testkit::serve(axum::Router::new().route(
+            "/index.yaml",
+            axum::routing::get(move || async move { index }),
+        ))
+        .await;
+        assert_eq!(
+            chart_versions(&format!("{url}/"), "a", creds)
+                .await
+                .unwrap(),
+            ["0.1.0"]
+        );
+    }
+
+    /// A fake registry: redirects, a failing repository, pages, and the
+    /// ways a token challenge goes wrong.
+    async fn registry(hits: std::sync::Arc<std::sync::atomic::AtomicUsize>) -> String {
+        use axum::{
+            Json, Router,
+            extract::Query,
+            http::{HeaderMap, StatusCode, header},
+            response::IntoResponse,
+            routing::get as route,
+        };
+        use std::sync::atomic::Ordering;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let unauthorized =
+            |c: String| (StatusCode::UNAUTHORIZED, [(header::WWW_AUTHENTICATE, c)]).into_response();
+        let realm = format!("{base}/auth");
+        let empty = format!("{base}/empty");
+        let app = Router::new()
+            .route(
+                "/v2/moved/app/tags/list",
+                route(|| async {
+                    (
+                        StatusCode::FOUND,
+                        [(header::LOCATION, "/v2/plain/app/tags/list")],
+                    )
+                }),
+            )
+            .route(
+                "/v2/loop/app/tags/list",
+                route(|| async {
+                    (
+                        StatusCode::FOUND,
+                        [(header::LOCATION, "/v2/loop/app/tags/list")],
+                    )
+                }),
+            )
+            .route(
+                "/v2/plain/app/tags/list",
+                route(|| async { Json(serde_json::json!({"tags": ["1.0.0"]})) }),
+            )
+            .route(
+                "/v2/broken/app/tags/list",
+                route(move || {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    async { (StatusCode::INTERNAL_SERVER_ERROR, "down") }
+                }),
+            )
+            .route(
+                "/v2/paged/app/tags/list",
+                route(|Query(q): Query<HashMap<String, String>>| async move {
+                    if q.contains_key("last") {
+                        return Json(serde_json::json!({"tags": ["1.1.0"]})).into_response();
+                    }
+                    let next = r#"</v2/paged/app/tags/list?n=1000&last=1.0.0>; rel="next""#;
+                    (
+                        [(header::LINK, next)],
+                        Json(serde_json::json!({"tags": ["1.0.0"]})),
+                    )
+                        .into_response()
+                }),
+            )
+            .route(
+                "/v2/private/app/tags/list",
+                route(move |h: HeaderMap| {
+                    let realm = realm.clone();
+                    async move {
+                        match h.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+                            Some("Bearer abc") => {
+                                Json(serde_json::json!({"tags": ["3.0.0"]})).into_response()
+                            }
+                            _ => unauthorized(format!(r#"Bearer realm="{realm}""#)),
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/auth",
+                route(|h: HeaderMap| async move {
+                    // base64 of u:p
+                    let auth = h.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok());
+                    assert_eq!(auth, Some("Basic dTpw"));
+                    Json(serde_json::json!({"access_token": "abc"}))
+                }),
+            )
+            .route(
+                "/v2/norealm/app/tags/list",
+                route(move || async move { unauthorized(r#"Bearer service="x""#.into()) }),
+            )
+            .route(
+                "/v2/notoken/app/tags/list",
+                route(move || {
+                    let empty = empty.clone();
+                    async move { unauthorized(format!(r#"Bearer realm="{empty}""#)) }
+                }),
+            )
+            .route("/empty", route(|| async { Json(serde_json::json!({})) }));
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        base
+    }
+
+    #[tokio::test]
+    async fn registry_redirects_pages_and_failures() {
+        use std::sync::{Arc, atomic::AtomicUsize, atomic::Ordering};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let base = registry(hits.clone()).await;
+        assert_eq!(oci_tags(&base, "moved/app", None).await.unwrap(), ["1.0.0"]);
+        let e = oci_tags(&base, "loop/app", None).await.unwrap_err();
+        assert!(e.to_string().ends_with("too many redirects"), "{e}");
+        assert_eq!(
+            oci_tags(&base, "paged/app", None).await.unwrap(),
+            ["1.0.0", "1.1.0"]
+        );
+        // a failure is cached too: the second lookup does not ask again
+        for _ in 0..2 {
+            let e = oci_tags(&base, "broken/app", None).await.unwrap_err();
+            assert_eq!(e.to_string(), "HTTP 500 Internal Server Error: down");
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        // basic credentials buy the token; the challenge has no service
+        assert_eq!(
+            oci_tags(&base, "private/app", Some(("u".into(), "p".into())))
+                .await
+                .unwrap(),
+            ["3.0.0"]
+        );
+        let e = oci_tags(&base, "norealm/app", None).await.unwrap_err();
+        assert_eq!(e.to_string(), "registry asked for auth without a realm");
+        let e = oci_tags(&base, "notoken/app", None).await.unwrap_err();
+        assert_eq!(e.to_string(), "registry gave no token");
     }
 
     #[tokio::test]

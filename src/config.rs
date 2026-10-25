@@ -1299,7 +1299,8 @@ mod tests {
                 token = { env = "PVE_TOKEN" }
                 tls_verify = false
                 "#,
-            )?;
+            )
+            .unwrap();
             jail.set_env("HOMIE__REFRESH_SECONDS", "20");
             jail.set_env("HOMIE__GRAFANA__CLOUD__URL", "https://x.grafana.net");
             jail.set_env("HOMIE__GRAFANA__CLOUD__TOKEN", "glsa_x");
@@ -1626,6 +1627,68 @@ mod tests {
     }
 
     #[test]
+    fn more_validation_errors() {
+        let check = |toml: &str| -> Result<()> {
+            let cfg: Config = Figment::from(Toml::string(toml))
+                .extract()
+                .unwrap_or_else(|e| panic!("{e}\n{toml}"));
+            validate(&cfg)
+        };
+        let ntfy = "[[notify.targets]]\ntype = \"ntfy\"\nurl = \"https://ntfy.example/t\"\n";
+        for (toml, error) in [
+            ("[notify]\ntargets = []\n".to_string(), "notify.targets is empty"),
+            (
+                format!("[notify]\ninterval_seconds = 5\n{ntfy}"),
+                "notify.interval_seconds must be 10 or more",
+            ),
+            (
+                format!("[notify]\nmin_tone = \"ok\"\n{ntfy}"),
+                "min_tone values are \"warn\" or \"bad\"",
+            ),
+            (
+                "[[updates.charts]]\nname = \"x\"\nrepo = \"ftp://charts.example\"\n".into(),
+                "updates.charts: repo \"ftp://charts.example\" must be oci://",
+            ),
+            (
+                "[certificates]\ninterval_hours = 0\n".into(),
+                "certificates.interval_hours must be 1 or more",
+            ),
+            (
+                "[[certificates.targets]]\nhost = \"https://a.example\"\n".into(),
+                "host \"https://a.example\" must be a name",
+            ),
+            (
+                "[kubernetes.k]\nauth = \"kubeconfig\"\ncertificates = { discover_address = \"10443\" }\n".into(),
+                "kubernetes.k.certificates.discover_address: \"10443\" must be host:port",
+            ),
+        ] {
+            let e = check(&toml).expect_err(&toml).to_string();
+            assert!(e.contains(error), "{e:?} lacks {error:?}");
+        }
+        // the port defaults to 443
+        let cfg: Config = Figment::from(Toml::string(
+            "[[certificates.targets]]\nhost = \"a.example\"\n\
+             [[updates.charts]]\nname = \"x\"\nrepo = \"oci://charts.example/x\"\n",
+        ))
+        .extract()
+        .unwrap();
+        validate(&cfg).unwrap();
+        assert_eq!(cfg.certificates.targets[0].port, 443);
+        crate::server::harness::logs();
+        log_source(&cfg);
+    }
+
+    #[test]
+    fn auth_mode_defaults_to_in_cluster_inside_a_pod() {
+        Jail::expect_with(|jail| {
+            jail.set_env("KUBERNETES_SERVICE_HOST", "127.0.0.1");
+            let k: Kubernetes = Figment::from(Toml::string("")).extract()?;
+            assert_eq!(k.auth_mode(), KubeAuth::InCluster);
+            Ok(())
+        });
+    }
+
+    #[test]
     fn missing_config_file_and_home_expansion() {
         let e = load(Some("/nonexistent/homie.toml".into())).unwrap_err();
         assert!(e.to_string().contains("does not exist"), "{e}");
@@ -1637,7 +1700,8 @@ mod tests {
             jail.create_file(
                 ".config/homie/config.toml",
                 "refresh_seconds = 42\nstate_dir = \"~/state\"",
-            )?;
+            )
+            .unwrap();
             let cfg = load(None).unwrap();
             assert_eq!(cfg.refresh_seconds, 42, "the default location is read");
             assert_eq!(cfg.state_dir, Some(home.join("state")));
