@@ -32,4 +32,5 @@ the RFCs it implements. Versions stay 0.x (alpha) until a 1.0 is decided.
 | [0025](rfc/0025-disk-forecast.md) | Disk-full forecast (Proxmox storages, Kubernetes volumes) | accepted | - |
 | [0026](rfc/0026-release-notes.md) | Release notes and security marks on the Updates page | accepted | - |
 | [0027](rfc/0027-action-history.md) | Action history page | accepted | - |
+| [0028](rfc/0028-map.md) | Map: the lab as a pixel village | accepted | - |
 | - | Per-user Proxmox tickets | not written | later |

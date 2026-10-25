@@ -36,6 +36,9 @@ and a missing `web/dist` only means the UI answers 503.
   `implemented`. Not needed for bug fixes, docs, CI, dependency bumps or
   refactors without visible behavior change; when unsure, treat it as a
   feature.
+- `ROADMAP.md` follows every RFC: the RFC PR adds its row (status
+  `draft`), acceptance sets `accepted` (or `rejected`), and the release
+  PR sets `implemented` with the version in Target.
 
 ## UI
 
