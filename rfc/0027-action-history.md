@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| draft | 2026-10-25 | #N | - |
+| draft | 2026-10-25 | #114 | - |
 
 > One page listing who did what and when: power actions, Flux and Argo
 > CD reconciles, consoles, logins and their failures. Read from what
