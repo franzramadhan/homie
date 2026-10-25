@@ -195,6 +195,7 @@ impl Oidc {
                 .any(|g| self.cfg.allowed_groups.iter().any(|a| a == g));
         if !allowed {
             tracing::warn!(msg = "login", method = "oidc", user = %email, result = "denied");
+            super::login("oidc", "denied");
             return Err(format!("{email} is not allowed to use this Homie").into());
         }
         Ok(Tokens {

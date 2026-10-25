@@ -1,0 +1,21 @@
+{{- if and .Values.metrics.enabled .Values.metrics.serviceMonitor.enabled }}
+{{- $sm := .Values.metrics.serviceMonitor }}
+apiVersion: {{ if eq $sm.kind "VMServiceScrape" }}operator.victoriametrics.com/v1beta1{{ else }}monitoring.coreos.com/v1{{ end }}
+kind: {{ $sm.kind }}
+metadata:
+  name: {{ include "homie.name" . }}
+  labels:
+    {{- include "homie.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "homie.selector" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ $sm.interval }}
+      {{- with $sm.bearerTokenSecret }}
+      bearerTokenSecret:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -136,7 +136,8 @@ async fn report(cfg: Config, out: &mut impl std::io::Write) -> Result<()> {
             "notify".into(),
             Box::pin(async move {
                 let targets = crate::notify::targets(n).await?;
-                let cards = crate::notify::cards(lab, n);
+                let cards =
+                    crate::notify::cards(lab, n.kubernetes_service_account.is_some(), &n.cards);
                 Ok(format!(
                     "{} targets, {} cards evaluated",
                     targets.len(),

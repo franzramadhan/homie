@@ -123,6 +123,7 @@ impl Auth {
         let t = oidc.callback(code, state).await?;
         let role = self.role_for(&t.email);
         tracing::info!(msg = "login", method = "oidc", user = %t.email, role = role.as_deref().unwrap_or(""), result = "ok");
+        login("oidc", "ok");
         Ok(self.create(Session {
             user: t.email,
             id_token: Some(t.id_token),
@@ -141,9 +142,11 @@ impl Auth {
             .ok_or("password login is not configured")?;
         if let Err(e) = local.verify(username, password).await {
             tracing::warn!(msg = "login", method = "local", user = %username, result = "denied");
+            login("local", "denied");
             return Err(e);
         }
         tracing::info!(msg = "login", method = "local", user = %username, result = "ok");
+        login("local", "ok");
         Ok(self.create(Session {
             user: username.to_string(),
             id_token: None,
@@ -179,6 +182,7 @@ impl Auth {
             }
         }
         tracing::info!(msg = "login", method = "demo", role = %demo.role, result = "ok");
+        login("demo", "ok");
         Ok(self.create(Session {
             user: "demo".into(),
             id_token: None,
@@ -247,6 +251,11 @@ impl Auth {
         }
     }
 
+    /// Server-side sessions, for `homie_sessions_active` (RFC 0024).
+    pub fn sessions(&self) -> usize {
+        self.sessions.lock().unwrap().len()
+    }
+
     pub fn logout(&self, sid: &str) {
         self.sessions.lock().unwrap().remove(sid);
     }
@@ -261,6 +270,13 @@ impl Auth {
         }
         parts.join(", ")
     }
+}
+
+fn login(method: &str, result: &str) {
+    crate::metrics::inc(
+        "homie_logins_total",
+        &[("method", method), ("result", result)],
+    );
 }
 
 #[cfg(test)]

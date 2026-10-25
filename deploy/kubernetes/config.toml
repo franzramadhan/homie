@@ -10,6 +10,14 @@
 #
 # Without [auth] Homie refuses to listen on 0.0.0.0.
 listen = "0.0.0.0:8080"
+# one JSON object per line, for log pipelines (RFC 0024)
+log_format = "json"
+
+# GET /metrics on its own port (RFC 0024): add the port to the Deployment
+# and Service, reachable from the scraper only.
+# [metrics]
+# listen = "0.0.0.0:9477"
+# token = { env = "METRICS_TOKEN" }
 
 [kubernetes.this]
 # in_cluster: Homie's ServiceAccount with the roles in rbac.yaml.

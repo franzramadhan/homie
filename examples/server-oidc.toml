@@ -19,6 +19,11 @@ allowed_emails = ["me@example.com"]
 # groups_claim = "groups"
 # allowed_groups = ["homelab-admins"]
 
+# Prometheus /metrics on its own listener (RFC 0024); alert rules in metrics-alerts.yaml
+[metrics]
+listen = "127.0.0.1:9477"
+token = { env = "HOMIE_METRICS_TOKEN" }
+
 [kubernetes.this]
 auth = "in_cluster"
 headlamp_url = "https://headlamp.example.com"

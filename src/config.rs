@@ -51,6 +51,13 @@ pub struct Config {
     pub notify: Option<Notify>,
     /// what is out of date (RFC 0020)
     pub updates: Updates,
+    /// a Prometheus endpoint on its own listener (RFC 0024)
+    pub metrics: Option<Metrics>,
+    /// `text` or `json`, one object per line (RFC 0024)
+    pub log_format: LogFormat,
+    /// the file the config came from, logged once logging is set up
+    #[serde(skip)]
+    pub file: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -78,6 +85,9 @@ impl Default for Config {
             healthchecks: None,
             certificates: Certificates::default(),
             notify: None,
+            metrics: None,
+            log_format: LogFormat::Text,
+            file: None,
             updates: Updates::default(),
         }
     }
@@ -385,6 +395,29 @@ pub struct Registry {
 pub struct ChartRepo {
     pub name: String,
     pub repo: String,
+}
+
+/// `GET /metrics` on a listener of its own (RFC 0024).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Metrics {
+    pub listen: String,
+    /// when set, scrapes need `Authorization: Bearer <token>`
+    pub token: Option<Secret>,
+    /// evaluate card status at scrape time through the shared cache
+    #[serde(default = "yes")]
+    pub cards: bool,
+    /// "namespace/name" impersonated for forward_token clusters
+    #[serde(default)]
+    pub kubernetes_service_account: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogFormat {
+    #[default]
+    Text,
+    Json,
 }
 
 /// Notifications (RFC 0019): status changes of the overview cards.
@@ -874,6 +907,14 @@ pub fn expand(path: &Path) -> PathBuf {
     }
 }
 
+/// After `load`: logging depends on the config, so this comes once it is set up.
+pub fn log_source(cfg: &Config) {
+    match &cfg.file {
+        Some(p) => tracing::info!(msg = "config", file = %p.display()),
+        None => tracing::info!(msg = "config", file = "none, environment only"),
+    }
+}
+
 pub fn load(explicit: Option<PathBuf>) -> Result<Config> {
     let explicit = explicit.or_else(|| std::env::var_os("HOMIE_CONFIG").map(PathBuf::from));
     let file = match explicit {
@@ -900,13 +941,26 @@ pub fn load(explicit: Option<PathBuf>) -> Result<Config> {
         .merge(Env::prefixed("HOMIE__").split("__"))
         .extract()
         .map_err(|e| format!("config: {e}"))?;
-    match &file {
-        Some(p) => tracing::info!(msg = "config", file = %p.display()),
-        None => tracing::info!(msg = "config", file = "none, environment only"),
-    }
+    cfg.file = file;
     cfg.state_dir = cfg.state_dir.as_deref().map(expand);
     validate(&cfg)?;
     Ok(cfg)
+}
+
+fn check_service_account(section: &str, sa: Option<&str>) -> Result<()> {
+    match sa {
+        Some(sa)
+            if !sa
+                .split_once('/')
+                .is_some_and(|(ns, name)| valid_namespace(ns) && valid_namespace(name)) =>
+        {
+            Err(format!(
+                "{section}.kubernetes_service_account: set \"namespace/name\" of a read-only ServiceAccount"
+            )
+            .into())
+        }
+        _ => Ok(()),
+    }
 }
 
 /// DNS-1123 label: Kubernetes namespace and ServiceAccount names.
@@ -1045,15 +1099,13 @@ pub fn validate(cfg: &Config) -> Result<()> {
         {
             return Err("notify: min_tone values are \"warn\" or \"bad\"".into());
         }
-        if let Some(sa) = &n.kubernetes_service_account
-            && !sa
-                .split_once('/')
-                .is_some_and(|(ns, name)| valid_namespace(ns) && valid_namespace(name))
-        {
-            return Err(
-                "notify.kubernetes_service_account: set \"namespace/name\" of a read-only ServiceAccount".into(),
-            );
-        }
+        check_service_account("notify", n.kubernetes_service_account.as_deref())?;
+    }
+    if let Some(m) = &cfg.metrics {
+        m.listen
+            .parse::<std::net::SocketAddr>()
+            .map_err(|e| format!("metrics.listen: {:?} is not ip:port: {e}", m.listen))?;
+        check_service_account("metrics", m.kubernetes_service_account.as_deref())?;
     }
     for r in &cfg.updates.charts {
         if !(r.repo.starts_with("oci://")
@@ -1445,6 +1497,14 @@ mod tests {
         for (toml, error) in [
             ("listen = \"nowhere\"".to_string(), "listen: \"nowhere\" is not ip:port"),
             ("refresh_seconds = 1".into(), "refresh_seconds must be 5 or more"),
+            (
+                "[metrics]\nlisten = \"9477\"\n".into(),
+                "metrics.listen: \"9477\" is not ip:port",
+            ),
+            (
+                "[metrics]\nlisten = \"127.0.0.1:9477\"\nkubernetes_service_account = \"homie\"\n".into(),
+                "metrics.kubernetes_service_account",
+            ),
             (
                 "allow_unauthenticated = true\n[local_login]\npassword_hash = \"x\"\nrole = \"nope\"\n".into(),
                 "local_login.role: no [roles.nope]",

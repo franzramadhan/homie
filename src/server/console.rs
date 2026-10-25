@@ -64,12 +64,14 @@ pub async fn open(
             result = "denied",
             reason = "off"
         );
+        crate::metrics::action("console", "denied");
         return error(StatusCode::FORBIDDEN, "consoles are off for this Proxmox");
     }
     let console = match pve.console(&req).await {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!(msg = "console", user = user(&caller), guest, result = "error", error = %e);
+            crate::metrics::action("console", "error");
             return error(StatusCode::BAD_REQUEST, e);
         }
     };
@@ -120,6 +122,7 @@ pub async fn connect(
             result = "denied",
             reason = "expired id"
         );
+        crate::metrics::action("console", "denied");
         return error(StatusCode::FORBIDDEN, "this console expired: open it again");
     };
     let Some(pve) = state.lab.proxmox.get(&name) else {
@@ -129,6 +132,7 @@ pub async fn connect(
         Ok(u) => u,
         Err(e) => {
             tracing::warn!(msg = "console", user = user(&caller), pve = name, guest = p.console.guest, result = "error", error = %e);
+            crate::metrics::action("console", "error");
             return error(StatusCode::BAD_GATEWAY, e);
         }
     };
@@ -140,6 +144,7 @@ pub async fn connect(
         mode = p.console.mode,
         result = "open"
     );
+    crate::metrics::action("console", "ok");
     let max = pve.console_max;
     ws.protocols(["binary"])
         .on_upgrade(move |socket| relay(state, caller, name, p, socket, upstream, max))
@@ -154,6 +159,7 @@ async fn relay(
     upstream: ConsoleStream,
     max: Duration,
 ) {
+    let _open = crate::metrics::Open::new(&crate::metrics::CONSOLES);
     let (mut down_tx, mut down_rx) = socket.split();
     let (mut up_tx, mut up_rx) = upstream.split();
     let started = Instant::now();

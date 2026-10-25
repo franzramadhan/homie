@@ -296,10 +296,18 @@ async fn send_all(targets: &[Target], m: &Message) {
     for t in targets {
         match t.send(m).await {
             Ok(()) => {
-                tracing::info!(msg = "notify", card = %m.card, name = %m.name, target = kind_name(t), from = word(m.from), to = word(m.to), result = "ok")
+                tracing::info!(msg = "notify", card = %m.card, name = %m.name, target = kind_name(t), from = word(m.from), to = word(m.to), result = "ok");
+                crate::metrics::inc(
+                    "homie_notify_sent_total",
+                    &[("target", kind_name(t)), ("result", "ok")],
+                );
             }
             Err(e) => {
-                tracing::warn!(msg = "notify", card = %m.card, name = %m.name, target = kind_name(t), error = %e, result = "error")
+                tracing::warn!(msg = "notify", card = %m.card, name = %m.name, target = kind_name(t), error = %e, result = "error");
+                crate::metrics::inc(
+                    "homie_notify_sent_total",
+                    &[("target", kind_name(t)), ("result", "error")],
+                );
             }
         }
     }
@@ -319,12 +327,17 @@ pub async fn targets(n: &Notify) -> Result<Vec<Target>> {
 
 /// The overview queries to evaluate, as `(kind, name)`. Kubernetes cards of
 /// a forward_token cluster need a ServiceAccount to read as.
-pub fn cards(lab: &crate::integrations::Lab, n: &Notify) -> Vec<(String, String)> {
+/// The cards to evaluate without a user: `service_account` says whether
+/// forward_token clusters have an identity; `wanted` empty is all but `alerts`.
+pub fn cards(
+    lab: &crate::integrations::Lab,
+    service_account: bool,
+    wanted: &[String],
+) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     let mut push = |k: &str, n: &str| out.push((k.to_string(), n.to_string()));
-    let kube_ok = |k: &crate::integrations::kubernetes::Kube| {
-        !k.forwards_token() || n.kubernetes_service_account.is_some()
-    };
+    let kube_ok =
+        |k: &crate::integrations::kubernetes::Kube| !k.forwards_token() || service_account;
     for name in lab.proxmox.keys() {
         push("pve", name);
     }
@@ -334,7 +347,7 @@ pub fn cards(lab: &crate::integrations::Lab, n: &Notify) -> Vec<(String, String)
                 push(kind, name);
             }
         } else {
-            tracing::warn!(msg = "notify skipped", card = "kubernetes", name = %name, reason = "forward_token without notify.kubernetes_service_account");
+            tracing::warn!(msg = "notify skipped", card = "kubernetes", name = %name, reason = "forward_token without kubernetes_service_account");
         }
     }
     for name in lab.grafana.keys() {
@@ -370,10 +383,10 @@ pub fn cards(lab: &crate::integrations::Lab, n: &Notify) -> Vec<(String, String)
     }
     out.retain(|(k, _)| {
         let id = card_id(k);
-        if n.cards.is_empty() {
+        if wanted.is_empty() {
             id != "alerts"
         } else {
-            n.cards.iter().any(|c| c == id)
+            wanted.iter().any(|c| c == id)
         }
     });
     out
@@ -429,7 +442,7 @@ pub async fn run(state: Shared) {
         service_account: n.kubernetes_service_account.clone(),
         ..Default::default()
     };
-    let cards = cards(&state.lab, &n);
+    let cards = cards(&state.lab, n.kubernetes_service_account.is_some(), &n.cards);
     tracing::info!(msg = "notify", cards = cards.len(), targets = targets.len());
     let path = state_file(state.cfg.state_dir.as_deref());
     let mut states = load(path.as_deref());

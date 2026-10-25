@@ -1,0 +1,34 @@
+# Alert rules for Homie's /metrics (RFC 0024), as a Prometheus rule group
+# (VMRule and PrometheusRule take the same groups under spec.groups).
+groups:
+  - name: homie
+    rules:
+      - alert: HomieCardBad
+        expr: homie_card_status{status="bad"} == 1
+        for: 10m
+        annotations:
+          summary: "{{ $labels.card }} {{ $labels.name }} is red in Homie"
+      - alert: HomieCertificateExpiring
+        expr: homie_cert_expiry_timestamp_seconds - time() < 14 * 86400
+        annotations:
+          summary: "{{ $labels.target }} expires in under 14 days"
+      - alert: HomieCertificateProbeFailing
+        expr: homie_cert_probe_success == 0
+        for: 30m
+        annotations:
+          summary: "no TLS handshake with {{ $labels.target }}"
+      - alert: HomieQueryNoSuccess
+        expr: time() - homie_query_last_success_timestamp_seconds > 900
+        annotations:
+          summary: "Homie has not read {{ $labels.kind }} {{ $labels.name }} for 15 minutes"
+      - alert: HomieQuerySlow
+        expr: >
+          histogram_quantile(0.95,
+            sum by (kind, name, le) (rate(homie_query_duration_seconds_bucket[10m]))) > 5
+        for: 15m
+        annotations:
+          summary: "p95 of {{ $labels.kind }} {{ $labels.name }} is over 5 s"
+      - alert: HomieLoginsDenied
+        expr: increase(homie_logins_total{result="denied"}[15m]) > 10
+        annotations:
+          summary: "more than 10 denied logins in 15 minutes"
