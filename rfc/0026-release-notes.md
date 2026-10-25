@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| draft | 2026-10-25 | #N | - |
+| draft | 2026-10-25 | #113 | - |
 
 > Link each pending chart and image update to the release notes between
 > the running and the newest version, and mark the updates whose notes
