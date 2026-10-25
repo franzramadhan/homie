@@ -57,6 +57,8 @@ pub struct Config {
     pub log_format: LogFormat,
     /// when storage fills up (RFC 0025)
     pub forecast: Forecast,
+    /// who did what and when (RFC 0027)
+    pub history: History,
     /// the file the config came from, logged once logging is set up
     #[serde(skip)]
     pub file: Option<PathBuf>,
@@ -92,6 +94,7 @@ impl Default for Config {
             file: None,
             updates: Updates::default(),
             forecast: Forecast::default(),
+            history: History::default(),
         }
     }
 }
@@ -126,7 +129,7 @@ pub struct Auth {
 
 /// Pages a role can be given. The Overview is always there, with the cards
 /// of the allowed pages only.
-pub const PAGES: [&str; 10] = [
+pub const PAGES: [&str; 11] = [
     "infra",
     "workloads",
     "gitops",
@@ -137,6 +140,8 @@ pub const PAGES: [&str; 10] = [
     "workflows",
     "services",
     "outage",
+    // RFC 0027
+    "history",
 ];
 
 /// A read-only view (RFC 0016). Roles never run actions.
@@ -341,6 +346,25 @@ pub enum Distro {
 impl Default for Distro {
     fn default() -> Self {
         Distro::Name("auto".into())
+    }
+}
+
+/// The action history page (RFC 0027).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct History {
+    /// `false`: no page, nothing kept
+    pub enabled: bool,
+    /// entries kept, in memory and in `state_dir/history.jsonl`
+    pub size: usize,
+}
+
+impl Default for History {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            size: 1000,
+        }
     }
 }
 
@@ -1194,6 +1218,9 @@ pub fn validate(cfg: &Config) -> Result<()> {
             );
         }
     }
+    if cfg.history.size == 0 {
+        return Err("history.size must be 1 or more".into());
+    }
     let c = &cfg.certificates;
     if c.interval_hours == 0 {
         return Err("certificates.interval_hours must be 1 or more".into());
@@ -1743,6 +1770,10 @@ mod tests {
             (
                 "[certificates]\ninterval_hours = 0\n".into(),
                 "certificates.interval_hours must be 1 or more",
+            ),
+            (
+                "[history]\nsize = 0\n".into(),
+                "history.size must be 1 or more",
             ),
             (
                 "[[certificates.targets]]\nhost = \"https://a.example\"\n".into(),

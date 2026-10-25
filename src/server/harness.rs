@@ -357,6 +357,7 @@ impl Homie {
             lab: Lab::new(&cfg).await.unwrap(),
             cache: Cache::new(None).unwrap(),
             auth: Auth::new(&cfg).await.unwrap(),
+            history: super::history::History::new(&cfg).unwrap(),
             cfg,
             github_states: Default::default(),
             consoles: Default::default(),

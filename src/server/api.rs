@@ -69,6 +69,8 @@ pub async fn meta(State(state): State<Shared>, Extension(caller): Extension<Call
         "updates": full && lab.updates_on(),
         // the "Full in" column (RFC 0025)
         "forecast": lab.forecast.enabled,
+        // RFC 0027: `kept` false means memory only
+        "history": (state.history.enabled() && page("history")).then(|| json!({ "kept": state.history.kept() })),
     }))
     .into_response()
 }
@@ -78,6 +80,12 @@ pub async fn query(
     Extension(caller): Extension<Caller>,
     Path((kind, name)): Path<(String, String)>,
 ) -> Response {
+    if kind == "history" {
+        return match super::history::envelope(&state, &caller).await {
+            Some(envelope) => Json(envelope).into_response(),
+            None => error(StatusCode::NOT_FOUND, "no query history/_"),
+        };
+    }
     if let Some(r) = &caller.role
         && !crate::roles::allows(&r.role, &kind)
     {
@@ -89,23 +97,35 @@ pub async fn query(
     }
 }
 
+/// Logs, counts and records (RFC 0027) an action. The history target starts
+/// with the action's integration: `pve/`, `flux/`, `argocd/`, `github/`.
 pub(super) fn log_action(
+    state: &Shared,
     action: &str,
     caller: &Caller,
     target: &str,
     result: &Result<String, crate::Error>,
 ) {
     let user = caller.email.as_deref().unwrap_or("local");
-    match result {
+    let (result, error) = match result {
         Ok(detail) => {
             tracing::info!(msg = "action", action, user, target, detail = %detail, result = "ok");
-            crate::metrics::action(action, "ok");
+            ("ok", None)
         }
         Err(e) => {
             tracing::warn!(msg = "action", action, user, target, error = %e, result = "error");
-            crate::metrics::action(action, "error");
+            ("error", Some(e.to_string()))
         }
-    }
+    };
+    crate::metrics::action(action, result);
+    let integration = action.split('.').next().unwrap_or_default();
+    state.record(super::history::Entry::by(
+        caller,
+        action,
+        &format!("{integration}/{target}"),
+        result,
+        error,
+    ));
 }
 
 pub async fn pve_power(
@@ -119,6 +139,7 @@ pub async fn pve_power(
     };
     let result = pve.power(&req).await;
     log_action(
+        &state,
         &format!("pve.guest.{}", req.action),
         &caller,
         &format!("{name}/{}/{}", req.node, req.vmid),
@@ -168,6 +189,7 @@ pub async fn flux_reconcile(
         Err(e) => Err(e),
     };
     log_action(
+        &state,
         "flux.reconcile",
         &caller,
         &format!("{name}/{}/{}/{}", req.kind, req.namespace, req.name),
@@ -194,6 +216,7 @@ pub async fn argocd_refresh(
         Err(e) => Err(e),
     };
     log_action(
+        &state,
         "argocd.refresh",
         &caller,
         &format!("{name}/{}/{}", req.namespace, req.name),

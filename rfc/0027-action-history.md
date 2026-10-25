@@ -57,6 +57,40 @@ the person.
 
 No new metric: the counters of RFC 0024 already count actions.
 
+## Changes during implementation
+
+- Targets name the integration too: `pve/<proxmox>/<node>/<vmid>`,
+  `flux/<cluster>/<kind>/<ns>/<name>`, `argocd/<cluster>/<ns>/<name>`;
+  a login's target is its method (`local`, `oidc`, `demo`), a logout has
+  none. GitHub watch
+  saves (RFC 0015, RFC 0017) go through the same path and are recorded as
+  `github.watch`.
+- Results: a failed or locked password login and an OIDC refusal are
+  `denied`, with the reason in `error` ("too many failed logins" for the
+  lockout). Consoles are `console.open` and `console.close`.
+- "Their own" for a role means entries of the same session: each entry
+  keeps a short digest of the session id (never the id), since every demo
+  visitor is the user `demo`. A role's entries from an earlier session read
+  "another user" too.
+- "Visible" means the target is in the role's own view right now: a guest
+  in its filtered Proxmox overview (node and vmid), a Flux object in its
+  filtered Flux list. Argo CD entries never are, as Argo CD is never shown
+  to a role. Errors are shown to a role with addresses redacted.
+- A refused action's target comes from its request body, read in the
+  guard only to name the target (at most 4 KiB, never kept); a body that
+  does not parse is recorded with the Proxmox or cluster alone
+  (`pve.power`, `pve/<proxmox>`), which no other role sees.
+- The page is also the query `history/_` (`/api/q/history/_`), so the live
+  stream carries it like any other; `GET /api/history` returns the rows
+  alone. Both answer 404 when the history is off or not one of the role's
+  pages. For the role route model (spec/roles.bend) `/api/history` is a
+  `Query`: a read whose page is checked by its handler.
+- The file is also rewritten when it reaches twice `history.size` lines,
+  so a long uptime does not grow it without bound. Texts are cut at 256
+  characters (a failed login's user name is whatever was typed).
+- `msg="history"` is also logged at start when unreadable lines were
+  dropped.
+
 ## Alternatives
 
 | Option | Why not |

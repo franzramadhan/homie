@@ -17,7 +17,7 @@ use crate::{
 };
 
 /// Routes a role may use: reads only (RFC 0016). Whether a query's page is
-/// allowed is checked per query. With per-session GitHub watches (RFC 0017)
+/// allowed is checked per query, and the history's (RFC 0027) by its handler. With per-session GitHub watches (RFC 0017)
 /// a role with the workflows page may also sign in to GitHub and pick: there
 /// it only ever touches the visitor's own data.
 fn role_route(role: &Role, method: &Method, path: &str, github_session: bool) -> bool {
@@ -28,6 +28,7 @@ fn role_route(role: &Role, method: &Method, path: &str, github_session: bool) ->
             path == "/api/meta"
                 || path == "/api/stream"
                 || path.starts_with("/api/q/")
+                || path == "/api/history"
                 || (picker
                     && matches!(
                         path,
@@ -197,6 +198,10 @@ pub async fn session(State(state): State<Shared>, mut req: Request, next: Next) 
         && !role_route(&r.role, req.method(), req.uri().path(), github_session)
     {
         tracing::info!(msg = "denied", role = %r.name, route = %req.uri().path());
+        // a refused action shows in the history (RFC 0027)
+        if req.method() == Method::POST {
+            super::history::denied(&state, &caller, req).await;
+        }
         return deny(StatusCode::FORBIDDEN, "not available in this view");
     }
     req.extensions_mut().insert(caller);
@@ -217,6 +222,7 @@ mod tests {
         };
         assert!(role_route(&r, &Method::GET, "/api/q/k8s/main", false));
         assert!(role_route(&r, &Method::GET, "/api/stream", false));
+        assert!(role_route(&r, &Method::GET, "/api/history", false));
         assert!(role_route(&r, &Method::POST, "/auth/logout", false));
         for (m, p) in [
             (Method::POST, "/api/act/pve/lab/power"),
@@ -269,6 +275,7 @@ mod tests {
             ("/api/meta", "Meta"),
             ("/api/stream", "Stream"),
             ("/api/q/k8s/main", "Query"),
+            ("/api/history", "Query"),
             ("/auth/logout", "Logout"),
             ("/api/logs", "Logs"),
             ("/github/login", "GhLogin"),

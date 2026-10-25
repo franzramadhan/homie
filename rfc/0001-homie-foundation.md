@@ -569,10 +569,14 @@ quiet_hosts = []
 # install_url = ""                     # the app's install page, offered when a visitor sees no repos
 
 [roles.demo]                           # optional, RFC 0016: a read-only view
-# pages = ["infra", "workloads", "gitops"]
+# pages = ["infra", "workloads", "gitops", "history"]
 # namespaces = ["apps"]                # explicit names, no globs
 # proxmox_tags = ["demo"]              # guests shown only with one of these tags
 # kubernetes_service_account = "homie/homie-demo"   # impersonated for Kubernetes reads
+
+[history]                              # RFC 0027: who did what and when
+enabled = true                         # false: no page, nothing kept
+size = 1000                            # entries kept, in memory and state_dir/history.jsonl
 
 [demo]                                 # optional: "Try the demo" on the login page
 # (and [local_login] role = "demo" gives the password user that role too)
@@ -592,6 +596,8 @@ quiet = false
 | `msg=query source=<name> ms=<n> status=ok\|error\|stale\|quiet` | Per backend fetch (debug level unless error) |
 | `msg=action action=<name> user=<email> target=<id> result=ok\|error` | Every write, always logged |
 | `msg=login user=<email> result=ok\|denied` | Logins and allowlist denials |
+| `msg=logout user=<email> result=ok` | Logouts (RFC 0027) |
+| `msg=history result=error` | `history.jsonl` could not be written (once, then every hour) |
 | `msg=insecure integration=<name> reason=tls_verify_off\|plain_http\|unauthenticated` | At start, once per weakened setting |
 | `GET /healthz` | Liveness, no backend calls |
 

@@ -186,6 +186,7 @@ pub async fn save_watch(
         let n = gh.save_session(&user_key(&caller), &body.repo, &body.workflows);
         // the visitor's own repositories stay out of the log
         log_action(
+            &state,
             "github.watch",
             &caller,
             "session",
@@ -199,7 +200,7 @@ pub async fn save_watch(
         .as_ref()
         .map(|(a, r)| format!("added {a:?} removed {r:?}"))
         .map_err(|e| e.to_string().into());
-    log_action("github.watch", &caller, &body.repo, &logged);
+    log_action(&state, "github.watch", &caller, &body.repo, &logged);
     match result {
         Ok(_) => {
             state.cache.invalidate("github:");

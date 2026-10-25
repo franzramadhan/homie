@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { act, useLiveStream, useMeta } from "./api";
 import "./index.css";
 import { GitOps } from "./routes/gitops";
+import { History } from "./routes/history";
 import { Login } from "./routes/login";
 import { Logs } from "./routes/logs";
 import { Infra } from "./routes/infra";
@@ -33,6 +34,7 @@ function Layout() {
     ["/security", "Security", !!m?.security.length],
     ["/tailscale", "Tailscale", !!m?.tailscale],
     ["/updates", "Updates", !!m?.updates],
+    ["/history", "History", !!m?.history],
   ];
   return (
     <div className="mx-auto max-w-7xl px-4 py-4">
@@ -93,6 +95,7 @@ const router = createRouter({
     page("/security", Security),
     page("/logs", Logs),
     page("/tailscale", Tailscale),
+    page("/history", History),
     // noVNC and xterm.js load only here (RFC 0023)
     createRoute({ getParentRoute: () => root, path: "/console/$pve/$node/$type/$vmid", component: lazyRouteComponent(() => import("./routes/console"), "Console") }),
   ]),
