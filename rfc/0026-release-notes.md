@@ -65,6 +65,13 @@ fix, so updates are either all done at once or put off together.
   blob: up to three registry requests per repository, cached 12 hours like
   the tags. OCI charts read the same way; their config blob is the
   `Chart.yaml`, so its `sources` and `home` count too.
+- Image config labels are inherited from the base image
+  (`external-dns` carried `GoogleContainerTools/distroless`), so a label
+  counts only when its GitHub repository plausibly names the image: a
+  path part (but `library`) and the owner or the repository contain one
+  another (letters and digits only, at least 3 characters) or share a
+  word of 3 or more. Otherwise it is ignored and `[[updates.sources]]`
+  applies. Manifest annotations and chart metadata are trusted as they are.
 - Order: metadata naming a GitHub repository wins, then
   `[[updates.sources]]` (matched on the chart name, or on the image as
   written and as `registry/repository`). A non-GitHub URL from metadata is
