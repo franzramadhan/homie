@@ -9,6 +9,7 @@ import ./spec/queries.bend as Q
 import ./spec/sessions.bend as S
 import ./spec/lockout.bend as L
 import ./spec/filter.bend as F
+import ./spec/drift.bend as D
 
 # PROOF: role_route answers False for Act before it looks at anything else.
 def Laws.no_actions(role, m, ghs):
@@ -516,3 +517,32 @@ def Laws.role_guests_tagged(xs, a, b, c):
       {==}
     case Con{+h, +t}:
       guest_step(h, F.any_ok(h, a, b, c), a, b, c, F.guests(t, a, b, c))(Laws.role_guests_tagged(t, a, b, c))({==})
+
+law drift_step:
+  for +h: D.Key
+  for k: Bool
+  for +a: Bool
+  for +b: Bool
+  for +c: Bool
+  for rest: +List<D.Key>
+  for t: +List<D.Key>
+  {D.is_empty(rest) == D.all_documented(t, a, b, c) : Bool} -> {D.documented(h, a, b, c) == k : Bool} -> {D.is_empty(D.drop_if(k, h, rest)) == Bool.and(D.documented(h, a, b, c), D.all_documented(t, a, b, c)) : Bool}
+
+def drift_step(h, k, a, b, c, rest, t):
+  match k:
+    case True{}:
+      ih => e =>
+        %Equal.sym(Bool, D.documented(h, a, b, c), True{}, e) : {D.is_empty(rest) == Bool.and(_, D.all_documented(t, a, b, c)) : Bool}
+        ih
+    case False{}:
+      ih => e =>
+        %Equal.sym(Bool, D.documented(h, a, b, c), False{}, e) : {False{} == Bool.and(_, D.all_documented(t, a, b, c)) : Bool}
+        {==}
+
+# PROOF: induction on the keys, with drift_step.
+def Laws.config_documented(xs, a, b, c):
+  match xs:
+    case Nil{}:
+      {==}
+    case Con{+h, +t}:
+      drift_step(h, D.documented(h, a, b, c), a, b, c, D.missing(t, a, b, c), t)(Laws.config_documented(t, a, b, c))({==})

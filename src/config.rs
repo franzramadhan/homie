@@ -1477,15 +1477,10 @@ mod tests {
         }
     }
 
-    /// CONFIG.md names every key and its snippets parse: a new or renamed
-    /// key fails here until the reference is updated.
-    #[test]
-    fn config_md_has_no_drift() {
-        let doc = include_str!("../CONFIG.md");
-        let src = include_str!("config.rs");
-        let src = &src[..src.find("#[cfg(test)]").unwrap()];
-        let missing: Vec<_> = src
-            .lines()
+    /// The keys of `src` (struct fields, `pub name:`) that `doc` does not
+    /// name, in source order: `missing` in spec/drift.bend.
+    fn undocumented<'a>(src: &'a str, doc: &str) -> Vec<&'a str> {
+        src.lines()
             .filter_map(|l| l.trim().strip_prefix("pub "))
             .filter_map(|l| l.split_once(':').map(|(k, _)| k))
             .filter(|k| k.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
@@ -1503,7 +1498,18 @@ mod tests {
                 .iter()
                 .any(|p| doc.contains(p.as_str()))
             })
-            .collect();
+            .collect()
+    }
+
+    /// CONFIG.md names every key and its snippets parse: a new or renamed
+    /// key fails here until the reference is updated (LAWS.bend
+    /// `config_documented`).
+    #[test]
+    fn config_md_has_no_drift() {
+        let doc = include_str!("../CONFIG.md");
+        let src = include_str!("config.rs");
+        let src = &src[..src.find("#[cfg(test)]").unwrap()];
+        let missing = undocumented(src, doc);
         assert!(missing.is_empty(), "CONFIG.md misses {missing:?}");
         for block in doc.split("```toml\n").skip(1) {
             let toml = &block[..block.find("```").unwrap()];
@@ -1511,6 +1517,48 @@ mod tests {
                 .merge(Toml::string(toml))
                 .extract::<Config>()
                 .unwrap_or_else(|e| panic!("CONFIG.md snippet: {e}\n{toml}"));
+        }
+    }
+
+    /// Keeps `undocumented` equal to `missing` in spec/drift.bend, whose law
+    /// `config_documented` (LAWS.bend) is proven by `bend PROOF.bend`: every
+    /// list of up to three of three keys, against every subset CONFIG.md
+    /// names, each key as a field and as a section.
+    #[test]
+    fn drift_matches_spec() {
+        let keys = ["alpha", "beta", "gamma"];
+        let mut lists: Vec<Vec<usize>> = vec![vec![]];
+        for _ in 0..3 {
+            let longer: Vec<_> = lists
+                .iter()
+                .filter(|l| l.len() == lists.last().unwrap().len())
+                .flat_map(|l| (0..3).map(move |k| [l.clone(), vec![k]].concat()))
+                .collect();
+            lists.extend(longer);
+        }
+        assert_eq!(lists.len(), 1 + 3 + 9 + 27);
+        let forms = [|k: &str| format!("`{k}`"), |k: &str| format!("[{k}]")];
+        for set in 0..8u32 {
+            for form in forms {
+                let doc: String = (0..3)
+                    .filter(|i| set & 1 << i != 0)
+                    .map(|i| form(keys[i]) + "\n")
+                    .collect();
+                for list in &lists {
+                    let src: String = list
+                        .iter()
+                        .map(|&k| format!("    pub {}: u8,\n", keys[k]))
+                        .collect();
+                    let missing: Vec<&str> = list
+                        .iter()
+                        .filter(|&&k| set & 1 << k == 0)
+                        .map(|&k| keys[k])
+                        .collect();
+                    assert_eq!(undocumented(&src, &doc), missing, "{list:?} {set}");
+                    let all = list.iter().all(|&k| set & 1 << k != 0);
+                    assert_eq!(undocumented(&src, &doc).is_empty(), all);
+                }
+            }
         }
     }
 

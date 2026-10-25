@@ -9,6 +9,7 @@ import ./spec/queries.bend as Q
 import ./spec/sessions.bend as S
 import ./spec/lockout.bend as L
 import ./spec/filter.bend as F
+import ./spec/drift.bend as D
 
 # LAW: a role never reaches an action route (power, reconcile, refresh), with
 # any method, any role and either GitHub store.
@@ -197,3 +198,12 @@ law role_guests_tagged:
   for +b: Bool
   for +c: Bool
   {F.all_tagged(F.guests(xs, a, b, c), a, b, c) == True{} : Bool}
+
+# LAW: the config drift check passes exactly when CONFIG.md names every key
+# of src/config.rs: a new or renamed key cannot merge undocumented.
+law config_documented:
+  for xs: +List<D.Key>
+  for +a: Bool
+  for +b: Bool
+  for +c: Bool
+  {D.passes(xs, a, b, c) == D.all_documented(xs, a, b, c) : Bool}
