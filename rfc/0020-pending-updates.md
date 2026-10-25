@@ -69,7 +69,8 @@ Generic clients serve every kind; a kind only maps "what is installed" to
 
 - **GitHub releases**: `GET /repos/{owner}/{repo}/releases`, drafts and
   pre-releases dropped. Unauthenticated (60 requests an hour, enough with
-  the cache), or with `updates.github_token`.
+  the cache), or with `updates.github_token`; without it, with the
+  `[github]` token or App installation token when set (RFC 0026).
 - **OCI distribution API** (any registry: GHCR, Docker Hub, Quay, Harbor,
   Zot, ...): `GET /v2/<name>/tags/list`, with the anonymous bearer-token
   challenge every registry speaks. Credentials per registry host in
@@ -112,7 +113,7 @@ newest overall are shown ("1.27.5 / 1.29.0 available").
 | `updates.upstream.distro` | `false` | newest distribution release |
 | `updates.upstream.flux` | `false` | newest Flux release |
 | `updates.upstream.charts` | `false` | newest chart versions |
-| `updates.github_token` | none | secret reference, raises the GitHub rate limit |
+| `updates.github_token` | none | secret reference, raises the GitHub rate limit; unset: the `[github]` token or App installation token |
 | `updates.registries[].host` | - | registry host, for example `ghcr.io` |
 | `updates.registries[].username`, `password` | - | secret references |
 | `updates.charts[].name`, `repo` | - | repository for a plain Helm release's chart |

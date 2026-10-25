@@ -35,6 +35,7 @@ pub struct GitHub {
     client_secret: Option<String>,
     // per repository owner: installation token and its expiry
     tokens: Mutex<HashMap<String, (String, Instant)>>,
+    public_warned: std::sync::atomic::AtomicBool,
     /// per Homie session: its GitHub user token and, with store = "session",
     /// its own watches (RFC 0017)
     personal: std::sync::Mutex<HashMap<String, Personal>>,
@@ -217,6 +218,7 @@ impl GitHub {
             client_id,
             client_secret,
             tokens: Mutex::new(HashMap::new()),
+            public_warned: Default::default(),
             personal: std::sync::Mutex::new(HashMap::new()),
         })
     }
@@ -281,20 +283,72 @@ impl GitHub {
                 .map_err(|e| format!("the GitHub App is not installed for {owner}: {e}"))?,
         };
         let inst_id = inst["id"].as_u64().ok_or("installation without id")?;
+        let token = self.mint(&jwt, inst_id).await?;
+        // tokens live 1 h; renew 5 minutes early
+        tokens.insert(
+            owner.to_string(),
+            (token.clone(), Instant::now() + Duration::from_secs(55 * 60)),
+        );
+        Ok(token)
+    }
+
+    async fn mint(&self, jwt: &str, inst_id: u64) -> Result<String> {
         let t = self
             .request(
                 reqwest::Method::POST,
                 &format!("/app/installations/{inst_id}/access_tokens"),
-                &jwt,
+                jwt,
             )
             .await?;
-        let token = t["token"]
+        Ok(t["token"]
             .as_str()
             .ok_or("no installation token")?
-            .to_string();
-        // tokens live 1 h; renew 5 minutes early
+            .to_string())
+    }
+
+    /// True when this reads github.com, whose tokens also work for the
+    /// public lookups in `upstream`.
+    pub fn github_com(&self) -> bool {
+        self.target.base.host_str() == Some("api.github.com")
+    }
+
+    /// A token for public GitHub reads (release notes, upstream versions)
+    /// when `updates.github_token` is unset: the fine-grained token, or an
+    /// installation token of the app's first installation (5000 requests
+    /// per hour instead of 60). None means anonymous; a failure is logged
+    /// once.
+    pub async fn public_token(&self) -> Option<String> {
+        let r = match &self.cred {
+            Cred::Token(t) => return Some(t.get().await),
+            Cred::App { id, key } => self.any_installation(*id, key).await,
+            Cred::None => return None,
+        };
+        r.inspect_err(|e| {
+            if !self.public_warned.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                tracing::warn!(msg = "github app token for public reads failed, reading anonymously", error = %e);
+            }
+        })
+        .ok()
+    }
+
+    async fn any_installation(&self, id: u64, key: &ring::rsa::KeyPair) -> Result<String> {
+        // owners are never empty, so "" is free for this token
+        let mut tokens = self.tokens.lock().await;
+        if let Some((t, until)) = tokens.get("")
+            && Instant::now() < *until
+        {
+            return Ok(t.clone());
+        }
+        let jwt = app_jwt(key, id, jiff::Timestamp::now().as_second())?;
+        let list = self
+            .request(reqwest::Method::GET, "/app/installations?per_page=1", &jwt)
+            .await?;
+        let inst_id = list[0]["id"]
+            .as_u64()
+            .ok_or("the GitHub App has no installation")?;
+        let token = self.mint(&jwt, inst_id).await?;
         tokens.insert(
-            owner.to_string(),
+            String::new(),
             (token.clone(), Instant::now() + Duration::from_secs(55 * 60)),
         );
         Ok(token)
@@ -831,6 +885,10 @@ mod tests {
             assert_eq!(bearer(&h), "user-token");
             Json(json!({"installations": [{"id": 1}, {"id": "x"}, {"id": 2}]}))
         };
+        let app_installations = |h: HeaderMap| async move {
+            assert_eq!(bearer(&h).split('.').count(), 3, "app JWT expected");
+            Json(json!([{"id": 2}]))
+        };
         let repositories = |Path(id): Path<u64>| async move {
             Json(match id {
                 1 => json!({"repositories": [{"full_name": "zed/b"}, {"name": "no full name"}]}),
@@ -851,6 +909,7 @@ mod tests {
             Router::new()
                 .route("/users/{owner}/installation", get(installation("users")))
                 .route("/orgs/{owner}/installation", get(installation("orgs")))
+                .route("/app/installations", get(app_installations))
                 .route("/app/installations/{id}/access_tokens", post(access))
                 .route("/repos/{owner}/{repo}/actions/workflows", get(workflows))
                 .route("/repos/{owner}/{repo}/actions/workflows/{file}", get(meta))
@@ -945,6 +1004,33 @@ mod tests {
         assert_eq!(e.to_string(), "installation without id");
         let e = gh.token_for("notoken").await.unwrap_err();
         assert_eq!(e.to_string(), "no installation token");
+    }
+
+    #[tokio::test]
+    async fn public_reads_use_the_app() {
+        let minted = Arc::new(AtomicUsize::new(0));
+        let gh = GitHub::new(&cfg(&fake(minted.clone()).await), None)
+            .await
+            .unwrap();
+        assert!(!gh.github_com());
+        // the first installation's token, minted once and cached
+        assert_eq!(gh.public_token().await.as_deref(), Some("inst-2"));
+        assert_eq!(gh.public_token().await.as_deref(), Some("inst-2"));
+        assert_eq!(minted.load(Ordering::SeqCst), 1);
+
+        let mut c = cfg("https://api.github.com");
+        c.app_id = None;
+        c.private_key = None;
+        c.token = Some(crate::secret::Secret::Plain("pat".into()));
+        let gh = GitHub::new(&c, None).await.unwrap();
+        assert!(gh.github_com());
+        assert_eq!(gh.public_token().await.as_deref(), Some("pat"));
+
+        // no installation to mint from: anonymous
+        let empty = crate::testkit::serve(Router::new()).await;
+        let gh = GitHub::new(&cfg(&empty), None).await.unwrap();
+        assert_eq!(gh.public_token().await, None);
+        assert_eq!(gh.public_token().await, None);
     }
 
     #[tokio::test]
