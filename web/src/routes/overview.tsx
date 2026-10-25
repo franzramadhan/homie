@@ -186,7 +186,7 @@ function OpenBaoCard({ name }: { name: string }) {
   const q = useQ<BaoHealth>("openbao", name);
   return (
     <Card
-      title={`OpenBao ${name}`}
+      title={`OpenBao / Vault ${name}`}
       env={q.data}
       summary={(d) => [d.sealed ? "SEALED" : !d.initialized ? "not initialized" : `unsealed, ${d.state}`, `version ${d.version}`]}
     />

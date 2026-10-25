@@ -35,6 +35,8 @@ pub struct Config {
     pub proxmox: BTreeMap<String, Proxmox>,
     pub kubernetes: BTreeMap<String, Kubernetes>,
     pub grafana: BTreeMap<String, Grafana>,
+    /// `[vault.*]` is the same section: Vault answers the same health API
+    #[serde(alias = "vault")]
     pub openbao: BTreeMap<String, OpenBao>,
     pub security: Security,
     pub logs: Logs,
@@ -1738,6 +1740,22 @@ mod tests {
              [quiet_hours]\nwindow = \"23:00-06:00\"\n"
         ))
         .unwrap();
+    }
+
+    #[test]
+    fn vault_is_openbao() {
+        let cfg: Config =
+            Figment::from(Toml::string("[vault.v]\nurl = \"https://vault.example\"\n"))
+                .extract()
+                .unwrap();
+        assert_eq!(cfg.openbao["v"].url, "https://vault.example");
+        // both names at once is a config error, not a silent merge
+        let both = "[vault.v]\nurl = \"x\"\n[openbao.b]\nurl = \"y\"\n";
+        assert!(
+            Figment::from(Toml::string(both))
+                .extract::<Config>()
+                .is_err()
+        );
     }
 
     #[test]
