@@ -189,14 +189,20 @@ fn tls() -> Tls {
     }
 }
 
-/// GET with up to three redirects (dl.k8s.io answers with one).
+/// GET with up to three redirects (dl.k8s.io answers with one, registries
+/// send blobs to a CDN). Credentials never follow a redirect to another host.
 async fn get(url: &str, headers: &[(&str, String)]) -> Result<reqwest::Response> {
     let mut url = url.to_string();
+    let mut host = None;
     for _ in 0..4 {
         let t = http::target(&url, &tls()).await?;
+        let first = host.get_or_insert_with(|| t.base.host_str().map(String::from));
+        let same = first.as_deref() == t.base.host_str();
         let mut req = t.client.get(t.base.clone());
         for (k, v) in headers {
-            req = req.header(*k, v);
+            if same || *k != "Authorization" {
+                req = req.header(*k, v);
+            }
         }
         let resp = req.send().await?;
         if resp.status().is_redirection()
@@ -275,6 +281,74 @@ fn challenge(h: &str) -> HashMap<String, String> {
     out
 }
 
+/// The registry's base URL; one given with http:// is used as is (an
+/// insecure registry).
+fn registry_base(registry: &str) -> String {
+    match registry {
+        "docker.io" | "index.docker.io" => "https://registry-1.docker.io".to_string(),
+        r if r.starts_with("http://") || r.starts_with("https://") => {
+            r.trim_end_matches('/').to_string()
+        }
+        r => format!("https://{r}"),
+    }
+}
+
+/// Basic credentials as a header value.
+fn basic(creds: Option<(String, String)>) -> Option<String> {
+    creds.map(|(u, p)| {
+        use base64::Engine;
+        format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(format!("{u}:{p}"))
+        )
+    })
+}
+
+/// GET on a registry, through its bearer-token challenge: `auth` starts as
+/// the basic credentials and keeps the token for the next requests.
+async fn registry_get(
+    url: &str,
+    accept: &str,
+    basic: &Option<String>,
+    auth: &mut Option<String>,
+) -> Result<reqwest::Response> {
+    let headers = |a: &Option<String>| {
+        let mut h = vec![("Accept", accept.to_string())];
+        h.extend(a.iter().map(|a| ("Authorization", a.clone())));
+        h
+    };
+    let resp = get(url, &headers(auth)).await?;
+    if resp.status() != reqwest::StatusCode::UNAUTHORIZED {
+        return Ok(resp);
+    }
+    let c = challenge(
+        resp.headers()
+            .get("www-authenticate")
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or_default(),
+    );
+    let realm = c
+        .get("realm")
+        .ok_or("registry asked for auth without a realm")?;
+    let mut token_url = url::Url::parse(realm)?;
+    for k in ["service", "scope"] {
+        if let Some(v) = c.get(k) {
+            token_url.query_pairs_mut().append_pair(k, v);
+        }
+    }
+    let th: Vec<(&str, String)> = basic.iter().map(|a| ("Authorization", a.clone())).collect();
+    let t: Value = http::ok(get(token_url.as_str(), &th).await?)
+        .await?
+        .json()
+        .await?;
+    let token = t["token"]
+        .as_str()
+        .or(t["access_token"].as_str())
+        .ok_or("registry gave no token")?;
+    *auth = Some(format!("Bearer {token}"));
+    get(url, &headers(auth)).await
+}
+
 /// Tags of an OCI repository (`registry`, `name`), anonymous or with basic
 /// credentials, through the registry's bearer-token challenge.
 pub async fn oci_tags(
@@ -282,60 +356,15 @@ pub async fn oci_tags(
     name: &str,
     creds: Option<(String, String)>,
 ) -> Result<Vec<String>> {
-    // a registry given with http:// is used as is (an insecure registry)
-    let base = match registry {
-        "docker.io" | "index.docker.io" => "https://registry-1.docker.io".to_string(),
-        r if r.starts_with("http://") || r.starts_with("https://") => {
-            r.trim_end_matches('/').to_string()
-        }
-        r => format!("https://{r}"),
-    };
+    let base = registry_base(registry);
     let key = format!("oci:{base}/{name}");
     cached(&key, || async move {
-        let basic = creds.as_ref().map(|(u, p)| {
-            use base64::Engine;
-            format!(
-                "Basic {}",
-                base64::engine::general_purpose::STANDARD.encode(format!("{u}:{p}"))
-            )
-        });
+        let basic = basic(creds);
         let mut auth = basic.clone();
         let mut url = format!("{base}/v2/{name}/tags/list?n=1000");
         let mut tags = Vec::new();
         for _ in 0..10 {
-            let headers: Vec<(&str, String)> =
-                auth.iter().map(|a| ("Authorization", a.clone())).collect();
-            let mut resp = get(&url, &headers).await?;
-            if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
-                let c = challenge(
-                    resp.headers()
-                        .get("www-authenticate")
-                        .and_then(|h| h.to_str().ok())
-                        .unwrap_or_default(),
-                );
-                let realm = c
-                    .get("realm")
-                    .ok_or("registry asked for auth without a realm")?;
-                let mut token_url = url::Url::parse(realm)?;
-                for k in ["service", "scope"] {
-                    if let Some(v) = c.get(k) {
-                        token_url.query_pairs_mut().append_pair(k, v);
-                    }
-                }
-                let th: Vec<(&str, String)> =
-                    basic.iter().map(|a| ("Authorization", a.clone())).collect();
-                let t: Value = http::ok(get(token_url.as_str(), &th).await?)
-                    .await?
-                    .json()
-                    .await?;
-                let token = t["token"]
-                    .as_str()
-                    .or(t["access_token"].as_str())
-                    .ok_or("registry gave no token")?;
-                auth = Some(format!("Bearer {token}"));
-                let headers = vec![("Authorization", auth.clone().unwrap())];
-                resp = get(&url, &headers).await?;
-            }
+            let resp = registry_get(&url, "application/json", &basic, &mut auth).await?;
             let next = resp
                 .headers()
                 .get("link")
@@ -360,8 +389,94 @@ pub async fn oci_tags(
     .await
 }
 
-/// Versions of `chart` in a Helm HTTP repository's `index.yaml`.
-pub async fn helm_index(repo: &str, chart: &str) -> Result<Vec<String>> {
+const MANIFESTS: &str = "application/vnd.oci.image.index.v1+json, \
+    application/vnd.docker.distribution.manifest.list.v2+json, \
+    application/vnd.oci.image.manifest.v1+json, \
+    application/vnd.docker.distribution.manifest.v2+json";
+const SOURCE: &str = "org.opencontainers.image.source";
+
+/// The project's repository from an OCI artifact (RFC 0026): the
+/// `org.opencontainers.image.source` annotation of the manifest, else the
+/// image config label, else a Helm chart config's `sources` and `home`.
+/// Read once per repository, at `reference` (a tag), cached with the tags.
+pub async fn oci_source(
+    registry: &str,
+    name: &str,
+    reference: &str,
+    creds: Option<(String, String)>,
+) -> Result<Option<String>> {
+    let base = registry_base(registry);
+    let key = format!("oci-source:{base}/{name}");
+    let found = cached(&key, || async move {
+        let basic = basic(creds);
+        let mut auth = basic.clone();
+        let mut fetch = async |kind: &str, r: &str| -> Result<Value> {
+            // a digest from a manifest goes into the path: nothing but a digest
+            if !r
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-_.:".contains(c))
+            {
+                return Err(format!("bad reference {r:?}").into());
+            }
+            let url = format!("{base}/v2/{name}/{kind}/{r}");
+            let resp = registry_get(&url, MANIFESTS, &basic, &mut auth).await?;
+            Ok(http::ok(resp).await?.json().await?)
+        };
+        let annotation = |v: &Value| v["annotations"][SOURCE].as_str().map(String::from);
+        let mut m = fetch("manifests", reference).await?;
+        if let Some(list) = m["manifests"].as_array() {
+            // an index: its own annotation, else the linux/amd64 image
+            if let Some(s) = annotation(&m) {
+                return Ok(vec![s]);
+            }
+            let pick = list
+                .iter()
+                .find(|d| {
+                    d["platform"]["os"] == "linux" && d["platform"]["architecture"] == "amd64"
+                })
+                .or(list.first());
+            let digest = pick
+                .and_then(|d| d["digest"].as_str())
+                .ok_or("empty index")?;
+            m = fetch("manifests", digest).await?;
+        }
+        if let Some(s) = annotation(&m) {
+            return Ok(vec![s]);
+        }
+        let Some(digest) = m["config"]["digest"].as_str() else {
+            return Ok(Vec::new());
+        };
+        let c = fetch("blobs", digest).await?;
+        let urls = c["config"]["Labels"][SOURCE]
+            .as_str()
+            .into_iter()
+            .chain(
+                c["sources"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str),
+            )
+            .chain(c["home"].as_str());
+        Ok(pick_source(urls).into_iter().collect())
+    })
+    .await?;
+    Ok(found.into_iter().next())
+}
+
+/// The first GitHub repository among `urls`, else the first https URL.
+fn pick_source<'a>(urls: impl Iterator<Item = &'a str>) -> Option<String> {
+    let urls: Vec<&str> = urls.collect();
+    urls.iter()
+        .find(|u| github_repo(u).is_some())
+        .or(urls.iter().find(|u| u.starts_with("https://")))
+        .map(|u| u.to_string())
+}
+
+/// Every chart of a Helm HTTP repository's `index.yaml`, one string per
+/// version: name, version and the project's repository (RFC 0026), split by
+/// NUL.
+async fn helm_entries(repo: &str) -> Result<Vec<String>> {
     #[derive(serde::Deserialize)]
     struct Index {
         entries: HashMap<String, Vec<Entry>>,
@@ -369,11 +484,15 @@ pub async fn helm_index(repo: &str, chart: &str) -> Result<Vec<String>> {
     #[derive(serde::Deserialize)]
     struct Entry {
         version: String,
+        #[serde(default)]
+        sources: Option<Vec<String>>,
+        #[serde(default)]
+        home: Option<String>,
     }
     let repo = repo.trim_end_matches('/').to_string();
     // the whole index is one download: cache every chart of it at once
     let key = format!("helm:{repo}");
-    let all = cached(&key, || async {
+    cached(&key, || async {
         let body = http::ok(get(&format!("{repo}/index.yaml"), &[]).await?)
             .await?
             .bytes()
@@ -383,18 +502,51 @@ pub async fn helm_index(repo: &str, chart: &str) -> Result<Vec<String>> {
             .entries
             .into_iter()
             .flat_map(|(name, es)| {
-                es.into_iter()
-                    .map(move |e| format!("{name}\u{0}{}", e.version))
+                es.into_iter().map(move |e| {
+                    let urls = e.sources.iter().flatten().map(String::as_str);
+                    let src = pick_source(urls.chain(e.home.as_deref())).unwrap_or_default();
+                    format!("{name}\u{0}{}\u{0}{src}", e.version)
+                })
             })
             .collect())
     })
-    .await?;
-    Ok(all
+    .await
+}
+
+/// (version, repository) of each version of `chart` in a Helm repository.
+async fn helm_chart(repo: &str, chart: &str) -> Result<Vec<(String, String)>> {
+    Ok(helm_entries(repo)
+        .await?
         .iter()
-        .filter_map(|e| e.split_once('\u{0}'))
-        .filter(|(n, _)| *n == chart)
-        .map(|(_, v)| v.to_string())
+        .filter_map(|e| {
+            let mut p = e.split('\u{0}');
+            let (n, v, s) = (p.next()?, p.next()?, p.next().unwrap_or_default());
+            (n == chart).then(|| (v.to_string(), s.to_string()))
+        })
         .collect())
+}
+
+/// Versions of `chart` in a Helm HTTP repository's `index.yaml`.
+pub async fn helm_index(repo: &str, chart: &str) -> Result<Vec<String>> {
+    Ok(helm_chart(repo, chart)
+        .await?
+        .into_iter()
+        .map(|(v, _)| v)
+        .collect())
+}
+
+/// Registry and repository of a chart in `oci://registry/path[/chart]`.
+fn oci_chart(rest: &str, chart: &str) -> Result<(String, String)> {
+    let rest = rest.trim_end_matches('/');
+    let full = if rest.rsplit('/').next() == Some(chart) {
+        rest.to_string()
+    } else {
+        format!("{rest}/{chart}")
+    };
+    let (registry, name) = full
+        .split_once('/')
+        .ok_or("oci:// URL without a repository")?;
+    Ok((registry.to_string(), name.to_string()))
 }
 
 /// Versions of a chart from its repository URL: `oci://registry/path/chart`
@@ -406,18 +558,294 @@ pub async fn chart_versions(
 ) -> Result<Vec<String>> {
     match repo.strip_prefix("oci://") {
         Some(rest) => {
-            let rest = rest.trim_end_matches('/');
-            let full = if rest.rsplit('/').next() == Some(chart) {
-                rest.to_string()
-            } else {
-                format!("{rest}/{chart}")
-            };
-            let (registry, name) = full
-                .split_once('/')
-                .ok_or("oci:// URL without a repository")?;
-            oci_tags(registry, name, creds(registry)).await
+            let (registry, name) = oci_chart(rest, chart)?;
+            oci_tags(&registry, &name, creds(&registry)).await
         }
         None => helm_index(repo, chart).await,
+    }
+}
+
+/// The project's repository of a chart: `sources` or `home` of its index
+/// entry at `version` (else of any version), or the OCI artifact's metadata.
+pub async fn chart_source(
+    repo: &str,
+    chart: &str,
+    version: &str,
+    creds: impl Fn(&str) -> Option<(String, String)>,
+) -> Result<Option<String>> {
+    match repo.strip_prefix("oci://") {
+        Some(rest) => {
+            let (registry, name) = oci_chart(rest, chart)?;
+            oci_source(&registry, &name, version, creds(&registry)).await
+        }
+        None => {
+            let all = helm_chart(repo, chart).await?;
+            let src = |v: Option<&str>| {
+                all.iter()
+                    .find(|(ver, s)| !s.is_empty() && v.is_none_or(|v| v == ver))
+                    .map(|(_, s)| s.clone())
+            };
+            Ok(src(Some(version)).or_else(|| src(None)))
+        }
+    }
+}
+
+/// GitHub's API; tests pass a local server.
+pub const GITHUB_API: &str = "https://api.github.com";
+
+/// `owner/repo` of a GitHub repository URL (`https://github.com/o/r`, with
+/// `.git` or a deeper path) or of a plain `o/r`. Both parts are checked
+/// against GitHub's rules, so links built from them stay on that repository.
+pub fn github_repo(s: &str) -> Option<String> {
+    let s = s.trim();
+    let url = [
+        "https://github.com/",
+        "http://github.com/",
+        "https://www.github.com/",
+        "git+https://github.com/",
+    ]
+    .iter()
+    .find_map(|p| s.strip_prefix(p));
+    let path = url.unwrap_or(s);
+    let path = path.split(['?', '#']).next().unwrap_or_default();
+    let mut parts = path.split('/');
+    let (owner, repo) = (parts.next()?, parts.next()?);
+    let repo = repo.strip_suffix(".git").unwrap_or(repo);
+    if url.is_none() && parts.next().is_some() {
+        return None;
+    }
+    let owner_ok = (1..=39).contains(&owner.len())
+        && owner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    let repo_ok = (1..=100).contains(&repo.len())
+        && repo != "."
+        && repo != ".."
+        && repo
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
+    (owner_ok && repo_ok).then(|| format!("{owner}/{repo}"))
+}
+
+/// `https://github.com/<repo>/<segments...>`, each segment escaped. `repo`
+/// comes from [`github_repo`].
+pub fn github_url(repo: &str, segments: &[&str]) -> String {
+    let mut u = url::Url::parse("https://github.com").unwrap();
+    u.path_segments_mut()
+        .unwrap()
+        .extend(repo.split('/'))
+        .extend(segments);
+    u.to_string()
+}
+
+/// One GitHub release, reduced to what the Updates page shows (RFC 0026).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Note {
+    pub tag: String,
+    pub name: String,
+    pub published: Option<String>,
+    pub url: String,
+    /// the first lines of the body, as plain text
+    pub excerpt: String,
+    /// the body mentions a CVE, a GHSA or the word "security"
+    pub security: bool,
+}
+
+/// Removes HTML tags and comments; a `<` that opens no tag stays.
+fn strip_html(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('<') {
+        out.push_str(&rest[..i]);
+        let at = &rest[i..];
+        let tag = at[1..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '/' || c == '!');
+        if !tag {
+            out.push('<');
+            rest = &at[1..];
+            continue;
+        }
+        let end = if at.starts_with("<!--") {
+            at.find("-->").map(|e| e + 3)
+        } else {
+            at.find('>').map(|e| e + 1)
+        };
+        // an unterminated tag hides the rest
+        rest = end.map_or("", |e| &at[e..]);
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The first non-empty lines of a release body, without HTML, at most 600
+/// characters. The UI shows it as text.
+pub fn excerpt(body: &str) -> String {
+    let text = strip_html(body);
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .take(6)
+        .collect();
+    lines.join("\n").chars().take(600).collect()
+}
+
+/// `CVE-<year>-<n>`, `GHSA-`, or "security" as a word (a heading too).
+pub fn security(body: &str) -> bool {
+    let b = body.to_ascii_lowercase();
+    let cve = b.match_indices("cve-").any(|(i, _)| {
+        let r = &b.as_bytes()[i + 4..];
+        r.len() >= 6
+            && r[..4].iter().all(u8::is_ascii_digit)
+            && r[4] == b'-'
+            && r[5].is_ascii_digit()
+    });
+    let word = b.match_indices("security").any(|(i, w)| {
+        let before = b[..i].chars().next_back();
+        let after = b[i + w.len()..].chars().next();
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+    });
+    cve || word || b.contains("ghsa-")
+}
+
+/// The version part of a release tag and what comes before it: `v1.2.3` is
+/// `("", 1.2.3)`, `chart-1.2.3` is `("chart-", 1.2.3)`.
+pub fn tag_version(tag: &str) -> Option<(&str, Ver)> {
+    std::iter::once(0)
+        .chain(
+            tag.char_indices()
+                .filter(|(_, c)| "-_/@".contains(*c))
+                .map(|(i, _)| i + 1),
+        )
+        .find_map(|i| {
+            parse(&tag[i..])
+                .filter(|v| v.suffix.is_empty() || v.suffix.starts_with(['-', '+']))
+                .map(|v| (&tag[..i], v))
+        })
+}
+
+/// The releases of `name` after `from` up to `to`, newest first, and the tag
+/// of `from` when it is a release. A repository with several projects tags
+/// them `<name>-1.2.3`: those tags win when there are any, else plain
+/// version tags, else every tag.
+pub fn between<'a>(
+    notes: &'a [Note],
+    name: &str,
+    from: &str,
+    to: &str,
+) -> (Vec<&'a Note>, Option<&'a str>) {
+    let (Some(from), Some(to)) = (parse(from), parse(to)) else {
+        return (Vec::new(), None);
+    };
+    let tagged: Vec<(&Note, &str, Ver)> = notes
+        .iter()
+        .filter_map(|n| tag_version(&n.tag).map(|(p, v)| (n, p, v)))
+        .filter(|(_, _, v)| !v.prerelease())
+        .collect();
+    let named = |p: &str| p.trim_end_matches(['-', '_', '/', '@']) == name;
+    let group: Vec<&(&Note, &str, Ver)> = if tagged.iter().any(|t| named(t.1)) {
+        tagged.iter().filter(|t| named(t.1)).collect()
+    } else if tagged.iter().any(|t| t.1.is_empty()) {
+        tagged.iter().filter(|t| t.1.is_empty()).collect()
+    } else {
+        tagged.iter().collect()
+    };
+    let mut inside: Vec<_> = group
+        .iter()
+        .filter(|t| from.nums < t.2.nums && t.2.nums <= to.nums)
+        .collect();
+    inside.sort_by(|a, b| b.2.nums.cmp(&a.2.nums));
+    let running = group
+        .iter()
+        .find(|t| t.2.nums == from.nums)
+        .map(|t| t.0.tag.as_str());
+    (inside.into_iter().map(|t| t.0).collect(), running)
+}
+
+struct NotesEntry {
+    /// no request before this
+    until: Instant,
+    notes: Vec<Note>,
+    /// the last lookup failed: the last notes are kept
+    error: Option<String>,
+}
+static NOTES: LazyLock<Mutex<HashMap<String, NotesEntry>>> = LazyLock::new(Default::default);
+
+/// The GitHub releases of `repo` (`owner/repo`), drafts and pre-releases
+/// left out, kept 12 hours. A failure (a 403 or 429 rate limit too) keeps
+/// the last notes, is logged once, and is retried after 30 minutes; the
+/// error comes back with the notes until then.
+pub async fn release_notes(
+    api: &str,
+    repo: &str,
+    token: Option<&str>,
+) -> (Vec<Note>, Option<String>) {
+    if let Some(e) = NOTES.lock().unwrap().get(repo)
+        && Instant::now() < e.until
+    {
+        return (e.notes.clone(), e.error.clone());
+    }
+    let started = Instant::now();
+    let r: Result<Vec<Note>> = async {
+        let mut headers = vec![("Accept", "application/vnd.github+json".to_string())];
+        if let Some(t) = token {
+            headers.push(("Authorization", format!("Bearer {t}")));
+        }
+        let url = format!("{api}/repos/{repo}/releases?per_page=100");
+        let v: Value = http::ok(get(&url, &headers).await?).await?.json().await?;
+        Ok(v.as_array()
+            .into_iter()
+            .flatten()
+            .filter(|r| r["draft"] != true && r["prerelease"] != true)
+            .filter_map(|r| {
+                let tag = r["tag_name"].as_str()?.to_string();
+                let body = r["body"].as_str().unwrap_or_default();
+                let name = r["name"].as_str().filter(|n| !n.trim().is_empty());
+                Some(Note {
+                    name: name.unwrap_or(&tag).to_string(),
+                    published: r["published_at"].as_str().map(String::from),
+                    url: github_url(repo, &["releases", "tag", &tag]),
+                    excerpt: excerpt(body),
+                    security: security(body),
+                    tag,
+                })
+            })
+            .collect())
+    }
+    .await;
+    let ms = started.elapsed().as_millis() as u64;
+    let mut cache = NOTES.lock().unwrap();
+    match r {
+        Ok(notes) => {
+            tracing::info!(
+                msg = "upstream",
+                kind = "notes",
+                repo,
+                releases = notes.len(),
+                ms,
+                result = "ok"
+            );
+            let e = NotesEntry {
+                until: Instant::now() + TTL,
+                notes: notes.clone(),
+                error: None,
+            };
+            cache.insert(repo.to_string(), e);
+            (notes, None)
+        }
+        Err(err) => {
+            let e = cache.entry(repo.to_string()).or_insert(NotesEntry {
+                until: Instant::now(),
+                notes: Vec::new(),
+                error: None,
+            });
+            if e.error.is_none() {
+                tracing::warn!(msg = "upstream", kind = "notes", repo, error = %err, ms, result = "error");
+            }
+            e.until = Instant::now() + FAILED_TTL;
+            e.error = Some(err.to_string());
+            (e.notes.clone(), e.error.clone())
+        }
     }
 }
 
@@ -760,5 +1188,353 @@ mod tests {
                 .as_deref(),
             Some("1.1.0")
         );
+    }
+
+    #[test]
+    fn github_repositories_and_links() {
+        for (input, want) in [
+            ("https://github.com/acme/app", Some("acme/app")),
+            ("https://github.com/acme/app.git", Some("acme/app")),
+            (
+                "https://www.github.com/acme/app/tree/main/charts/x",
+                Some("acme/app"),
+            ),
+            ("git+https://github.com/acme/app#readme", Some("acme/app")),
+            ("acme/app.js", Some("acme/app.js")),
+            ("acme/app/extra", None),
+            ("https://gitlab.com/acme/app", None),
+            ("https://github.com/acme", None),
+            ("https://github.com/ac%2fme/app", None),
+            ("https://github.com/acme/..", None),
+            ("https://github.com/acme/a\"><script>", None),
+            ("https://github.com.evil.example/acme/app", None),
+        ] {
+            assert_eq!(github_repo(input).as_deref(), want, "{input}");
+        }
+        assert_eq!(github_url("acme/app", &[]), "https://github.com/acme/app");
+        assert_eq!(
+            github_url("acme/app", &["compare", "v1/x?y#z...v2"]),
+            "https://github.com/acme/app/compare/v1%2Fx%3Fy%23z...v2"
+        );
+        let urls = ["https://app.example", "https://github.com/acme/app"];
+        assert_eq!(
+            pick_source(urls.into_iter()).as_deref(),
+            Some("https://github.com/acme/app")
+        );
+        let urls = ["http://plain.example", "https://app.example"];
+        assert_eq!(
+            pick_source(urls.into_iter()).as_deref(),
+            Some("https://app.example")
+        );
+        assert_eq!(pick_source(["javascript:alert(1)"].into_iter()), None);
+    }
+
+    #[test]
+    fn excerpts_are_plain_text() {
+        let body = "<!-- a comment with > inside -->\r\n## What's <b>new</b>\n\n\
+                    <details><summary>x</summary><script>alert(1)</script></details>\n\
+                    - a < b and 2<3\n<img src=x onerror=alert(1)>\nline 4\nline 5\nline 6\nline 7\n";
+        let e = excerpt(body);
+        assert_eq!(
+            e,
+            "## What's new\nxalert(1)\n- a < b and 2<3\nline 4\nline 5\nline 6"
+        );
+        assert!(!e.contains("<b") && !e.contains("<script") && !e.contains("<img"));
+        // an unterminated tag hides the rest
+        assert_eq!(excerpt("fixed <a href=\"x"), "fixed");
+        assert_eq!(excerpt(&"é".repeat(700)).chars().count(), 600);
+    }
+
+    #[test]
+    fn security_patterns() {
+        for yes in [
+            "Fixes CVE-2024-12345",
+            "see ghsa-xxxx-yyyy",
+            "## Security\n- bump",
+            "security: patch",
+            "a Security-related fix",
+        ] {
+            assert!(security(yes), "{yes}");
+        }
+        for no in [
+            "set securityContext on pods",
+            "podSecurityContext defaults",
+            "insecurity",
+            "CVE-24-1",
+            "cve-2024-x",
+            "",
+        ] {
+            assert!(!security(no), "{no}");
+        }
+    }
+
+    fn note(tag: &str) -> Note {
+        Note {
+            tag: tag.into(),
+            name: tag.into(),
+            published: None,
+            url: String::new(),
+            excerpt: String::new(),
+            security: false,
+        }
+    }
+
+    #[test]
+    fn tags_match_by_their_version_part() {
+        let v = |t: &str| tag_version(t).map(|(p, v)| (p.to_string(), v.nums));
+        assert_eq!(v("v1.2.3"), Some(("".into(), vec![1, 2, 3])));
+        assert_eq!(v("chart-1.2.3"), Some(("chart-".into(), vec![1, 2, 3])));
+        assert_eq!(
+            v("kube-prometheus-stack-65.1.0"),
+            Some(("kube-prometheus-stack-".into(), vec![65, 1, 0]))
+        );
+        assert_eq!(
+            v("controller-v1.11.3"),
+            Some(("controller-".into(), vec![1, 11, 3]))
+        );
+        assert_eq!(v("3scale-1.0.0"), Some(("3scale-".into(), vec![1, 0, 0])));
+        assert_eq!(v("nightly"), None);
+
+        // a repository of several charts: the chart's own tags win
+        let mono: Vec<Note> = [
+            "kube-state-metrics-6.0.0",
+            "app-2.1.0",
+            "app-2.0.1",
+            "app-2.0.0",
+            "app-1.9.0",
+            "app-2.2.0-rc.1",
+        ]
+        .map(note)
+        .to_vec();
+        let (rel, from) = between(&mono, "app", "2.0.0", "2.1.0");
+        let tags: Vec<&str> = rel.iter().map(|n| n.tag.as_str()).collect();
+        assert_eq!(
+            (tags, from),
+            (vec!["app-2.1.0", "app-2.0.1"], Some("app-2.0.0"))
+        );
+        // plain tags for any name, `v` or not; images compare numbers only
+        let plain: Vec<Note> = ["v1.28.0", "v1.27.4", "v1.27.3", "other-9.0.0"]
+            .map(note)
+            .to_vec();
+        let (rel, from) = between(&plain, "nginx", "1.27.3-alpine", "1.28.0-alpine");
+        assert_eq!(rel.len(), 2);
+        assert_eq!(from, Some("v1.27.3"));
+        // only prefixed tags of other names: every tag counts
+        let other: Vec<Note> = ["helm-chart-4.11.3", "controller-v1.11.3"]
+            .map(note)
+            .to_vec();
+        let (rel, from) = between(&other, "ingress-nginx", "4.11.2", "4.11.3");
+        assert_eq!(
+            (rel[0].tag.as_str(), rel.len(), from),
+            ("helm-chart-4.11.3", 1, None)
+        );
+        assert!(between(&plain, "x", "latest", "1.0.0").0.is_empty());
+    }
+
+    /// A fake GitHub API: releases of `acme-test/notes`, then a rate limit.
+    #[tokio::test]
+    async fn release_notes_keep_the_last_on_rate_limits() {
+        use axum::{Json, Router, http::StatusCode, response::IntoResponse, routing::get as route};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let hits = Arc::new(AtomicUsize::new(0));
+        let h = hits.clone();
+        let api = crate::testkit::serve(Router::new().route(
+            "/repos/acme-test/notes/releases",
+            route(move || {
+                let n = h.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    match n {
+                        0 => (StatusCode::TOO_MANY_REQUESTS, "slow down").into_response(),
+                        1 => Json(serde_json::json!([
+                            {"tag_name": "v1.1.0", "name": "", "published_at": "2026-10-01T00:00:00Z",
+                             "body": "Fixes CVE-2026-1234 <b>now</b>", "draft": false, "prerelease": false},
+                            {"tag_name": "v1.2.0-rc.1", "prerelease": true},
+                            {"tag_name": "v9.0.0", "draft": true},
+                            {"name": "no tag"}
+                        ]))
+                        .into_response(),
+                        _ => (StatusCode::FORBIDDEN, "API rate limit exceeded").into_response(),
+                    }
+                }
+            }),
+        ))
+        .await;
+        let repo = "acme-test/notes";
+        // nothing yet: no notes, the error
+        let (n, e) = release_notes(&api, repo, None).await;
+        assert!(n.is_empty());
+        assert_eq!(e.as_deref(), Some("HTTP 429 Too Many Requests: slow down"));
+        // not asked again before the failure is 30 minutes old
+        let (n, e) = release_notes(&api, repo, None).await;
+        assert!(n.is_empty() && e.is_some());
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        let due = |repo: &str| NOTES.lock().unwrap().get_mut(repo).unwrap().until = Instant::now();
+        // then retried, and the notes cached
+        due(repo);
+        for _ in 0..2 {
+            let (n, e) = release_notes(&api, repo, Some("t")).await;
+            assert_eq!(e, None);
+            assert_eq!(
+                n,
+                [Note {
+                    tag: "v1.1.0".into(),
+                    name: "v1.1.0".into(),
+                    published: Some("2026-10-01T00:00:00Z".into()),
+                    url: "https://github.com/acme-test/notes/releases/tag/v1.1.0".into(),
+                    excerpt: "Fixes CVE-2026-1234 now".into(),
+                    security: true,
+                }]
+            );
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+        // 12 hours later: a 403 keeps the last notes, and is not retried
+        // at once
+        due(repo);
+        for _ in 0..2 {
+            let (n, e) = release_notes(&api, repo, None).await;
+            assert_eq!(n.len(), 1);
+            assert!(e.unwrap().starts_with("HTTP 403"));
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn chart_sources_from_the_index() {
+        let index = "apiVersion: v1\nentries:\n  a:\n  - version: 1.1.0\n  - version: 1.0.0\n    home: https://a.example\n    sources: [https://github.com/acme/a]\n  b:\n  - version: 1.0.0\n    home: https://b.example\n  c:\n  - version: 1.0.0\n    sources: null\n";
+        let url = crate::testkit::serve(axum::Router::new().route(
+            "/index.yaml",
+            axum::routing::get(move || async move { index }),
+        ))
+        .await;
+        let src = async |chart: &str, version: &str| {
+            chart_source(&url, chart, version, |_| None).await.unwrap()
+        };
+        assert_eq!(
+            src("a", "1.0.0").await.as_deref(),
+            Some("https://github.com/acme/a")
+        );
+        // a version without metadata: another version's
+        assert_eq!(
+            src("a", "1.1.0").await.as_deref(),
+            Some("https://github.com/acme/a")
+        );
+        assert_eq!(
+            src("b", "1.0.0").await.as_deref(),
+            Some("https://b.example")
+        );
+        assert_eq!(src("c", "1.0.0").await, None);
+        assert_eq!(helm_index(&url, "a").await.unwrap(), ["1.1.0", "1.0.0"]);
+        let e = chart_source("oci://charts.test", "charts.test", "1", |_| None)
+            .await
+            .unwrap_err();
+        assert_eq!(e.to_string(), "oci:// URL without a repository");
+    }
+
+    /// A fake registry for `oci_source`: annotations, an index behind a
+    /// token, a blob on another host, a Helm chart config, nothing.
+    #[tokio::test]
+    async fn oci_sources_from_annotations_labels_and_chart_config() {
+        use axum::{
+            Json, Router,
+            http::{HeaderMap, StatusCode, header},
+            response::IntoResponse,
+            routing::get as route,
+        };
+        use serde_json::json;
+        // the "CDN": another host name for the same loopback address
+        let cdn = crate::testkit::serve(Router::new().route(
+            "/blob/c",
+            route(|h: HeaderMap| async move {
+                if h.contains_key(header::AUTHORIZATION) {
+                    return (StatusCode::BAD_REQUEST, "credentials leaked").into_response();
+                }
+                Json(json!({"config": {"Labels": {SOURCE: "https://github.com/acme/idx"}}}))
+                    .into_response()
+            }),
+        ))
+        .await
+        .replace("127.0.0.1", "localhost");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let realm = format!("{base}/token");
+        let manifest = |v: serde_json::Value| {
+            move || {
+                let v = v.clone();
+                async move { Json(v) }
+            }
+        };
+        let app = Router::new()
+            .route(
+                "/v2/ann/app/manifests/1.0.0",
+                route(manifest(json!({"annotations": {SOURCE: "https://github.com/acme/ann"}}))),
+            )
+            .route(
+                "/v2/idx/app/manifests/{r}",
+                route(move |axum::extract::Path(r): axum::extract::Path<String>, h: HeaderMap| {
+                    let realm = realm.clone();
+                    async move {
+                        if h.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) != Some("Bearer t") {
+                            let c = format!(r#"Bearer realm="{realm}""#);
+                            return (StatusCode::UNAUTHORIZED, [(header::WWW_AUTHENTICATE, c)]).into_response();
+                        }
+                        Json(match r.as_str() {
+                            "2.0.0" => json!({"manifests": [
+                                {"digest": "sha256:a", "platform": {"os": "linux", "architecture": "arm64"}},
+                                {"digest": "sha256:b", "platform": {"os": "linux", "architecture": "amd64"}}]}),
+                            _ => json!({"config": {"digest": "sha256:c"}}),
+                        })
+                        .into_response()
+                    }
+                }),
+            )
+            .route(
+                "/v2/idx/app/blobs/sha256:c",
+                route(move || {
+                    let to = format!("{cdn}/blob/c");
+                    async move { (StatusCode::TEMPORARY_REDIRECT, [(header::LOCATION, to)]) }
+                }),
+            )
+            .route("/token", route(|| async { Json(json!({"token": "t"})) }))
+            .route(
+                "/v2/chart/app/manifests/1.0.0",
+                route(manifest(json!({"config": {"digest": "sha256:h"}}))),
+            )
+            .route(
+                "/v2/chart/app/blobs/sha256:h",
+                route(manifest(json!({"name": "app", "home": "https://app.example",
+                                      "sources": ["https://github.com/acme/chart"]}))),
+            )
+            .route("/v2/none/app/manifests/1.0.0", route(manifest(json!({}))))
+            .route(
+                "/v2/bad/app/manifests/1.0.0",
+                route(manifest(json!({"manifests": [{"digest": "../../x"}]}))),
+            )
+            .route(
+                "/v2/listed/app/manifests/1.0.0",
+                route(manifest(json!({"manifests": [], "annotations": {SOURCE: "https://github.com/acme/listed"}}))),
+            );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let src = async |name: &str, tag: &str| oci_source(&base, name, tag, None).await;
+        for (name, tag, want) in [
+            ("ann/app", "1.0.0", Some("https://github.com/acme/ann")),
+            ("idx/app", "2.0.0", Some("https://github.com/acme/idx")),
+            ("chart/app", "1.0.0", Some("https://github.com/acme/chart")),
+            (
+                "listed/app",
+                "1.0.0",
+                Some("https://github.com/acme/listed"),
+            ),
+            ("none/app", "1.0.0", None),
+        ] {
+            assert_eq!(src(name, tag).await.unwrap().as_deref(), want, "{name}");
+        }
+        let e = src("bad/app", "1.0.0").await.unwrap_err();
+        assert_eq!(e.to_string(), "bad reference \"../../x\"");
+        // oci:// chart repositories are https: this plain server fails
+        let repo = format!("oci://{}/chart", base.trim_start_matches("http://"));
+        assert!(chart_source(&repo, "app", "1.0.0", |_| None).await.is_err());
     }
 }

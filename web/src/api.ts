@@ -198,6 +198,16 @@ export type ClusterUpdate = {
   flux: string | null;
   flux_latest: Latest;
 };
+/** One GitHub release; `excerpt` is plain text, shown as text (RFC 0026). */
+export type ReleaseNote = { tag: string; name: string; published: string | null; url: string; excerpt: string; security: boolean };
+export type Notes = {
+  repository: string | null;
+  /** GitHub only: the compare view, else the release list */
+  link: string | null;
+  releases: ReleaseNote[];
+  /** a hint from the release text, never a status */
+  security: boolean;
+};
 export type ChartUpdate = {
   cluster: string;
   namespace: string;
@@ -207,6 +217,7 @@ export type ChartUpdate = {
   managed_by: "flux" | "argocd" | "helm";
   source: string | null;
   latest: Latest;
+  notes: Notes | null;
 };
 export type ImageUpdate = {
   cluster: string;
@@ -219,6 +230,7 @@ export type ImageUpdate = {
   unversioned: boolean;
   used_by: string[];
   latest: Latest;
+  notes: Notes | null;
 };
 export type Updates = { proxmox: PveUpdate[]; kubernetes: ClusterUpdate[]; charts: ChartUpdate[]; images: ImageUpdate[]; errors: string[] };
 export type ChainCert = {

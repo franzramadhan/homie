@@ -322,6 +322,16 @@ fn updates(g: &mut Families, d: &Value) {
             gauge(g, "homie_updates_available", &[("kind", kind)], n as f64);
         }
     }
+    // RFC 0026: updates whose release notes mention a security fix
+    for kind in ["charts", "images"] {
+        let n = arr(&d[kind])
+            .iter()
+            .filter(|x| x["notes"]["security"] == true)
+            .count();
+        if !unread("kubernetes") {
+            gauge(g, "homie_updates_security", &[("kind", kind)], n as f64);
+        }
+    }
     for n in arr(&d["proxmox"]) {
         let l = [
             ("cluster", n["cluster"].as_str().unwrap_or("")),
@@ -391,7 +401,7 @@ mod tests {
                 "proxmox": [{"cluster": "pve", "node": "a", "updates": 3, "reboot": true, "running_kernel": "6.8.12-1-pve"}],
                 "kubernetes": [{"cluster": "lab", "distro_latest": {"patch": "v1.33.9", "newest": null},
                                 "flux_latest": {"patch": null, "newest": null}}],
-                "charts": [{"latest": {"patch": null, "newest": "2.0.0"}}, {"latest": {"patch": null, "newest": null}}],
+                "charts": [{"latest": {"patch": null, "newest": "2.0.0"}, "notes": {"security": true}}, {"latest": {"patch": null, "newest": null}, "notes": null}],
                 "images": [],
             }),
         );
@@ -408,6 +418,8 @@ mod tests {
             r#"homie_updates_available{kind="charts"} 1"#,
             r#"homie_updates_available{kind="distribution"} 1"#,
             r#"homie_updates_available{kind="flux"} 0"#,
+            r#"homie_updates_security{kind="charts"} 1"#,
+            r#"homie_updates_security{kind="images"} 0"#,
             r#"homie_node_reboot_required{cluster="pve",node="a"} 1"#,
             r#"homie_cert_probe_success{target="a.example:443"} 1"#,
             r#"homie_cert_probe_success{target="b.example:8443"} 0"#,
@@ -457,7 +469,9 @@ mod tests {
             "{out}"
         );
         assert!(
-            !out.contains(r#"kind="charts""#) && !out.contains(r#"kind="flux""#),
+            !out.contains(r#"kind="charts""#)
+                && !out.contains(r#"kind="flux""#)
+                && !out.contains("homie_updates_security"),
             "{out}"
         );
     }

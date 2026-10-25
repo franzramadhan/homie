@@ -58,6 +58,42 @@ fix, so updates are either all done at once or put off together.
 | `msg="upstream" kind="notes" repo result ms` | as RFC 0020 |
 | `homie_updates_security{kind}` | updates marked security, per kind |
 
+## Changes during implementation
+
+- Repository lookups: an image manifest (for an index, its linux/amd64
+  manifest too) and, only when no annotation names the source, the config
+  blob: up to three registry requests per repository, cached 12 hours like
+  the tags. OCI charts read the same way; their config blob is the
+  `Chart.yaml`, so its `sources` and `home` count too.
+- Order: metadata naming a GitHub repository wins, then
+  `[[updates.sources]]` (matched on the chart name, or on the image as
+  written and as `registry/repository`). A non-GitHub URL from metadata is
+  the repository link only when no source matches.
+- Tags: in a repository of several projects, tags `<name>-<version>` win;
+  else plain version tags (`v` or not); else every tag. Versions compare
+  by their numbers only, so `1.27.3-alpine` finds `v1.28.0`. Pre-releases
+  and drafts are left out. Only the newest 100 releases are read (one
+  request per repository).
+- The compare view needs the running version to be a release itself;
+  otherwise the link is the release list. Unversioned and digest-pinned
+  images get no notes (no running version).
+- Every failure, not only a 403 or 429, keeps the last notes, is logged
+  once until a lookup succeeds, and is retried after 30 minutes (the
+  failed-lookup interval of RFC 0020), not at every refresh of the Updates
+  query: a repository that answers 404 or a lasting rate limit would
+  otherwise spend the 60 requests an hour. The page shows one line with
+  the number of repositories not read.
+- Bodies: HTML tags and comments are removed on the server, then the first
+  6 non-empty lines, at most 600 characters, rendered as text.
+- "security" counts as a whole word only, so `securityContext` does not
+  mark an update.
+- Credentials no longer follow a redirect to another host (registries send
+  blobs to a CDN).
+- `homie_updates_security` is left out when no cluster could be read, like
+  `homie_updates_available`. The log line also has `releases`.
+- Display: a "release notes" column on the Charts and Images tables; the
+  security mark is a neutral badge, filterable by typing "security".
+
 ## Alternatives
 
 | Option | Why not |

@@ -359,6 +359,8 @@ pub struct Updates {
     pub charts: Vec<ChartRepo>,
     /// chart (and image) globs never looked up
     pub ignore: Vec<String>,
+    /// GitHub repositories of projects whose metadata names none (RFC 0026)
+    pub sources: Vec<SourceRepo>,
 }
 
 impl Default for Updates {
@@ -370,11 +372,12 @@ impl Default for Updates {
             registries: Vec::new(),
             charts: Vec::new(),
             ignore: Vec::new(),
+            sources: Vec::new(),
         }
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Upstream {
     pub kubernetes: bool,
@@ -383,6 +386,30 @@ pub struct Upstream {
     pub charts: bool,
     /// running container images against their registries (RFC 0021)
     pub images: bool,
+    /// release notes of the chart and image updates found (RFC 0026)
+    pub notes: bool,
+}
+
+impl Default for Upstream {
+    fn default() -> Self {
+        Self {
+            kubernetes: false,
+            distro: false,
+            flux: false,
+            charts: false,
+            images: false,
+            notes: true,
+        }
+    }
+}
+
+/// `name` (a chart or image glob) is released at the GitHub repository
+/// `github` (`owner/repo`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceRepo {
+    pub name: String,
+    pub github: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1160,6 +1187,13 @@ pub fn validate(cfg: &Config) -> Result<()> {
             .into());
         }
     }
+    for r in &cfg.updates.sources {
+        if crate::upstream::github_repo(&r.github).is_none() {
+            return Err(
+                format!("updates.sources: github {:?} must be owner/repo", r.github).into(),
+            );
+        }
+    }
     let c = &cfg.certificates;
     if c.interval_hours == 0 {
         return Err("certificates.interval_hours must be 1 or more".into());
@@ -1703,6 +1737,10 @@ mod tests {
                 "updates.charts: repo \"ftp://charts.example\" must be oci://",
             ),
             (
+                "[[updates.sources]]\nname = \"x\"\ngithub = \"o/r/../x\"\n".into(),
+                "updates.sources: github \"o/r/../x\" must be owner/repo",
+            ),
+            (
                 "[certificates]\ninterval_hours = 0\n".into(),
                 "certificates.interval_hours must be 1 or more",
             ),
@@ -1721,7 +1759,8 @@ mod tests {
         // the port defaults to 443
         let cfg: Config = Figment::from(Toml::string(
             "[[certificates.targets]]\nhost = \"a.example\"\n\
-             [[updates.charts]]\nname = \"x\"\nrepo = \"oci://charts.example/x\"\n",
+             [[updates.charts]]\nname = \"x\"\nrepo = \"oci://charts.example/x\"\n\
+             [[updates.sources]]\nname = \"x*\"\ngithub = \"acme/x\"\n",
         ))
         .extract()
         .unwrap();

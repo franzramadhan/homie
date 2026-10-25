@@ -17,7 +17,7 @@ use super::{helm, kubernetes::Kube, proxmox::Proxmox};
 use crate::{
     Result,
     config::{Distro, Updates},
-    upstream::{self, Latest},
+    upstream::{self, Latest, Note},
 };
 
 #[derive(Debug, Serialize, Default)]
@@ -82,6 +82,8 @@ pub struct Chart {
     /// repository URL (`oci://...` or an HTTP Helm repository)
     source: Option<String>,
     latest: Latest,
+    /// release notes up to the newest version (RFC 0026)
+    notes: Option<Notes>,
 }
 
 /// `7.0.14-25` of `7.0.14-25-pve` as comparable numbers.
@@ -449,6 +451,7 @@ pub async fn charts(cluster: &str, client: Client, cfg: &Updates) -> Result<Vec<
             managed_by: "flux".into(),
             source,
             latest: Latest::default(),
+            notes: None,
         });
     }
     for app in &apps {
@@ -472,6 +475,7 @@ pub async fn charts(cluster: &str, client: Client, cfg: &Updates) -> Result<Vec<
                 managed_by: "argocd".into(),
                 source: Some(repo),
                 latest: Latest::default(),
+                notes: None,
             });
         }
     }
@@ -490,6 +494,7 @@ pub async fn charts(cluster: &str, client: Client, cfg: &Updates) -> Result<Vec<
                     managed_by: "helm".into(),
                     source: Some(m.repo.clone()),
                     latest: Latest::default(),
+                    notes: None,
                 });
             }
         }
@@ -545,6 +550,7 @@ pub struct Image {
     /// `<namespace>/<kind>/<name>` of the workloads running it
     used_by: Vec<String>,
     latest: Latest,
+    notes: Option<Notes>,
 }
 
 /// `registry`, `repository`, `tag`, `digest` of an image reference. Docker
@@ -627,6 +633,7 @@ pub async fn images(cluster: &str, client: Client, cfg: &Updates) -> Result<Vec<
                 tag,
                 used_by,
                 latest: Latest::default(),
+                notes: None,
             }
         })
         .collect())
@@ -679,6 +686,165 @@ pub async fn image_latest(
             )),
             None => {}
         }
+    }
+}
+
+/// Where an update's changes are written (RFC 0026).
+#[derive(Debug, Serialize, PartialEq, Default)]
+pub struct Notes {
+    /// the project's repository: a GitHub one, or any https URL
+    repository: Option<String>,
+    /// GitHub only: the compare view from the running to the newest
+    /// release, else the release list
+    link: Option<String>,
+    /// releases after the running version up to the newest, newest first
+    releases: Vec<Note>,
+    /// one of them mentions a security fix: a hint, never a status
+    security: bool,
+}
+
+#[derive(Clone)]
+enum Meta {
+    /// repository URL, chart, version
+    Chart(String, String, String),
+    /// registry, repository, tag
+    Image(String, String, String),
+}
+
+struct Want {
+    chart: bool,
+    index: usize,
+    /// matched against `[[updates.sources]]`
+    names: Vec<String>,
+    /// the project name in prefixed release tags
+    name: String,
+    running: String,
+    newest: String,
+    meta: Meta,
+}
+
+/// Release notes of each chart and image with an update: the repository
+/// from its metadata or `[[updates.sources]]`, then the GitHub releases in
+/// between. Lookups run four at a time; `api` is GitHub's API.
+pub async fn notes(
+    r: &mut Report,
+    cfg: &Updates,
+    creds: &BTreeMap<String, (String, String)>,
+    token: Option<&str>,
+    api: &str,
+) {
+    use futures::StreamExt;
+    let plain = |v: &str| v.split('+').next().unwrap_or(v).to_string();
+    let newest = |l: &Latest| l.newest.clone().or(l.patch.clone());
+    let mut wants = Vec::new();
+    for (index, c) in r.charts.iter().enumerate() {
+        if let (Some(src), Some(newest)) = (&c.source, newest(&c.latest)) {
+            wants.push(Want {
+                chart: true,
+                index,
+                names: vec![c.chart.clone()],
+                name: c.chart.clone(),
+                running: plain(&c.version),
+                newest,
+                meta: Meta::Chart(src.clone(), c.chart.clone(), plain(&c.version)),
+            });
+        }
+    }
+    for (index, i) in r.images.iter().enumerate() {
+        if let (Some(tag), Some(newest), false) = (&i.tag, newest(&i.latest), i.unversioned) {
+            let repo = format!("{}/{}", i.registry, i.repository);
+            wants.push(Want {
+                chart: false,
+                index,
+                names: vec![i.image.clone(), repo],
+                name: i.repository.rsplit('/').next().unwrap_or_default().into(),
+                running: tag.clone(),
+                newest,
+                meta: Meta::Image(i.registry.clone(), i.repository.clone(), tag.clone()),
+            });
+        }
+    }
+    let metas: Vec<Meta> = wants.iter().map(|w| w.meta.clone()).collect();
+    let found: Vec<Option<String>> = futures::stream::iter(metas)
+        .map(|m| async move {
+            let r = match &m {
+                Meta::Chart(repo, chart, version) => {
+                    upstream::chart_source(repo, chart, version, |h| creds.get(h).cloned()).await
+                }
+                Meta::Image(reg, repo, tag) => {
+                    upstream::oci_source(reg, repo, tag, creds.get(reg).cloned()).await
+                }
+            };
+            r.ok().flatten()
+        })
+        .buffered(4)
+        .collect()
+        .await;
+    // metadata naming a GitHub repository wins, then the configured sources
+    let repos: Vec<(Option<String>, Option<String>)> = wants
+        .iter()
+        .zip(found)
+        .map(|(w, url)| {
+            let gh = url.as_deref().and_then(upstream::github_repo).or_else(|| {
+                cfg.sources
+                    .iter()
+                    .find(|s| w.names.iter().any(|n| glob(&s.name, n)))
+                    .and_then(|s| upstream::github_repo(&s.github))
+            });
+            let link = match &gh {
+                Some(g) => Some(upstream::github_url(g, &[])),
+                None => url.filter(|u| u.starts_with("https://")),
+            };
+            (gh, link)
+        })
+        .collect();
+    let unique: std::collections::BTreeSet<String> =
+        repos.iter().filter_map(|(g, _)| g.clone()).collect();
+    let fetched: BTreeMap<String, (Vec<Note>, Option<String>)> = futures::stream::iter(unique)
+        .map(|g| async move {
+            let n = upstream::release_notes(api, &g, token).await;
+            (g, n)
+        })
+        .buffer_unordered(4)
+        .collect()
+        .await;
+    let failed: Vec<String> = fetched
+        .iter()
+        .filter_map(|(g, (_, e))| e.as_ref().map(|e| format!("{g}: {e}")))
+        .collect();
+    if let Some(first) = failed.first() {
+        r.errors.push(format!(
+            "release notes of {} repositories not read, the last ones are kept ({first})",
+            failed.len()
+        ));
+    }
+    for (w, (gh, repository)) in wants.iter().zip(&repos) {
+        let Some(repository) = repository else {
+            continue;
+        };
+        let mut n = Notes {
+            repository: Some(repository.clone()),
+            ..Default::default()
+        };
+        if let Some(g) = gh
+            && let Some((all, _)) = fetched.get(g)
+        {
+            let (rel, from) = upstream::between(all, &w.name, &w.running, &w.newest);
+            n.link = Some(match (from, rel.first()) {
+                (Some(a), Some(b)) => {
+                    upstream::github_url(g, &["compare", &format!("{a}...{}", b.tag)])
+                }
+                _ => upstream::github_url(g, &["releases"]),
+            });
+            n.security = rel.iter().any(|r| r.security);
+            n.releases = rel.into_iter().cloned().collect();
+        }
+        let slot = if w.chart {
+            &mut r.charts[w.index].notes
+        } else {
+            &mut r.images[w.index].notes
+        };
+        *slot = Some(n);
     }
 }
 
@@ -882,6 +1048,7 @@ mod tests {
             managed_by: "flux".into(),
             source: Some(url.clone()),
             latest: Latest::default(),
+            notes: None,
         }];
         let mut errors = Vec::new();
         chart_latest(&mut c, &BTreeMap::new(), &mut errors).await;
@@ -1218,6 +1385,7 @@ mod tests {
             managed_by: "helm".into(),
             source,
             latest: Latest::default(),
+            notes: None,
         };
         let mut c = vec![
             chart(None),
@@ -1260,6 +1428,7 @@ mod tests {
             unversioned,
             used_by: Vec::new(),
             latest: Latest::default(),
+            notes: None,
         };
         let mut i = vec![
             image("library/nginx", Some("1.27.3-alpine"), false, false),
@@ -1337,5 +1506,114 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn release_notes_of_charts_and_images() {
+        use axum::{http::StatusCode, routing::get};
+        let index = "apiVersion: v1\nentries:\n  a:\n  - version: 1.0.0\n    sources: [https://github.com/acme-test/a]\n  b:\n  - version: 1.0.0\n    home: https://b.example\n  d:\n  - version: 1.0.0\n    home: https://d.example\n";
+        let release = |tag: &str, body: &str| json!({"tag_name": tag, "name": tag, "body": body});
+        let a = json!([
+            release("v1.1.0", "## Security\nfix"),
+            release("v1.0.0", "first")
+        ]);
+        let img = json!([release("v2.1.0", "faster")]);
+        let url = serve(
+            route("/repos/acme-test/a/releases", a)
+                .merge(route("/repos/acme-test/img/releases", img))
+                .merge(route(
+                    "/v2/acme/img/manifests/2.0.0",
+                    json!({"annotations": {"org.opencontainers.image.source": "https://github.com/acme-test/img"}}),
+                ))
+                .route("/index.yaml", get(move || async move { index }))
+                .route(
+                    "/repos/acme-test/b/releases",
+                    get(|| async { (StatusCode::FORBIDDEN, "API rate limit exceeded") }),
+                ),
+        )
+        .await;
+        let chart = |name: &str, newest: Option<&str>| Chart {
+            cluster: "lab".into(),
+            namespace: "apps".into(),
+            release: name.into(),
+            chart: name.into(),
+            version: "1.0.0".into(),
+            managed_by: "helm".into(),
+            source: Some(url.clone()),
+            latest: Latest {
+                patch: None,
+                newest: newest.map(Into::into),
+            },
+            notes: None,
+        };
+        let image = |tag: &str, unversioned: bool| Image {
+            cluster: "lab".into(),
+            image: format!("acme/img:{tag}"),
+            registry: url.clone(),
+            repository: "acme/img".into(),
+            tag: Some(tag.into()),
+            pinned: false,
+            unversioned,
+            used_by: Vec::new(),
+            latest: Latest {
+                patch: Some("2.1.0".into()),
+                newest: None,
+            },
+            notes: None,
+        };
+        let mut r = Report {
+            charts: vec![
+                chart("a", Some("1.1.0")),
+                chart("b", Some("2.0.0")),
+                chart("c", None),
+                chart("d", Some("2.0.0")),
+            ],
+            images: vec![image("2.0.0", false), image("latest", true)],
+            ..Default::default()
+        };
+        let cfg = Updates {
+            sources: vec![crate::config::SourceRepo {
+                name: "b*".into(),
+                github: "acme-test/b".into(),
+            }],
+            ..Default::default()
+        };
+        notes(&mut r, &cfg, &BTreeMap::new(), None, &url).await;
+        let a = r.charts[0].notes.as_ref().unwrap();
+        assert_eq!(
+            a.link.as_deref(),
+            Some("https://github.com/acme-test/a/compare/v1.0.0...v1.1.0")
+        );
+        assert_eq!((a.releases.len(), a.security), (1, true));
+        assert_eq!(a.releases[0].excerpt, "## Security\nfix");
+        // metadata without a GitHub repository yields to [[updates.sources]]
+        let b = r.charts[1].notes.as_ref().unwrap();
+        assert_eq!(
+            (b.repository.as_deref(), b.link.as_deref(), b.releases.len()),
+            (
+                Some("https://github.com/acme-test/b"),
+                Some("https://github.com/acme-test/b/releases"),
+                0
+            )
+        );
+        assert_eq!(
+            r.errors,
+            [
+                "release notes of 1 repositories not read, the last ones are kept (acme-test/b: HTTP 403 Forbidden: API rate limit exceeded)"
+            ]
+        );
+        assert_eq!(r.charts[2].notes, None);
+        let d = r.charts[3].notes.as_ref().unwrap();
+        assert_eq!(
+            (d.repository.as_deref(), d.link.as_deref()),
+            (Some("https://d.example"), None)
+        );
+        // the running tag is not a release: the release list
+        let i = r.images[0].notes.as_ref().unwrap();
+        assert_eq!(
+            (i.link.as_deref(), i.releases.len(), i.security),
+            (Some("https://github.com/acme-test/img/releases"), 1, false)
+        );
+        assert_eq!(r.images[1].notes, None);
     }
 }
