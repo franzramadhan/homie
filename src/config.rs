@@ -1458,6 +1458,43 @@ mod tests {
         }
     }
 
+    /// CONFIG.md names every key and its snippets parse: a new or renamed
+    /// key fails here until the reference is updated.
+    #[test]
+    fn config_md_has_no_drift() {
+        let doc = include_str!("../CONFIG.md");
+        let src = include_str!("config.rs");
+        let src = &src[..src.find("#[cfg(test)]").unwrap()];
+        let missing: Vec<_> = src
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("pub "))
+            .filter_map(|l| l.split_once(':').map(|(k, _)| k))
+            .filter(|k| k.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+            .filter(|&k| k != "file")
+            .map(|k| if k == "kind" { "type" } else { k })
+            // a key (`k`, `k = ...`) or a section ([k], [x.k], [x.k.<name>])
+            .filter(|k| {
+                ![
+                    format!("`{k}`"),
+                    format!("`{k} ="),
+                    format!("[{k}"),
+                    format!(".{k}]"),
+                    format!(".{k}."),
+                ]
+                .iter()
+                .any(|p| doc.contains(p.as_str()))
+            })
+            .collect();
+        assert!(missing.is_empty(), "CONFIG.md misses {missing:?}");
+        for block in doc.split("```toml\n").skip(1) {
+            let toml = &block[..block.find("```").unwrap()];
+            Figment::new()
+                .merge(Toml::string(toml))
+                .extract::<Config>()
+                .unwrap_or_else(|e| panic!("CONFIG.md snippet: {e}\n{toml}"));
+        }
+    }
+
     #[test]
     fn github_session_store() {
         let gh = |v: serde_json::Value| -> GitHub { serde_json::from_value(v).unwrap() };

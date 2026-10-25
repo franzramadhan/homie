@@ -36,7 +36,7 @@ jobs:
           web=false
           chart=false
           bend=false
-          if grep -qE '^(src/|examples/|Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.github/workflows/ci\.yml$)' <<<"$files"; then rust=true; fi
+          if grep -qE '^(src/|examples/|CONFIG\.md$|Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.github/workflows/ci\.yml$)' <<<"$files"; then rust=true; fi
           if grep -qE '^(web/|\.github/workflows/ci\.yml$)' <<<"$files"; then web=true; fi
           if grep -qE '^(charts/|\.github/workflows/ci\.yml$)' <<<"$files"; then chart=true; fi
           # the laws, their proofs and the model, and the Rust code the model mirrors

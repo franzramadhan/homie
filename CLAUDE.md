@@ -15,6 +15,7 @@ and the milestones are in [rfc/0001-homie-foundation.md](rfc/0001-homie-foundati
 | `src/server/` | `api` (meta, queries, actions), `guard` (Host, CSRF, session), `login`, `assets` (embedded UI) |
 | `src/check.rs` | `homie check` |
 | `web/` | Vite + React + TanStack Router/Query/Table SPA; `src/api.ts` mirrors the Rust JSON shapes |
+| `CONFIG.md` | every config key with its default (tested by `config::tests::config_md_has_no_drift`) |
 | `deploy/kubernetes`, `contrib/`, `examples/` | kustomize base, launchd/systemd units, example configs (tested by `config::tests::examples_load`) |
 
 Build the UI before a release build: the binary embeds `web/dist`
@@ -36,6 +37,15 @@ and a missing `web/dist` only means the UI answers 503.
   `implemented`. Not needed for bug fixes, docs, CI, dependency bumps or
   refactors without visible behavior change; when unsure, treat it as a
   feature.
+
+## Config drift
+
+Every change that adds, renames or removes a config key, or changes a
+default, updates `CONFIG.md` in the same PR (and an example in `examples/`
+when the feature is new). `config::tests::config_md_has_no_drift` fails
+when a key in `src/config.rs` is missing from `CONFIG.md` or a TOML snippet
+there no longer parses; it runs with `cargo test`. Defaults and wording it
+cannot check: compare them by hand when touching a section.
 
 ## UI
 
