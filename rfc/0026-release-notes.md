@@ -98,6 +98,14 @@ fix, so updates are either all done at once or put off together.
   blobs to a CDN).
 - `homie_updates_security` is left out when no cluster could be read, like
   `homie_updates_available`. The log line also has `releases`.
+- Without `updates.github_token`, GitHub lookups (these notes and the
+  RFC 0020 release lookups) use the `[github]` credential when it reads
+  github.com: the fine-grained token, or an installation token of the
+  App's first installation (5000 requests an hour, public repositories
+  included), cached and renewed 5 minutes before it expires. 60 an hour
+  per IP was not enough for the reference lab. When minting fails the
+  lookups run anonymously, logged once. An explicit
+  `updates.github_token` always wins.
 - Display: a "release notes" column on the Charts and Images tables; the
   security mark is a neutral badge, filterable by typing "security".
 

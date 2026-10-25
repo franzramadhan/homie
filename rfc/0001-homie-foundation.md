@@ -527,7 +527,7 @@ bad_days = 3                           # red when full within this many days
 
 [updates]                              # RFC 0020: read-only, nothing is installed
 proxmox = true                         # package list and reboot pending per node
-# github_token = { env = "GITHUB_TOKEN" }  # raises the GitHub rate limit
+# github_token = { env = "GITHUB_TOKEN" }  # raises the GitHub rate limit; unset: the [github] token or App
 # ignore = []                          # chart globs never looked up
 # [updates.upstream]                   # third-party lookups, all off: kubernetes, distro, flux, charts, images (RFC 0021)
 # [[updates.registries]]               # host, username, password for private OCI registries

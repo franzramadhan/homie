@@ -477,9 +477,10 @@ impl Lab {
             "updates" => {
                 let u = &self.updates;
                 let mut r = updates::Report::default();
-                let gh = match &u.github_token {
-                    Some(s) => Some(s.resolve().await?),
-                    None => None,
+                let gh = match (&u.github_token, &self.github) {
+                    (Some(s), _) => Some(s.resolve().await?),
+                    (None, Some(g)) if g.github_com() => g.public_token().await,
+                    _ => None,
                 };
                 if u.proxmox {
                     for p in self.proxmox.values() {
