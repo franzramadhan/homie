@@ -81,8 +81,16 @@ fn bootstrap(state_dir: &Path) -> Result<String> {
 /// `homie hash-password`: reads one line from stdin (without echo on a
 /// terminal) and prints the argon2 hash.
 pub fn hash_password_cli() -> Result<()> {
-    use std::io::{BufRead, IsTerminal, Write};
+    use std::io::IsTerminal;
     let tty = std::io::stdin().is_terminal();
+    println!("{}", hash_line(&mut std::io::stdin().lock(), tty)?);
+    Ok(())
+}
+
+/// Reads one line from `input`, turning the echo off around it on a
+/// terminal, and hashes it.
+fn hash_line(input: &mut dyn std::io::BufRead, tty: bool) -> Result<String> {
+    use std::io::Write;
     let stty = |arg: &str| {
         let _ = std::process::Command::new("stty")
             .arg(arg)
@@ -95,7 +103,7 @@ pub fn hash_password_cli() -> Result<()> {
         stty("-echo");
     }
     let mut line = String::new();
-    let read = std::io::stdin().lock().read_line(&mut line);
+    let read = input.read_line(&mut line);
     if tty {
         stty("echo");
         eprintln!();
@@ -105,8 +113,7 @@ pub fn hash_password_cli() -> Result<()> {
     if password.chars().count() < 12 {
         return Err("use at least 12 characters".into());
     }
-    println!("{}", hash(password)?);
-    Ok(())
+    hash(password)
 }
 
 impl Local {
@@ -288,5 +295,14 @@ mod tests {
         }
         let e = l.verify("homie", "s3cret-long-enough").await.unwrap_err();
         assert!(e.to_string().contains("too many failed logins"), "{e}");
+    }
+
+    #[test]
+    fn hash_line_on_a_terminal() {
+        // stty fails without a terminal on stdin; the echo calls are best effort
+        let h = hash_line(&mut "a long enough password\n".as_bytes(), true).unwrap();
+        assert!(h.starts_with("$argon2"), "{h}");
+        let e = hash_line(&mut "short\r\n".as_bytes(), true).unwrap_err();
+        assert_eq!(e.to_string(), "use at least 12 characters");
     }
 }

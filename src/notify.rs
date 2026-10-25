@@ -746,4 +746,170 @@ mod tests {
                 .unwrap();
         assert!(Target::new(&bad).await.unwrap().send(&m).await.is_err());
     }
+
+    #[test]
+    fn shapes_without_a_link_or_reasons() {
+        let m = message("custom", "x", (Tone::Ok, Tone::Warn), &[], "", false);
+        assert_eq!(m.title, "custom x: warning (was ok)");
+        let (h, body, _) = shape(NotifyKind::Ntfy, &m);
+        assert!(h.contains(&("Priority", "3".into())));
+        assert!(!h.iter().any(|(k, _)| *k == "Click"));
+        assert_eq!(body, m.title);
+        let (_, body, _) = shape(NotifyKind::Slack, &m);
+        assert!(!body.contains("open Homie"), "{body}");
+        assert_eq!(word(Tone::Quiet), "scheduled off");
+    }
+
+    #[test]
+    fn a_state_file_that_cannot_be_written() {
+        let dir = crate::server::harness::temp_dir("notify-save");
+        let mut states = BTreeMap::new();
+        states.insert("pve/lab".to_string(), Some(State::new(Tone::Bad)));
+        // the path is a directory: logged, nothing else
+        save(Some(&dir), &states);
+        assert!(dir.is_dir());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    type Seen = Arc<std::sync::Mutex<Vec<String>>>;
+
+    /// A target that keeps the bodies posted to `/hook`; other paths are 404.
+    async fn hook() -> (String, Seen) {
+        use axum::{Router, extract::State as S, routing::post};
+        let seen: Seen = Default::default();
+        let app = Router::new()
+            .route(
+                "/hook",
+                post(|S(s): S<Seen>, b: String| async move {
+                    s.lock().unwrap().push(b);
+                }),
+            )
+            .with_state(seen.clone());
+        (crate::testkit::serve(app).await, seen)
+    }
+
+    #[tokio::test]
+    async fn cards_to_evaluate() {
+        use crate::server::harness::{backend, config, kubeconfig, lab_sections};
+        let backend = backend().await;
+        let kc = kubeconfig(&backend);
+        let cfg = config(&format!(
+            "public_url = \"http://localhost:7777\"\n{}[auth]\nissuer = \"http://127.0.0.1:9\"\nclient_id = \"homie\"\nallowed_emails = [\"me@example.com\"]\n\
+             [kubernetes.user]\nauth = \"forward_token\"\nkubeconfig = \"{}\"\n\
+             [tailscale]\napi_key = \"tskey-x\"\n\
+             [github]\ntoken = \"ghp_x\"\napi_url = \"{backend}\"\nstore = \"off\"\n\
+             watch = [{{ repo = \"acme/app\", workflow = \"ci.yml\" }}]\n",
+            lab_sections(&backend),
+            kc.display()
+        ));
+        let lab = crate::integrations::Lab::new(&cfg).await.unwrap();
+        let all = cards(&lab, false, &[]);
+        let has = |k: &str, n: &str| all.contains(&(k.to_string(), n.to_string()));
+        for (k, n) in [
+            ("pve", "lab"),
+            ("k8s", "main"),
+            ("cnpg", "main"),
+            ("openbao", "vault"),
+            ("security", "kyverno"),
+            ("security", "debsecan"),
+            ("tailscale", "_"),
+            ("github", "_"),
+            ("healthchecks", "_"),
+            ("certs", "_"),
+        ] {
+            assert!(has(k, n), "{k}/{n} missing in {all:?}");
+        }
+        // alerts only on request; forward_token only with a ServiceAccount
+        assert!(!has("alerts", "mon") && !has("k8s", "user"), "{all:?}");
+        assert!(cards(&lab, true, &[]).contains(&("k8s".into(), "user".into())));
+        let some = cards(&lab, false, &["alerts".into(), "certificates".into()]);
+        assert_eq!(
+            some,
+            [
+                ("alerts".into(), "mon".into()),
+                ("certs".into(), "_".into())
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn notify_test_sends_to_every_target() {
+        use crate::server::harness::config;
+        let (url, seen) = hook().await;
+        let e = test(&config("")).await.unwrap_err().to_string();
+        assert_eq!(e, "no [notify] section");
+        let one = format!("{{ type = \"slack\", url = \"{url}/hook\" }}");
+        let cfg = config(&format!(
+            "public_url = \"https://homie.example/\"\n[notify]\ntargets = [{one}]\n"
+        ));
+        test(&cfg).await.unwrap();
+        let body = seen.lock().unwrap()[0].clone();
+        assert!(body.contains("test message (notify-test)"), "{body}");
+        assert!(
+            body.contains("<https://homie.example/|open Homie>"),
+            "{body}"
+        );
+        let cfg = config(&format!(
+            "[notify]\ntargets = [{one}, {{ type = \"webhook\", url = \"{url}/missing\" }}]\n"
+        ));
+        let e = test(&cfg).await.unwrap_err().to_string();
+        assert_eq!(e, "1 of 2 targets failed");
+        // a target that does not resolve
+        let cfg = config(
+            "[notify]\ntargets = [{ type = \"ntfy\", url = { env = \"HOMIE_TEST_UNSET\" } }]\n",
+        );
+        let e = test(&cfg).await.unwrap_err().to_string();
+        assert!(e.starts_with("notify.targets[0]: "), "{e}");
+    }
+
+    #[tokio::test]
+    async fn run_sends_changes_and_saves_them() {
+        use crate::server::harness::{Homie, backend, lab_sections, temp_dir};
+        let backend = backend().await;
+        let (url, seen) = hook().await;
+        let dir = temp_dir("notify-run");
+        // the last run saw the lab failing
+        std::fs::write(dir.join("notify.json"), r#"{"pve/lab": "bad"}"#).unwrap();
+        let h = Homie::start(|_| {
+            format!(
+                "public_url = \"https://homie.example\"\nallow_unauthenticated = true\nstate_dir = \"{}\"\n{}\
+                 [notify]\nhold_seconds = 0\ncards = [\"pve\"]\ntargets = [\n\
+                 {{ type = \"ntfy\", url = \"{url}/hook\" }},\n\
+                 {{ type = \"slack\", url = \"{url}/hook\" }},\n\
+                 {{ type = \"webhook\", url = \"{url}/missing\" }},\n]\n",
+                dir.display(),
+                lab_sections(&backend)
+            )
+        })
+        .await;
+        let task = tokio::spawn(run(h.state.clone()));
+        let path = dir.join("notify.json");
+        let mut saved = String::new();
+        for _ in 0..100 {
+            saved = std::fs::read_to_string(&path).unwrap_or_default();
+            if saved.contains("ok") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        task.abort();
+        assert_eq!(saved, r#"{"pve/lab":"ok"}"#);
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert!(
+            seen[1].contains("Proxmox lab: ok (was failing)"),
+            "{seen:?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+
+        // no [notify]: nothing to run; a target that does not resolve: off
+        let h = Homie::start(|_| String::new()).await;
+        run(h.state.clone()).await;
+        let h = Homie::start(|_| {
+            "[notify]\ntargets = [{ type = \"ntfy\", url = { env = \"HOMIE_TEST_UNSET\" } }]\n"
+                .into()
+        })
+        .await;
+        run(h.state.clone()).await;
+    }
 }
