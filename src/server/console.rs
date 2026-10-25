@@ -267,4 +267,182 @@ mod tests {
             }
         }
     }
+
+    /// A Proxmox with two running VMs on VNC: 102's WebSocket pings, then
+    /// echoes until "bye", which it answers with a Close; 104's fails.
+    async fn pve() -> String {
+        use axum::{
+            Router,
+            extract::ws::Message,
+            routing::{get, post},
+        };
+        let data = |v: serde_json::Value| Json(json!({ "data": v }));
+        let app = Router::new()
+            .route(
+                "/api2/json/cluster/resources",
+                get(move || async move {
+                    data(json!([
+                        {"type": "qemu", "vmid": 102, "name": "vga", "node": "pve1", "status": "running"},
+                        {"type": "qemu", "vmid": 104, "name": "broken", "node": "pve1", "status": "running"}
+                    ]))
+                }),
+            )
+            .route(
+                "/api2/json/nodes/pve1/qemu/{vmid}/config",
+                get(move || async move { data(json!({})) }),
+            )
+            .route(
+                "/api2/json/nodes/pve1/qemu/{vmid}/vncproxy",
+                post(move || async move {
+                    data(json!({"port": "5902", "ticket": "PVEVNC:vnc", "user": "homie@pve!t"}))
+                }),
+            )
+            .route(
+                "/api2/json/nodes/pve1/qemu/{vmid}/vncwebsocket",
+                get(|Path(vmid): Path<u64>, ws: WebSocketUpgrade| async move {
+                    if vmid == 104 {
+                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                    }
+                    ws.protocols(["binary"])
+                        .on_upgrade(|mut s| async move {
+                            let _ = s.send(Message::Ping(vec![1].into())).await;
+                            while let Some(Ok(m)) = s.recv().await {
+                                let bye = m == Message::Text("bye".into());
+                                let _ = s.send(if bye { Message::Close(None) } else { m }).await;
+                            }
+                        })
+                        .into_response()
+                }),
+            );
+        crate::testkit::serve(app).await
+    }
+
+    /// The console routes alone, every request made by `caller`.
+    async fn routes(state: &Shared, caller: Caller) -> String {
+        let app = axum::Router::new()
+            .route("/open/{name}", axum::routing::post(open))
+            .route("/ws/{name}/{id}", axum::routing::get(connect))
+            .layer(axum::Extension(caller))
+            .with_state(state.clone());
+        crate::testkit::serve(app).await
+    }
+
+    type Ws = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
+
+    /// The console WebSocket, or the error that refused it.
+    async fn ws(url: &str, name: &str, id: &str) -> std::result::Result<Ws, String> {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let mut req = format!("{}/ws/{name}/{id}", url.replace("http", "ws"))
+            .into_client_request()
+            .unwrap();
+        req.headers_mut()
+            .insert("origin", "http://homie.example".parse().unwrap());
+        req.headers_mut()
+            .insert("sec-websocket-protocol", "binary".parse().unwrap());
+        let tcp = tokio::net::TcpStream::connect(url.trim_start_matches("http://"))
+            .await
+            .unwrap();
+        tokio_tungstenite::client_async(req, tcp)
+            .await
+            .map(|(s, _)| s)
+            .map_err(|e| e.to_string())
+    }
+
+    async fn open_id(url: &str, name: &str, vmid: u64) -> (u16, serde_json::Value) {
+        let r = reqwest::Client::new()
+            .post(format!("{url}/open/{name}"))
+            .json(&json!({"node": "pve1", "vmid": vmid, "type": "qemu"}))
+            .send()
+            .await
+            .unwrap();
+        (r.status().as_u16(), r.json().await.unwrap())
+    }
+
+    /// The next message that is not a Pong.
+    async fn next(s: &mut Ws) -> Up {
+        s.by_ref()
+            .filter(|m| std::future::ready(!matches!(m, Ok(Up::Pong(_)))))
+            .next()
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
+    fn close(reason: &str) -> Up {
+        Up::Close(Some(tokio_tungstenite::tungstenite::protocol::CloseFrame {
+            code: 1000.into(),
+            reason: reason.into(),
+        }))
+    }
+
+    #[tokio::test]
+    async fn relay_ends_and_says_why() {
+        let pve = pve().await;
+        let h = crate::server::harness::Homie::start(|_| {
+            format!(
+                "public_url = \"http://homie.example\"\n\
+                 [local_login]\npassword_hash = \"{}\"\n\
+                 [proxmox.lab]\nendpoints = [\"{pve}\"]\ntoken = \"homie@pve!t=secret\"\nconsole = true\n",
+                crate::server::harness::password_hash()
+            )
+        })
+        .await;
+        let anon = routes(&h.state, Caller::default()).await;
+
+        let (status, body) = open_id(&anon, "gone", 102).await;
+        assert_eq!(
+            (status, body["error"].as_str()),
+            (404, Some("no such Proxmox"))
+        );
+
+        // an id for a Proxmox that is no longer configured
+        h.state.consoles.lock().unwrap().insert(
+            "stale".into(),
+            Pending {
+                sid: None,
+                pve: "gone".into(),
+                console: Console::default(),
+                created: Instant::now(),
+            },
+        );
+        assert_eq!(
+            ws(&anon, "gone", "stale").await.err(),
+            Some("HTTP error: 404 Not Found".into())
+        );
+
+        // Proxmox refuses the WebSocket
+        let (status, body) = open_id(&anon, "lab", 104).await;
+        assert_eq!(status, 200, "{body}");
+        let id = body["id"].as_str().unwrap();
+        assert_eq!(
+            ws(&anon, "lab", id).await.err(),
+            Some("HTTP error: 502 Bad Gateway".into())
+        );
+
+        // pings both ways are not relayed; Proxmox closes after "bye"
+        let (_, body) = open_id(&anon, "lab", 102).await;
+        let mut s = ws(&anon, "lab", body["id"].as_str().unwrap())
+            .await
+            .unwrap();
+        s.send(Up::Ping(vec![2].into())).await.unwrap();
+        s.send(Up::text("hi")).await.unwrap();
+        assert_eq!(next(&mut s).await, Up::text("hi"));
+        s.send(Up::text("bye")).await.unwrap();
+        assert_eq!(next(&mut s).await, close("closed by Proxmox"));
+
+        // a session that no longer exists ends the console at the first check
+        let ghost = routes(
+            &h.state,
+            Caller {
+                sid: Some("ghost".into()),
+                ..Default::default()
+            },
+        )
+        .await;
+        let (_, body) = open_id(&ghost, "lab", 102).await;
+        let mut s = ws(&ghost, "lab", body["id"].as_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(next(&mut s).await, close("session ended"));
+    }
 }

@@ -626,4 +626,117 @@ pub(crate) mod tests {
                 .is_err()
         );
     }
+
+    #[test]
+    fn odd_certificates() {
+        // a PEM block that is no certificate is skipped
+        let dir = std::env::temp_dir().join(format!("homie-tls-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ca = dir.join("junk.pem");
+        std::fs::write(
+            &ca,
+            "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
+        )
+        .unwrap();
+        assert_eq!(
+            roots(Some(&ca)).unwrap().anchors.len(),
+            PUBLIC.anchors.len()
+        );
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(
+            format!("{:?}", PUBLIC.clone()),
+            format!("Roots({})", PUBLIC.anchors.len())
+        );
+
+        // an IP address is no DNS name; a leaf without SANs has no names
+        let pki = Pki::new(2040, 2035);
+        let mut p =
+            CertificateParams::new(vec!["127.0.0.1".to_string(), "a.example".into()]).unwrap();
+        p.distinguished_name.push(DnType::CommonName, "ip");
+        let k = KeyPair::generate().unwrap();
+        let c = parse(
+            p.signed_by(&k, &pki.inter_issuer).unwrap().der(),
+            "leaf",
+            false,
+        )
+        .unwrap();
+        assert_eq!(c.names, ["a.example"]);
+        let mut p = CertificateParams::new(Vec::<String>::new()).unwrap();
+        p.distinguished_name.push(DnType::CommonName, "bare");
+        let c = parse(
+            p.signed_by(&k, &pki.inter_issuer).unwrap().der(),
+            "leaf",
+            false,
+        )
+        .unwrap();
+        assert_eq!((c.subject.as_str(), c.names.len()), ("bare", 0));
+
+        // other webpki errors by their variant name
+        assert_eq!(problem(&webpki::Error::BadDer), "BadDer");
+
+        // a leaf that does not parse
+        let junk = CertificateDer::from(vec![1, 2, 3]);
+        let s = inspect(&pki.roots(), &junk, &[], &name("a.example"), at(2026), true);
+        assert_eq!(
+            (s.problem.as_deref(), s.chain.len()),
+            (Some("bad_certificate"), 0)
+        );
+
+        // an anchor without its full root certificate: no root row
+        let (leaf, _) = pki.leaf(&["a.example"], 2024, 2030);
+        let mut r = pki.roots();
+        r.full.clear();
+        let s = inspect(
+            &r,
+            &leaf,
+            std::slice::from_ref(&pki.inter),
+            &name("a.example"),
+            at(2026),
+            true,
+        );
+        assert_eq!(s.problem, None);
+        assert_eq!(s.chain.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn probe_over_tls12_and_without_tls() {
+        let pki = Pki::new(2040, 2035);
+        let (leaf, key) = pki.leaf(&["a.example"], 2024, 2039);
+        let config = rustls::ServerConfig::builder_with_provider(provider())
+            .with_protocol_versions(&[&rustls::version::TLS12])
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![leaf, pki.inter.clone()],
+                rustls::pki_types::PrivateKeyDer::try_from(key.serialize_der()).unwrap(),
+            )
+            .unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (s, _) = listener.accept().await.unwrap();
+            let _ = acceptor.accept(s).await;
+        });
+        let s = probe("a.example", port, Some("127.0.0.1"), pki.roots())
+            .await
+            .unwrap();
+        assert_eq!((s.problem, s.chain.len()), (None, 3));
+
+        // a plain TCP server that hangs up: no certificate seen
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (s, _) = listener.accept().await.unwrap();
+            drop(s);
+        });
+        let e = probe("a.example", port, Some("127.0.0.1"), pki.roots())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.starts_with(&format!("TLS handshake with 127.0.0.1:{port} failed: ")),
+            "{e}"
+        );
+    }
 }
