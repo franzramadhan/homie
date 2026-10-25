@@ -763,26 +763,27 @@ pub fn between<'a>(
 }
 
 struct NotesEntry {
-    at: Instant,
+    /// no request before this
+    until: Instant,
     notes: Vec<Note>,
-    failing: bool,
+    /// the last lookup failed: the last notes are kept
+    error: Option<String>,
 }
 static NOTES: LazyLock<Mutex<HashMap<String, NotesEntry>>> = LazyLock::new(Default::default);
 
 /// The GitHub releases of `repo` (`owner/repo`), drafts and pre-releases
 /// left out, kept 12 hours. A failure (a 403 or 429 rate limit too) keeps
-/// the last notes, is logged once, and is retried at the next call; the
-/// error comes back with the notes.
+/// the last notes, is logged once, and is retried after 30 minutes; the
+/// error comes back with the notes until then.
 pub async fn release_notes(
     api: &str,
     repo: &str,
     token: Option<&str>,
 ) -> (Vec<Note>, Option<String>) {
     if let Some(e) = NOTES.lock().unwrap().get(repo)
-        && !e.failing
-        && e.at.elapsed() < TTL
+        && Instant::now() < e.until
     {
-        return (e.notes.clone(), None);
+        return (e.notes.clone(), e.error.clone());
     }
     let started = Instant::now();
     let r: Result<Vec<Note>> = async {
@@ -825,24 +826,25 @@ pub async fn release_notes(
                 result = "ok"
             );
             let e = NotesEntry {
-                at: Instant::now(),
+                until: Instant::now() + TTL,
                 notes: notes.clone(),
-                failing: false,
+                error: None,
             };
             cache.insert(repo.to_string(), e);
             (notes, None)
         }
         Err(err) => {
             let e = cache.entry(repo.to_string()).or_insert(NotesEntry {
-                at: Instant::now(),
+                until: Instant::now(),
                 notes: Vec::new(),
-                failing: false,
+                error: None,
             });
-            if !e.failing {
+            if e.error.is_none() {
                 tracing::warn!(msg = "upstream", kind = "notes", repo, error = %err, ms, result = "error");
-                e.failing = true;
             }
-            (e.notes.clone(), Some(err.to_string()))
+            e.until = Instant::now() + FAILED_TTL;
+            e.error = Some(err.to_string());
+            (e.notes.clone(), e.error.clone())
         }
     }
 }
@@ -1365,7 +1367,13 @@ mod tests {
         let (n, e) = release_notes(&api, repo, None).await;
         assert!(n.is_empty());
         assert_eq!(e.as_deref(), Some("HTTP 429 Too Many Requests: slow down"));
-        // retried at the next call, then cached
+        // not asked again before the failure is 30 minutes old
+        let (n, e) = release_notes(&api, repo, None).await;
+        assert!(n.is_empty() && e.is_some());
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        let due = |repo: &str| NOTES.lock().unwrap().get_mut(repo).unwrap().until = Instant::now();
+        // then retried, and the notes cached
+        due(repo);
         for _ in 0..2 {
             let (n, e) = release_notes(&api, repo, Some("t")).await;
             assert_eq!(e, None);
@@ -1382,14 +1390,15 @@ mod tests {
             );
         }
         assert_eq!(hits.load(Ordering::SeqCst), 2);
-        // due again (as after a failure elsewhere): a 403 keeps the last notes
-        NOTES.lock().unwrap().get_mut(repo).unwrap().failing = true;
+        // 12 hours later: a 403 keeps the last notes, and is not retried
+        // at once
+        due(repo);
         for _ in 0..2 {
             let (n, e) = release_notes(&api, repo, None).await;
             assert_eq!(n.len(), 1);
             assert!(e.unwrap().starts_with("HTTP 403"));
         }
-        assert_eq!(hits.load(Ordering::SeqCst), 4);
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
     }
 
     #[tokio::test]

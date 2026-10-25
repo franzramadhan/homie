@@ -78,9 +78,11 @@ fix, so updates are either all done at once or put off together.
   otherwise the link is the release list. Unversioned and digest-pinned
   images get no notes (no running version).
 - Every failure, not only a 403 or 429, keeps the last notes, is logged
-  once until a lookup succeeds, and is retried at the next refresh of the
-  Updates query. The page shows one line with the number of repositories
-  not read.
+  once until a lookup succeeds, and is retried after 30 minutes (the
+  failed-lookup interval of RFC 0020), not at every refresh of the Updates
+  query: a repository that answers 404 or a lasting rate limit would
+  otherwise spend the 60 requests an hour. The page shows one line with
+  the number of repositories not read.
 - Bodies: HTML tags and comments are removed on the server, then the first
   6 non-empty lines, at most 600 characters, rendered as text.
 - "security" counts as a whole word only, so `securityContext` does not
