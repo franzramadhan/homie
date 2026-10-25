@@ -28,5 +28,5 @@ the RFCs it implements. Versions stay 0.x (alpha) until a 1.0 is decided.
 | [0021](rfc/0021-image-updates.md) | Image updates (versions, unversioned tags flagged) | implemented | v0.10.0 |
 | [0022](rfc/0022-log-tail.md) | Live log tail | implemented | v0.11.0 |
 | [0023](rfc/0023-console.md) | Proxmox consoles (links, embedded guest console) | implemented | v0.11.0 |
-| [0024](rfc/0024-metrics.md) | Metrics endpoint and JSON logs | accepted | next |
+| [0024](rfc/0024-metrics.md) | Metrics endpoint and JSON logs | implemented | v0.12.0 |
 | - | Per-user Proxmox tickets | not written | later |
