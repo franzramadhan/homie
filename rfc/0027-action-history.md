@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-25 | #114 | - |
+| implemented | 2026-10-25 | #114 | v0.13.0 |
 
 > One page listing who did what and when: power actions, Flux and Argo
 > CD reconciles, consoles, logins and their failures. Read from what

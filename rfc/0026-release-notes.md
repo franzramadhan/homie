@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-10-25 | #113 | - |
+| implemented | 2026-10-25 | #113 | v0.13.0 |
 
 > Link each pending chart and image update to the release notes between
 > the running and the newest version, and mark the updates whose notes

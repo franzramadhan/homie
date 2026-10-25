@@ -29,8 +29,8 @@ the RFCs it implements. Versions stay 0.x (alpha) until a 1.0 is decided.
 | [0022](rfc/0022-log-tail.md) | Live log tail | implemented | v0.11.0 |
 | [0023](rfc/0023-console.md) | Proxmox consoles (links, embedded guest console) | implemented | v0.11.0 |
 | [0024](rfc/0024-metrics.md) | Metrics endpoint and JSON logs | implemented | v0.12.0 |
-| [0025](rfc/0025-disk-forecast.md) | Disk-full forecast (Proxmox storages, Kubernetes volumes) | accepted | - |
-| [0026](rfc/0026-release-notes.md) | Release notes and security marks on the Updates page | accepted | - |
-| [0027](rfc/0027-action-history.md) | Action history page | accepted | - |
-| [0028](rfc/0028-map.md) | Map: the lab as a pixel village | accepted | - |
+| [0025](rfc/0025-disk-forecast.md) | Disk-full forecast (Proxmox storages, Kubernetes volumes) | implemented | v0.13.0 |
+| [0026](rfc/0026-release-notes.md) | Release notes and security marks on the Updates page | implemented | v0.13.0 |
+| [0027](rfc/0027-action-history.md) | Action history page | implemented | v0.13.0 |
+| [0028](rfc/0028-map.md) | Map: the lab as a pixel village | implemented | v0.13.0 |
 | - | Per-user Proxmox tickets | not written | later |
