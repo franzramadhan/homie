@@ -142,7 +142,7 @@ A role sees some pages and never runs actions. Give it to users with
 
 | Key | Default | |
 |---|---|---|
-| `pages` | required | any of `infra workloads gitops alerts logs security tailscale workflows services outage history`. The Overview is always there, with the cards of these pages only |
+| `pages` | required | any of `infra workloads gitops alerts logs security tailscale workflows services outage history map`. The Overview is always there, with the cards of these pages only |
 | `namespaces` | `[]` | Kubernetes namespaces it sees, exact names. Required when `pages` has `workloads` or `gitops` and a cluster is configured |
 | `proxmox_tags` | `[]` | only guests with one of these tags are shown |
 | `kubernetes_service_account` | none | `"namespace/name"` of a read-only ServiceAccount Homie impersonates for this role's Kubernetes reads. Required with `workloads` or `gitops` |
@@ -509,6 +509,12 @@ Logins, logouts and actions with their result, on the History page.
 |---|---|---|
 | `enabled` | `true` | `false`: no page, nothing kept |
 | `size` | `1000` | entries kept, 1 or more. With `state_dir`, they survive restarts in `history.jsonl` |
+
+## `[map]`: the lab as a village
+
+| Key | Default | |
+|---|---|---|
+| `enabled` | `true` | `false`: no Map page and no nav entry |
 
 ## `[metrics]`: Prometheus endpoint
 
