@@ -7,6 +7,7 @@
 > Link each pending chart and image update to the release notes between
 > the running and the newest version, and mark the updates whose notes
 > mention a security fix, so the Updates page says what to do first.
+> On by default wherever chart or image updates are on.
 
 ## Problem
 
@@ -47,7 +48,7 @@ fix, so updates are either all done at once or put off together.
 
 | Key | Default | |
 |---|---|---|
-| `updates.upstream.notes` | `false` | read release notes for chart and image updates |
+| `updates.upstream.notes` | `true` | read release notes for the chart and image updates found (only with `updates.upstream.charts` or `images` on); `false` turns it off |
 | `[[updates.sources]]` | none | `name` (glob) and `github` (`owner/repo`) for projects without metadata |
 
 ### Logs and metrics
@@ -71,6 +72,10 @@ fix, so updates are either all done at once or put off together.
 - **Tests:** repository discovery from index, annotations, labels and
   `updates.sources`; tag matching with prefixes; the security patterns;
   plain-text rendering (no HTML passes through).
-- **Rollout:** minor release, off by default (one GitHub request per
-  repository every 12 hours; 60 per hour without a token).
+- **Rollout:** minor release, on by default wherever chart or image
+  updates are on: one GitHub request per repository with a pending
+  update, every 12 hours (the reference lab: about 30). Without
+  `updates.github_token` GitHub allows 60 per hour, so lookups run at
+  most 4 at a time, and a 403 or 429 keeps the last notes and retries at
+  the next refresh, logged once.
 - **Off switch:** `updates.upstream.notes = false`.
