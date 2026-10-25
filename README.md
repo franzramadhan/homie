@@ -18,6 +18,10 @@ guests tagged `demo`. The lab sleeps from 23:30 to 06:00 WIB (UTC+7).
 
 <sub>A full instance (names, addresses and versions blurred). The demo shows fewer pages.</sub>
 
+![Homie Map page: the lab as a pixel village, homie walks between buildings and opens their pages](docs/map.gif)
+
+<sub>The Map page (RFC 0028): every enabled part of the lab is a building.</sub>
+
 Homie is a single Rust binary with the web UI embedded. It has no database.
 It runs:
 
