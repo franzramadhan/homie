@@ -12,7 +12,7 @@ type Method is Data:
 type Route is Data:
   Meta{}         # GET /api/meta
   Stream{}       # GET /api/stream
-  Query{}        # GET /api/q/*
+  Query{}        # GET /api/q/*, GET /api/history: the page is checked per query
   Logout{}       # POST /auth/logout
   Logs{}         # POST /api/logs
   GhLogin{}      # GET /github/login

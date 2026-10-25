@@ -32,6 +32,8 @@ const SESSION_CHECK: Duration = Duration::from_secs(30);
 pub struct Pending {
     sid: Option<String>,
     pve: String,
+    /// `pve/<name>/<node>/<vmid>`, for the history (RFC 0027)
+    target: String,
     console: Console,
     created: Instant,
 }
@@ -44,6 +46,19 @@ fn error(status: StatusCode, msg: impl ToString) -> Response {
 
 fn user(caller: &Caller) -> &str {
     caller.email.as_deref().unwrap_or("local")
+}
+
+fn record(
+    state: &Shared,
+    caller: &Caller,
+    action: &str,
+    target: &str,
+    result: &str,
+    error: Option<String>,
+) {
+    state.record(super::history::Entry::by(
+        caller, action, target, result, error,
+    ));
 }
 
 pub async fn open(
@@ -65,13 +80,30 @@ pub async fn open(
             reason = "off"
         );
         crate::metrics::action("console", "denied");
-        return error(StatusCode::FORBIDDEN, "consoles are off for this Proxmox");
+        let off = "consoles are off for this Proxmox";
+        record(
+            &state,
+            &caller,
+            "console.open",
+            &format!("pve/{guest}"),
+            "denied",
+            Some(off.into()),
+        );
+        return error(StatusCode::FORBIDDEN, off);
     }
     let console = match pve.console(&req).await {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!(msg = "console", user = user(&caller), guest, result = "error", error = %e);
             crate::metrics::action("console", "error");
+            record(
+                &state,
+                &caller,
+                "console.open",
+                &format!("pve/{guest}"),
+                "error",
+                Some(e.to_string()),
+            );
             return error(StatusCode::BAD_REQUEST, e);
         }
     };
@@ -87,6 +119,7 @@ pub async fn open(
         Pending {
             sid: caller.sid.clone(),
             pve: name,
+            target: format!("pve/{guest}"),
             console,
             created: Instant::now(),
         },
@@ -123,7 +156,16 @@ pub async fn connect(
             reason = "expired id"
         );
         crate::metrics::action("console", "denied");
-        return error(StatusCode::FORBIDDEN, "this console expired: open it again");
+        let expired = "this console expired: open it again";
+        record(
+            &state,
+            &caller,
+            "console.open",
+            &format!("pve/{name}"),
+            "denied",
+            Some(expired.into()),
+        );
+        return error(StatusCode::FORBIDDEN, expired);
     };
     let Some(pve) = state.lab.proxmox.get(&name) else {
         return error(StatusCode::NOT_FOUND, "no such Proxmox");
@@ -133,6 +175,14 @@ pub async fn connect(
         Err(e) => {
             tracing::warn!(msg = "console", user = user(&caller), pve = name, guest = p.console.guest, result = "error", error = %e);
             crate::metrics::action("console", "error");
+            record(
+                &state,
+                &caller,
+                "console.open",
+                &p.target,
+                "error",
+                Some(e.to_string()),
+            );
             return error(StatusCode::BAD_GATEWAY, e);
         }
     };
@@ -145,6 +195,7 @@ pub async fn connect(
         result = "open"
     );
     crate::metrics::action("console", "ok");
+    record(&state, &caller, "console.open", &p.target, "ok", None);
     let max = pve.console_max;
     ws.protocols(["binary"])
         .on_upgrade(move |socket| relay(state, caller, name, p, socket, upstream, max))
@@ -220,6 +271,7 @@ async fn relay(
         seconds = started.elapsed().as_secs(),
         bytes
     );
+    record(&state, &caller, "console.close", &p.target, "ok", None);
 }
 
 #[cfg(test)]
@@ -247,6 +299,7 @@ mod tests {
                                 Pending {
                                     sid: Some("s1".into()),
                                     pve: "lab".into(),
+                                    target: String::new(),
                                     console: Console::default(),
                                     created: Instant::now() - age,
                                 },
@@ -401,6 +454,7 @@ mod tests {
             Pending {
                 sid: None,
                 pve: "gone".into(),
+                target: String::new(),
                 console: Console::default(),
                 created: Instant::now(),
             },

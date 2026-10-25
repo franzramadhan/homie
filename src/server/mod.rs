@@ -7,6 +7,7 @@ mod github;
 mod guard;
 #[cfg(test)]
 pub(crate) mod harness;
+mod history;
 mod live;
 mod login;
 #[cfg(test)]
@@ -33,6 +34,18 @@ pub struct AppState {
         std::sync::Mutex<std::collections::HashMap<String, (String, std::time::Instant)>>,
     /// consoles opened and not yet connected (RFC 0023), by single-use id
     pub consoles: console::Consoles,
+    /// who did what and when (RFC 0027)
+    pub history: history::History,
+}
+
+impl AppState {
+    /// Keeps a history entry and wakes the live streams.
+    fn record(&self, e: history::Entry) {
+        if self.history.enabled() {
+            self.history.push(e);
+            self.cache.invalidate("history:");
+        }
+    }
 }
 
 pub type Shared = Arc<AppState>;
@@ -49,6 +62,7 @@ pub fn router(state: Shared) -> Router {
         .route("/api/act/flux/{name}/reconcile", post(api::flux_reconcile))
         .route("/api/act/argocd/{name}/refresh", post(api::argocd_refresh))
         .route("/api/logs", post(api::search_logs))
+        .route("/api/history", get(history::list))
         .route("/api/github/repos", get(github::repos))
         .route("/api/github/workflows", get(github::workflows))
         .route("/api/github/watch", post(github::save_watch))
@@ -73,6 +87,7 @@ pub async fn run(cfg: Config) -> Result<()> {
     let lab = Lab::new(&cfg).await?;
     let cache = Cache::new(cfg.state_dir.clone())?;
     let auth = Auth::new(&cfg).await?;
+    let history = history::History::new(&cfg)?;
     if auth.is_none() && cfg.allow_unauthenticated {
         tracing::warn!(
             msg = "insecure",
@@ -106,6 +121,7 @@ pub async fn run(cfg: Config) -> Result<()> {
         auth,
         github_states: Default::default(),
         consoles: Default::default(),
+        history,
     });
     let persist = state.clone();
     tokio::spawn(async move { persist.cache.persist_loop().await });

@@ -42,6 +42,8 @@ export type Meta = {
   updates: boolean;
   /** the "Full in" column (RFC 0025) */
   forecast: boolean;
+  /** the action history (RFC 0027); `kept` false: memory only */
+  history: { kept: boolean } | null;
 };
 
 export type PveNode = {
@@ -306,6 +308,8 @@ export function logsLink(m: Meta | undefined, kind: "pod_query" | "node_query", 
   return `/logs?${new URLSearchParams({ source: src.label, q })}`;
 }
 
+/** One entry of the action history (RFC 0027), newest first. */
+export type HistoryRow = { time: string; user: string | null; action: string; target: string; result: "ok" | "error" | "denied"; error: string | null };
 export type Series = { cpu: number[]; mem: number[] };
 
 /** Disk-full forecast (RFC 0025): seconds until full, null when steady. */

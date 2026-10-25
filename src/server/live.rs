@@ -110,10 +110,12 @@ async fn run(
             _watches = watch(&state, &caller, &keys);
             watch_token = Some(caller.id_token.clone());
         }
-        let envelopes = join_all(
-            keys.iter()
-                .map(|(k, n)| state.lab.query(&state.cache, k, n, &caller)),
-        )
+        let envelopes = join_all(keys.iter().map(|(k, n)| async {
+            match k.as_str() {
+                "history" => super::history::envelope(&state, &caller).await,
+                _ => state.lab.query(&state.cache, k, n, &caller).await,
+            }
+        }))
         .await;
         for (key, env) in keys.iter().zip(envelopes) {
             let Some(env) = env else { continue };

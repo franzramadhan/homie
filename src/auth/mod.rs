@@ -251,6 +251,11 @@ impl Auth {
         }
     }
 
+    /// The session's user name as it is, without a token refresh.
+    pub fn name(&self, sid: &str) -> Option<String> {
+        Some(self.sessions.lock().unwrap().get(sid)?.user.clone())
+    }
+
     /// Server-side sessions, for `homie_sessions_active` (RFC 0024).
     pub fn sessions(&self) -> usize {
         self.sessions.lock().unwrap().len()

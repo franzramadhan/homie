@@ -10,7 +10,8 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
-use super::Shared;
+use super::{Shared, history::Entry};
+use crate::integrations::Caller;
 
 const SESSION_SECS: u64 = 12 * 3600;
 
@@ -32,14 +33,24 @@ pub async fn demo(State(state): State<Shared>, headers: HeaderMap) -> Response {
         return StatusCode::NOT_FOUND.into_response();
     };
     match auth.demo_login() {
-        Ok(sid) => (
-            StatusCode::NO_CONTENT,
-            [(
-                header::SET_COOKIE,
-                auth.cookie(&sid, crate::auth::DEMO_TTL.as_secs()),
-            )],
-        )
-            .into_response(),
+        Ok(sid) => {
+            state.record(Entry::new(
+                Some("demo"),
+                Some(&sid),
+                "login",
+                "demo",
+                "ok",
+                None,
+            ));
+            (
+                StatusCode::NO_CONTENT,
+                [(
+                    header::SET_COOKIE,
+                    auth.cookie(&sid, crate::auth::DEMO_TTL.as_secs()),
+                )],
+            )
+                .into_response()
+        }
         Err(e) => (StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))).into_response(),
     }
 }
@@ -81,12 +92,36 @@ pub async fn callback(State(state): State<Shared>, Query(q): Query<Callback>) ->
         return failed("missing code or state");
     };
     match auth.oidc_callback(&code, &st).await {
-        Ok(sid) => (
-            [(header::SET_COOKIE, auth.cookie(&sid, SESSION_SECS))],
-            Redirect::to("/"),
-        )
-            .into_response(),
-        Err(e) => failed(&e.to_string()),
+        Ok(sid) => {
+            let user = auth.name(&sid);
+            state.record(Entry::new(
+                user.as_deref(),
+                Some(&sid),
+                "login",
+                "oidc",
+                "ok",
+                None,
+            ));
+            (
+                [(header::SET_COOKIE, auth.cookie(&sid, SESSION_SECS))],
+                Redirect::to("/"),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            // the provider named no one yet, or the error says who
+            if auth.oidc.is_some() {
+                state.record(Entry::new(
+                    None,
+                    None,
+                    "login",
+                    "oidc",
+                    "denied",
+                    Some(e.to_string()),
+                ));
+            }
+            failed(&e.to_string())
+        }
     }
 }
 
@@ -113,24 +148,52 @@ pub async fn local(
             .into_response();
     };
     match auth.local_login(&c.username, &c.password).await {
-        Ok(sid) => (
-            StatusCode::NO_CONTENT,
-            [(header::SET_COOKIE, auth.cookie(&sid, SESSION_SECS))],
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Ok(sid) => {
+            state.record(Entry::new(
+                Some(&c.username),
+                Some(&sid),
+                "login",
+                "local",
+                "ok",
+                None,
+            ));
+            (
+                StatusCode::NO_CONTENT,
+                [(header::SET_COOKIE, auth.cookie(&sid, SESSION_SECS))],
+            )
+                .into_response()
+        }
+        // a wrong password, or the lockout's "too many failed logins"
+        Err(e) => {
+            state.record(Entry::new(
+                Some(&c.username),
+                None,
+                "login",
+                "local",
+                "denied",
+                Some(e.to_string()),
+            ));
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": e.to_string()})),
+            )
+                .into_response()
+        }
     }
 }
 
-pub async fn logout(State(state): State<Shared>, headers: HeaderMap) -> Response {
+pub async fn logout(
+    State(state): State<Shared>,
+    axum::Extension(caller): axum::Extension<Caller>,
+    headers: HeaderMap,
+) -> Response {
     let Some(auth) = &state.auth else {
         return StatusCode::NO_CONTENT.into_response();
     };
     if let Some(sid) = super::guard::cookie(&headers, auth.cookie_name()) {
+        let user = caller.email.as_deref().unwrap_or("local");
+        tracing::info!(msg = "logout", user, result = "ok");
+        state.record(Entry::by(&caller, "logout", "", "ok", None));
         auth.logout(sid);
         // the session's GitHub token and its own watches go with it
         if let Some(gh) = &state.lab.github {

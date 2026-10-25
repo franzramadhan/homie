@@ -37,6 +37,23 @@ proxmox_tags = ["demo"]
 kubernetes_service_account = "homie/viewer"
 "#;
 
+/// The history (RFC 0027) as `user action target result` lines, newest first.
+async fn history(h: &Homie) -> Vec<String> {
+    let r = h.get("/api/history").await;
+    assert_eq!(r.status, 200, "{}", r.text);
+    let text = |v: &Value| v.as_str().unwrap_or("-").to_string();
+    r.json
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            [&e["user"], &e["action"], &e["target"], &e["result"]]
+                .map(text)
+                .join(" ")
+        })
+        .collect()
+}
+
 /// Reads the event stream until `done` holds for what arrived, or `secs` pass.
 async fn read_stream(
     resp: &mut reqwest::Response,
@@ -312,6 +329,28 @@ async fn actions_against_fake_backends() {
         h.post("/api/act/argocd/nope/refresh", app).await.status,
         404
     );
+    // RFC 0027: every action reached its handler and is in the history
+    assert_eq!(
+        history(&h).await,
+        [
+            "local argocd.refresh argocd/main/Bad Name/x error",
+            "local argocd.refresh argocd/main/argocd/guestbook ok",
+            "local flux.reconcile flux/main/Pod/apps/web error",
+            "local flux.reconcile flux/main/Kustomization/apps/web ok",
+            "local pve.guest.stop pve/lab/pve1/101 error",
+            "local pve.guest.start pve/lab/pve1/101 ok",
+        ]
+    );
+    let h0 = h.get("/api/history").await.json;
+    assert!(h0[1]["error"].is_null());
+    assert!(h0[0]["error"].is_string());
+    let q = h.get("/api/q/history/_").await.json;
+    assert_eq!(q["data"], h0);
+    assert_eq!(q["fetched_at"], h0[0]["time"]);
+    assert_eq!(
+        h.get("/api/meta").await.json["history"],
+        json!({"kept": false})
+    );
 
     let r = h
         .post(
@@ -448,6 +487,33 @@ async fn password_login_session_and_logout() {
     assert_eq!(r.status, 403);
     let r = h.post("/auth/logout", json!({})).await;
     assert_eq!(r.status, 204);
+    // RFC 0027: logins, failed ones and the logout; nothing of the password
+    let rows = h.state.history.entries();
+    let lines: Vec<String> = rows
+        .iter()
+        .map(|e| {
+            format!(
+                "{} {} {} {}",
+                e.user.as_deref().unwrap_or("-"),
+                e.action,
+                e.target,
+                e.result
+            )
+        })
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "homie logout  ok",
+            "homie login local ok",
+            "homie login local denied",
+        ]
+    );
+    assert_eq!(rows[0].session, rows[1].session, "the same session");
+    assert!(rows[0].session.is_some() && rows[2].session.is_none());
+    assert_eq!(rows[2].error.as_deref(), Some("wrong username or password"));
+    let all = serde_json::to_string(&rows).unwrap();
+    assert!(!all.contains(super::harness::PASSWORD));
     assert!(
         r.headers["set-cookie"]
             .to_str()
@@ -755,6 +821,24 @@ async fn oidc_login_allowlists_and_roles() {
             r.text
         );
     }
+    // RFC 0027: OIDC logins by email, refusals with the provider's answer
+    let rows = history(&h).await;
+    for want in [
+        "homie argocd.refresh argocd/user/argocd/guestbook error",
+        "- login oidc denied",
+        "viewer@example.com login oidc ok",
+        "ops@example.com login oidc ok",
+        "me@example.com flux.reconcile flux/user/Kustomization/apps/web ok",
+        "me@example.com login oidc ok",
+    ] {
+        assert!(rows.contains(&want.to_string()), "{want}: {rows:?}");
+    }
+    let r = h.get("/api/history").await.json;
+    assert!(r.as_array().unwrap().iter().any(|e| {
+        e["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("no@example.com is not allowed"))
+    }));
 }
 
 #[tokio::test]
@@ -1359,6 +1443,28 @@ async fn consoles_open_once_and_relay() {
         .err()
         .unwrap();
     assert_eq!(refused(e), 403);
+
+    // RFC 0027: opened, refused, failed and closed consoles; the close is
+    // recorded when the relay ends
+    drop(s);
+    let mut rows = Vec::new();
+    for _ in 0..100 {
+        rows = history(&h).await;
+        if rows.iter().filter(|r| r.contains("console.close")).count() == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    for want in [
+        "homie console.open pve/lab denied",
+        "homie console.close pve/lab/pve1/101 ok",
+        "homie console.open pve/lab/pve1/101 ok",
+        "homie console.open pve/lab/pve1/102 error",
+        "homie console.open pve/lab/pve1/103 error",
+        "homie console.open pve/off/pve1/101 denied",
+    ] {
+        assert!(rows.contains(&want.to_string()), "{want}: {rows:?}");
+    }
 }
 
 #[tokio::test]
@@ -1414,4 +1520,155 @@ async fn metrics_listener_token_and_cards() {
     let page = http.get(&url).send().await.unwrap().text().await.unwrap();
     assert!(page.contains("homie_sessions_active 0"), "{page}");
     assert!(!page.contains("homie_card_status"), "{page}");
+}
+
+/// RFC 0027: a role sees its own session's entries and those on targets in
+/// its view; nobody else's name, login or other targets.
+#[tokio::test]
+async fn history_for_roles_and_the_demo() {
+    let backend = backend().await;
+    let h = Homie::start(|url| {
+        format!(
+            "public_url = \"{url}\"\n{}[demo]\nrole = \"viewer\"\nmax_sessions = 5\n\
+             [roles.viewer]\npages = [\"infra\", \"history\"]\nproxmox_tags = [\"demo\"]\n{}",
+            local_login(None),
+            lab_sections(&backend)
+        )
+    })
+    .await;
+    let power = |vmid: u64, action: &str| json!({"node": "pve1", "vmid": vmid, "type": "qemu", "action": action});
+    // the full user: one guest in the demo's view (101), one outside it (102)
+    assert_eq!(h.login().await.status, 204);
+    let admin = h.cookie();
+    for vmid in [101, 102] {
+        let mut body = power(vmid, "start");
+        body["confirm"] = "db".into();
+        let r = h.post("/api/act/pve/lab/power", body).await;
+        assert_eq!(r.status, 200, "{}", r.text);
+    }
+
+    // visitor A: refused actions are recorded as denied
+    h.set_cookie(None);
+    assert_eq!(h.post("/auth/demo", json!({})).await.status, 204);
+    let a = h.cookie();
+    for (path, body) in [
+        ("/api/act/pve/lab/power", power(101, "shutdown")),
+        ("/api/act/pve/lab/power", power(102, "reboot")),
+        ("/api/act/pve/lab/power", json!({"vmid": "nonsense"})),
+        (
+            "/api/act/pve/lab/console",
+            json!({"node": "pve1", "vmid": 101, "type": "qemu"}),
+        ),
+        (
+            "/api/act/flux/main/reconcile",
+            json!({"kind": "Kustomization", "namespace": "apps", "name": "web"}),
+        ),
+        (
+            "/api/act/argocd/main/refresh",
+            json!({"namespace": "argocd", "name": "app"}),
+        ),
+    ] {
+        assert_eq!(h.post(path, body).await.status, 403, "{path}");
+    }
+    assert_eq!(h.post("/api/logs", json!({})).await.status, 403);
+    assert_eq!(
+        history(&h).await,
+        [
+            "demo argocd.refresh argocd/main/argocd/app denied",
+            "demo flux.reconcile flux/main/Kustomization/apps/web denied",
+            "demo console.open pve/lab/pve1/101 denied",
+            "demo pve.power pve/lab denied",
+            "demo pve.guest.reboot pve/lab/pve1/102 denied",
+            "demo pve.guest.shutdown pve/lab/pve1/101 denied",
+            "demo login demo ok",
+            "another user pve.guest.start pve/lab/pve1/101 ok",
+        ],
+        "its own entries, and the guest it sees"
+    );
+
+    // visitor B: A's action on the shared guest, as "another user"
+    h.set_cookie(None);
+    assert_eq!(h.post("/auth/demo", json!({})).await.status, 204);
+    let b = h.cookie();
+    let rows = history(&h).await;
+    assert_eq!(
+        rows,
+        [
+            "demo login demo ok",
+            "another user console.open pve/lab/pve1/101 denied",
+            "another user pve.guest.shutdown pve/lab/pve1/101 denied",
+            "another user pve.guest.start pve/lab/pve1/101 ok",
+        ]
+    );
+    let r = h.get("/api/history").await;
+    assert!(
+        !r.text.contains("homie"),
+        "no other user's name: {}",
+        r.text
+    );
+    assert_eq!(r.json[1]["error"], "not available in this view");
+    let q = h.get("/api/q/history/_").await.json;
+    assert_eq!(q["data"], r.json);
+    assert_eq!(
+        h.get("/api/meta").await.json["history"],
+        json!({"kept": false})
+    );
+
+    // live, through the stream
+    let mut resp = h
+        .req(Method::GET, "/api/stream")
+        .query(&[("q", "history/_")])
+        .send()
+        .await
+        .unwrap();
+    let (seen, _) = read_stream(&mut resp, 15, |s| s.contains("history/_")).await;
+    assert!(
+        seen.contains("another user") && !seen.contains("homie"),
+        "{seen}"
+    );
+    drop(resp);
+
+    // the full user sees every entry with its name
+    h.set_cookie(admin);
+    let rows = history(&h).await;
+    assert_eq!(rows.len(), 11, "{rows:?}");
+    assert!(rows.contains(&"homie pve.guest.start pve/lab/pve1/102 ok".to_string()));
+    assert!(rows.contains(&"homie login local ok".to_string()));
+    assert_eq!(
+        rows.iter().filter(|r| r.starts_with("demo login")).count(),
+        2
+    );
+
+    // A after B: still its own entries, B's login is not among them
+    h.set_cookie(a);
+    assert_eq!(history(&h).await.len(), 8);
+    h.set_cookie(b);
+    assert_eq!(h.post("/auth/logout", json!({})).await.status, 204);
+
+    // a role without the page: no history at all
+    let blind = Homie::start(|url| {
+        format!(
+            "public_url = \"{url}\"\n{}[roles.blind]\npages = [\"infra\"]\n",
+            local_login(Some("blind"))
+        )
+    })
+    .await;
+    assert_eq!(blind.login().await.status, 204);
+    assert_eq!(blind.get("/api/history").await.status, 404);
+    assert_eq!(blind.get("/api/q/history/_").await.status, 404);
+    assert_eq!(blind.get("/api/meta").await.json["history"], Value::Null);
+}
+
+/// `history.enabled = false`: nothing kept, no page, no route answer.
+#[tokio::test]
+async fn history_off() {
+    let h = Homie::start(|_| {
+        "public_url = \"http://homie.example\"\nallow_unauthenticated = true\n[history]\nenabled = false\n".into()
+    })
+    .await;
+    h.state
+        .record(super::history::Entry::new(None, None, "x", "", "ok", None));
+    assert_eq!(h.get("/api/history").await.status, 404);
+    assert_eq!(h.get("/api/meta").await.json["history"], Value::Null);
+    assert!(h.state.history.entries().is_empty());
 }
