@@ -45,6 +45,118 @@ function Card<T>({ title, to, env, summary }: { title: string; to?: string; env:
   );
 }
 
+// The lines under each card, shared with the map (RFC 0028).
+export const summaries = {
+  pve: (d: PveOverview) => {
+    const running = d.guests.filter((g) => g.status === "running" && !g.template).length;
+    const guests = d.guests.filter((g) => !g.template).length;
+    const fullStorage = d.storage.filter((s) => s.maxdisk > 0 && s.disk / s.maxdisk > 0.85);
+    return [
+      `${d.cluster.nodes_online}/${d.cluster.nodes_total || d.nodes.length} nodes online${d.cluster.quorate === false ? ", NOT quorate" : ""}`,
+      `${running}/${guests} guests running`,
+      fullStorage.length ? `storage above 85%: ${fullStorage.map((s) => `${s.storage}@${s.node}`).join(", ")}` : "storage below 85%",
+      `${d.failed_tasks.length} recent failed tasks`,
+    ];
+  },
+  k8s: (d: K8sOverview) => {
+    const ready = d.nodes.filter((n) => n.ready).length;
+    const degraded = d.workloads.filter((w) => w.ready < w.desired).length;
+    return [
+      `${ready}/${d.nodes.length} nodes ready`,
+      `${d.unhealthy_pods.length} unhealthy pods, ${degraded} degraded workloads`,
+      `${d.events.length} warning events in the last hour`,
+    ];
+  },
+  flux: (d: FluxItem[]) => {
+    const failing = d.filter((i) => i.ready === "False");
+    const suspended = d.filter((i) => i.suspended).length;
+    return [
+      `${d.length - failing.length}/${d.length} objects ready`,
+      failing.length ? `failing: ${failing.slice(0, 3).map((i) => i.name).join(", ")}` : "nothing failing",
+      `${suspended} suspended`,
+    ];
+  },
+  argocd: (d: ArgoApp[]) => {
+    const bad = d.filter((a) => a.health === "Degraded" || a.health === "Missing");
+    const out = d.filter((a) => a.sync === "OutOfSync");
+    return [
+      `${d.length - out.length}/${d.length} applications synced`,
+      bad.length ? `degraded: ${bad.slice(0, 3).map((a) => a.name).join(", ")}` : "none degraded",
+    ];
+  },
+  alerts: (d: Alerts) => {
+    const firing = d.alerts.filter((a) => a.state === "firing");
+    return [
+      `${firing.length} firing, ${d.alerts.length - firing.length} pending or erroring`,
+      ...firing.slice(0, 3).map((a) => a.name),
+    ];
+  },
+  security: (d: SecurityTable) => [`${d.total} ${d.total_label}`, `${d.rows.length} rows`],
+  tailscale: (all: Device[]) => {
+    // only watched hosts (config `hosts`) count toward health
+    const d = all.filter((x) => x.watched);
+    const off = d.filter((x) => !x.online);
+    const loud = off.filter((x) => !x.quiet);
+    return [
+      `${d.length - off.length}/${d.length} watched hosts online`,
+      ...loud.map((x) => `offline: ${x.name} (seen ${new Date(x.last_seen).toLocaleString()})`),
+      ...(off.length > loud.length ? [`${off.length - loud.length} scheduled off`] : []),
+      `${all.filter((x) => x.online).length}/${all.length} devices online in the tailnet`,
+    ];
+  },
+  openbao: (d: BaoHealth) => [d.sealed ? "SEALED" : !d.initialized ? "not initialized" : `unsealed, ${d.state}`, `version ${d.version}`],
+  cnpg: (d: PgCluster[]) =>
+    d.flatMap((c) => [
+      `${c.namespace}/${c.name}: ${c.ready}/${c.instances} ready, primary ${c.primary}`,
+      c.backup_age_hours === null
+        ? "no completed backup"
+        : `last backup ${c.backup_age_hours < 1 ? "under an hour" : `${Math.round(c.backup_age_hours)}h`} ago${c.backup_stale ? " (stale)" : ""}${c.archiving ? "" : ", WAL archiving off"}`,
+    ]),
+  certs: (d: Certs) => {
+    const loud = d.rows.filter((r) => r.status !== "ok");
+    const now = new Date().toISOString();
+    const next = d.rows.filter((r) => r.expires && r.expires > now).sort((a, b) => (a.expires! < b.expires! ? -1 : 1))[0];
+    return [
+      `${d.rows.length - loud.length}/${d.rows.length} fine`,
+      ...loud.slice(0, 3).map((r) => `${r.host}: ${r.reasons[0] ?? r.status}`),
+      ...(next ? [`next expiry: ${next.host}, ${untilText(next.expires)}`] : []),
+      ...d.errors.slice(0, 2),
+    ];
+  },
+  updates: (d: Updates) => {
+    const pkgs = d.proxmox.reduce((n, p) => n + (p.updates ?? 0), 0);
+    const listed = d.proxmox.filter((p) => p.updates !== null);
+    const behind = d.charts.filter((c) => available(c.latest)).length;
+    return [
+      ...(listed.length ? [`${pkgs} package updates on ${listed.filter((p) => p.updates).length}/${listed.length} nodes`] : []),
+      ...d.proxmox.filter((p) => p.reboot).map((p) => `${p.node}: reboot pending`),
+      ...d.kubernetes.map((c) => {
+        const a = available(c.distro_latest) || available(c.kubernetes_latest);
+        return `${c.cluster}: ${c.distro} ${c.distro_version}${a ? `, ${a} available` : ""}${c.skew ? ", version skew" : ""}`;
+      }),
+      ...(d.charts.length ? [`${behind}/${d.charts.length} charts with a newer version`] : []),
+      ...(d.images.length
+        ? [`${d.images.filter((i) => !i.unversioned && available(i.latest)).length}/${d.images.length} images with a newer version, ${d.images.filter((i) => i.unversioned).length} unversioned`]
+        : []),
+    ];
+  },
+  github: (d: GhWorkflow[]) => {
+    const states = d.map((w) => ({ w, h: workflowHealth(w) }));
+    const failed = states.filter((s) => s.h === "failed" || s.w.error);
+    const stuck = states.filter((s) => s.h === "stuck");
+    return [
+      `${states.filter((s) => s.h === "ok").length}/${d.length} workflows: last run succeeded`,
+      ...failed.map((s) => `failed: ${s.w.name}`),
+      ...stuck.map((s) => `queued over 10 min: ${s.w.name}`),
+    ];
+  },
+  healthchecks: (d: Check[]) => {
+    const down = d.filter((c) => c.status === "down");
+    const late = d.filter((c) => c.status === "grace");
+    return [`${d.length - down.length - late.length}/${d.length} up`, ...down.map((c) => `down: ${c.name}`), ...late.map((c) => `late: ${c.name}`)];
+  },
+};
+
 function PveCard({ name }: { name: string }) {
   const q = useQ<PveOverview>("pve", name);
   return (
@@ -52,17 +164,7 @@ function PveCard({ name }: { name: string }) {
       title={`Proxmox ${name}`}
       to="/infra"
       env={q.data}
-      summary={(d) => {
-        const running = d.guests.filter((g) => g.status === "running" && !g.template).length;
-        const guests = d.guests.filter((g) => !g.template).length;
-        const fullStorage = d.storage.filter((s) => s.maxdisk > 0 && s.disk / s.maxdisk > 0.85);
-        return [
-          `${d.cluster.nodes_online}/${d.cluster.nodes_total || d.nodes.length} nodes online${d.cluster.quorate === false ? ", NOT quorate" : ""}`,
-          `${running}/${guests} guests running`,
-          fullStorage.length ? `storage above 85%: ${fullStorage.map((s) => `${s.storage}@${s.node}`).join(", ")}` : "storage below 85%",
-          `${d.failed_tasks.length} recent failed tasks`,
-        ];
-      }}
+      summary={summaries.pve}
     />
   );
 }
@@ -74,15 +176,7 @@ function K8sCard({ name }: { name: string }) {
       title={`Kubernetes ${name}`}
       to="/workloads"
       env={q.data}
-      summary={(d) => {
-        const ready = d.nodes.filter((n) => n.ready).length;
-        const degraded = d.workloads.filter((w) => w.ready < w.desired).length;
-        return [
-          `${ready}/${d.nodes.length} nodes ready`,
-          `${d.unhealthy_pods.length} unhealthy pods, ${degraded} degraded workloads`,
-          `${d.events.length} warning events in the last hour`,
-        ];
-      }}
+      summary={summaries.k8s}
     />
   );
 }
@@ -96,15 +190,7 @@ function FluxCard({ name }: { name: string }) {
       title={`Flux ${name}`}
       to="/gitops"
       env={q.data}
-      summary={(d) => {
-        const failing = d.filter((i) => i.ready === "False");
-        const suspended = d.filter((i) => i.suspended).length;
-        return [
-          `${d.length - failing.length}/${d.length} objects ready`,
-          failing.length ? `failing: ${failing.slice(0, 3).map((i) => i.name).join(", ")}` : "nothing failing",
-          `${suspended} suspended`,
-        ];
-      }}
+      summary={summaries.flux}
     />
   );
 }
@@ -117,14 +203,7 @@ function ArgoCard({ name }: { name: string }) {
       title={`Argo CD ${name}`}
       to="/gitops"
       env={q.data}
-      summary={(d) => {
-        const bad = d.filter((a) => a.health === "Degraded" || a.health === "Missing");
-        const out = d.filter((a) => a.sync === "OutOfSync");
-        return [
-          `${d.length - out.length}/${d.length} applications synced`,
-          bad.length ? `degraded: ${bad.slice(0, 3).map((a) => a.name).join(", ")}` : "none degraded",
-        ];
-      }}
+      summary={summaries.argocd}
     />
   );
 }
@@ -136,13 +215,7 @@ function AlertsCard({ name }: { name: string }) {
       title={`Alerts ${name}`}
       to="/observability"
       env={q.data}
-      summary={(d) => {
-        const firing = d.alerts.filter((a) => a.state === "firing");
-        return [
-          `${firing.length} firing, ${d.alerts.length - firing.length} pending or erroring`,
-          ...firing.slice(0, 3).map((a) => a.name),
-        ];
-      }}
+      summary={summaries.alerts}
     />
   );
 }
@@ -154,7 +227,7 @@ function SecurityCard({ preset }: { preset: string }) {
       title={`Security ${preset}`}
       to="/security"
       env={q.data}
-      summary={(d) => [`${d.total} ${d.total_label}`, `${d.rows.length} rows`]}
+      summary={summaries.security}
     />
   );
 }
@@ -166,18 +239,7 @@ function TailscaleCard() {
       title="Tailscale"
       to="/tailscale"
       env={q.data}
-      summary={(all) => {
-        // only watched hosts (config `hosts`) count toward health
-        const d = all.filter((x) => x.watched);
-        const off = d.filter((x) => !x.online);
-        const loud = off.filter((x) => !x.quiet);
-        return [
-          `${d.length - off.length}/${d.length} watched hosts online`,
-          ...loud.map((x) => `offline: ${x.name} (seen ${new Date(x.last_seen).toLocaleString()})`),
-          ...(off.length > loud.length ? [`${off.length - loud.length} scheduled off`] : []),
-          `${all.filter((x) => x.online).length}/${all.length} devices online in the tailnet`,
-        ];
-      }}
+      summary={summaries.tailscale}
     />
   );
 }
@@ -188,7 +250,7 @@ function OpenBaoCard({ name }: { name: string }) {
     <Card
       title={`OpenBao / Vault ${name}`}
       env={q.data}
-      summary={(d) => [d.sealed ? "SEALED" : !d.initialized ? "not initialized" : `unsealed, ${d.state}`, `version ${d.version}`]}
+      summary={summaries.openbao}
     />
   );
 }
@@ -201,14 +263,7 @@ function CnpgCard({ name }: { name: string }) {
     <Card
       title={`PostgreSQL ${name}`}
       env={q.data}
-      summary={(d) =>
-        d.flatMap((c) => [
-          `${c.namespace}/${c.name}: ${c.ready}/${c.instances} ready, primary ${c.primary}`,
-          c.backup_age_hours === null
-            ? "no completed backup"
-            : `last backup ${c.backup_age_hours < 1 ? "under an hour" : `${Math.round(c.backup_age_hours)}h`} ago${c.backup_stale ? " (stale)" : ""}${c.archiving ? "" : ", WAL archiving off"}`,
-        ])
-      }
+      summary={summaries.cnpg}
     />
   );
 }
@@ -220,17 +275,7 @@ function CertificatesCard() {
       title="Certificates"
       to="/infra"
       env={q.data}
-      summary={(d) => {
-        const loud = d.rows.filter((r) => r.status !== "ok");
-        const now = new Date().toISOString();
-        const next = d.rows.filter((r) => r.expires && r.expires > now).sort((a, b) => (a.expires! < b.expires! ? -1 : 1))[0];
-        return [
-          `${d.rows.length - loud.length}/${d.rows.length} fine`,
-          ...loud.slice(0, 3).map((r) => `${r.host}: ${r.reasons[0] ?? r.status}`),
-          ...(next ? [`next expiry: ${next.host}, ${untilText(next.expires)}`] : []),
-          ...d.errors.slice(0, 2),
-        ];
-      }}
+      summary={summaries.certs}
     />
   );
 }
@@ -242,23 +287,7 @@ function UpdatesCard() {
       title="Updates"
       to="/updates"
       env={q.data}
-      summary={(d) => {
-        const pkgs = d.proxmox.reduce((n, p) => n + (p.updates ?? 0), 0);
-        const listed = d.proxmox.filter((p) => p.updates !== null);
-        const behind = d.charts.filter((c) => available(c.latest)).length;
-        return [
-          ...(listed.length ? [`${pkgs} package updates on ${listed.filter((p) => p.updates).length}/${listed.length} nodes`] : []),
-          ...d.proxmox.filter((p) => p.reboot).map((p) => `${p.node}: reboot pending`),
-          ...d.kubernetes.map((c) => {
-            const a = available(c.distro_latest) || available(c.kubernetes_latest);
-            return `${c.cluster}: ${c.distro} ${c.distro_version}${a ? `, ${a} available` : ""}${c.skew ? ", version skew" : ""}`;
-          }),
-          ...(d.charts.length ? [`${behind}/${d.charts.length} charts with a newer version`] : []),
-          ...(d.images.length
-            ? [`${d.images.filter((i) => !i.unversioned && available(i.latest)).length}/${d.images.length} images with a newer version, ${d.images.filter((i) => i.unversioned).length} unversioned`]
-            : []),
-        ];
-      }}
+      summary={summaries.updates}
     />
   );
 }
@@ -270,16 +299,7 @@ function WorkflowsCard() {
       title="Workflows"
       to="/workflows"
       env={q.data}
-      summary={(d) => {
-        const states = d.map((w) => ({ w, h: workflowHealth(w) }));
-        const failed = states.filter((s) => s.h === "failed" || s.w.error);
-        const stuck = states.filter((s) => s.h === "stuck");
-        return [
-          `${states.filter((s) => s.h === "ok").length}/${d.length} workflows: last run succeeded`,
-          ...failed.map((s) => `failed: ${s.w.name}`),
-          ...stuck.map((s) => `queued over 10 min: ${s.w.name}`),
-        ];
-      }}
+      summary={summaries.github}
     />
   );
 }
@@ -290,11 +310,7 @@ function HealthchecksCard() {
     <Card
       title="healthchecks"
       env={q.data}
-      summary={(d) => {
-        const down = d.filter((c) => c.status === "down");
-        const late = d.filter((c) => c.status === "grace");
-        return [`${d.length - down.length - late.length}/${d.length} up`, ...down.map((c) => `down: ${c.name}`), ...late.map((c) => `late: ${c.name}`)];
-      }}
+      summary={summaries.healthchecks}
     />
   );
 }

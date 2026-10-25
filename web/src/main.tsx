@@ -8,6 +8,7 @@ import { GitOps } from "./routes/gitops";
 import { History } from "./routes/history";
 import { Login } from "./routes/login";
 import { Logs } from "./routes/logs";
+import { MapPage } from "./routes/map";
 import { Infra } from "./routes/infra";
 import { Updates } from "./routes/updates";
 import { Observability } from "./routes/observability";
@@ -25,6 +26,7 @@ function Layout() {
   const page = (p: string) => !m?.pages || m.pages.includes(p);
   const nav: [string, string, boolean][] = [
     ["/", "Overview", true],
+    ["/map", "Map", !!m?.map],
     ["/infra", "Infrastructure", !!m?.proxmox.length || !!m?.certificates],
     ["/workloads", "Workloads", !!m?.kubernetes.length && page("workloads")],
     ["/gitops", "GitOps", !!m?.kubernetes.length && page("gitops")],
@@ -86,6 +88,7 @@ const page = (path: string, component: () => React.ReactNode) => createRoute({ g
 const router = createRouter({
   routeTree: root.addChildren([
     page("/", Overview),
+    page("/map", MapPage),
     page("/infra", Infra),
     page("/updates", Updates),
     page("/workloads", Workloads),

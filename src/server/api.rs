@@ -71,6 +71,8 @@ pub async fn meta(State(state): State<Shared>, Extension(caller): Extension<Call
         "forecast": lab.forecast.enabled,
         // RFC 0027: `kept` false means memory only
         "history": (state.history.enabled() && page("history")).then(|| json!({ "kept": state.history.kept() })),
+        // RFC 0028: client side only, from the queries above
+        "map": state.cfg.map.enabled && page("map"),
     }))
     .into_response()
 }
