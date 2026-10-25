@@ -141,6 +141,21 @@ impl Grafana {
         seconds: i64,
         step: i64,
     ) -> Result<Vec<(serde_json::Map<String, Value>, Vec<f64>)>> {
+        let series = self.promql_points(datasource, query, seconds, step).await?;
+        Ok(series
+            .into_iter()
+            .map(|(l, p)| (l, p.into_iter().map(|(_, v)| v).collect()))
+            .collect())
+    }
+
+    /// `promql_range` with each value's timestamp (seconds).
+    pub async fn promql_points(
+        &self,
+        datasource: &str,
+        query: &str,
+        seconds: i64,
+        step: i64,
+    ) -> Result<Vec<(serde_json::Map<String, Value>, Vec<(f64, f64)>)>> {
         let path = format!(
             "/api/datasources/proxy/uid/{}/api/v1/query_range",
             enc(datasource)
@@ -180,7 +195,7 @@ impl Grafana {
                     .as_array()
                     .into_iter()
                     .flatten()
-                    .filter_map(|p| p[1].as_str()?.parse().ok())
+                    .filter_map(|p| Some((p[0].as_f64()?, p[1].as_str()?.parse().ok()?)))
                     .collect();
                 (r["metric"].as_object().cloned().unwrap_or_default(), values)
             })

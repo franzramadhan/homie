@@ -17,6 +17,10 @@ groups:
         for: 30m
         annotations:
           summary: "no TLS handshake with {{ $labels.target }}"
+      - alert: HomieStorageFillingUp
+        expr: homie_storage_full_seconds < 3 * 86400
+        annotations:
+          summary: "{{ $labels.storage }} ({{ $labels.source }}) is due to fill within 3 days"
       - alert: HomieQueryNoSuccess
         expr: time() - homie_query_last_success_timestamp_seconds > 900
         annotations:

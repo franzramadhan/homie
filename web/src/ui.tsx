@@ -73,12 +73,21 @@ export function Bar({ value, max, label }: { value: number; max: number; label?:
   );
 }
 
+/** When a storage fills up (RFC 0025): "steady" without a forecast, a badge when due soon. */
+export function FullIn({ seconds, tone }: { seconds: number | null | undefined; tone?: Tone }) {
+  if (seconds === undefined) return <span className="text-ink-faint">no data</span>;
+  if (seconds === null) return <span className="text-ink-subtle">steady</span>;
+  const d = Math.floor(seconds / 86400);
+  const text = d === 0 ? "within a day" : d > 365 ? "over a year" : `${d} day${d === 1 ? "" : "s"}`;
+  return tone && tone !== "ok" ? <Badge tone={tone}>{text}</Badge> : <span>{text}</span>;
+}
+
 /**
- * Sparkline: the last hour as an SVG polyline. With `max` (ratios, max 1)
- * the line takes the meter colors; without it the series scales to its own
- * range in a neutral color.
+ * Sparkline: the last hour (or `period`) as an SVG polyline. With `max`
+ * (ratios, max 1) the line takes the meter colors; without it the series
+ * scales to its own range in a neutral color.
  */
-export function Spark({ values, max, label }: { values: number[] | undefined; max?: number; label: string }) {
+export function Spark({ values, max, label, period = "last hour" }: { values: number[] | undefined; max?: number; label: string; period?: string }) {
   if (!values || values.length < 2) return <span className="inline-block w-16" />;
   const top = max ?? Math.max(...values);
   const bottom = max === undefined ? Math.min(...values) : 0;
@@ -92,8 +101,8 @@ export function Spark({ values, max, label }: { values: number[] | undefined; ma
   const lo = Math.min(...values);
   const hi = Math.max(...values);
   return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className={`shrink-0 ${color}`} role="img" aria-label={`${label}, last hour: min ${fmt(lo)}, max ${fmt(hi)}, now ${fmt(last)}`}>
-      <title>{`${label}, last hour: min ${fmt(lo)}, max ${fmt(hi)}, now ${fmt(last)}`}</title>
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className={`shrink-0 ${color}`} role="img" aria-label={`${label}, ${period}: min ${fmt(lo)}, max ${fmt(hi)}, now ${fmt(last)}`}>
+      <title>{`${label}, ${period}: min ${fmt(lo)}, max ${fmt(hi)}, now ${fmt(last)}`}</title>
       <polyline points={points} fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
     </svg>
   );

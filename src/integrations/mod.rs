@@ -4,6 +4,7 @@
 pub mod argocd;
 pub mod certs;
 pub mod flux;
+pub mod forecast;
 pub mod github;
 pub mod grafana;
 pub mod helm;
@@ -43,6 +44,7 @@ pub struct Lab {
     pub roles: BTreeMap<String, std::sync::Arc<crate::config::Role>>,
     pub certificates: crate::config::Certificates,
     pub updates: crate::config::Updates,
+    pub forecast: crate::config::Forecast,
 }
 
 /// The caller of a query: who they are and, in forward_token mode, the ID
@@ -90,6 +92,7 @@ impl Lab {
                 .collect(),
             certificates: cfg.certificates.clone(),
             updates: cfg.updates.clone(),
+            forecast: cfg.forecast.clone(),
         };
         for (name, c) in &cfg.proxmox {
             lab.proxmox
@@ -228,6 +231,15 @@ impl Lab {
                 let k = self.kubernetes.get(name)?;
                 (secs(10), k.quiet, k.forwards_token())
             }
+            // RFC 0025: a week of history moves slowly
+            "forecast-pve" if self.forecast.enabled => {
+                (secs(900), self.proxmox.get(name)?.quiet, false)
+            }
+            "forecast-k8s" => {
+                let k = self.kubernetes.get(name)?;
+                k.volumes()?;
+                (secs(900), k.quiet, false)
+            }
             "helm" => {
                 let k = self.kubernetes.get(name)?;
                 (secs(60), k.quiet, k.forwards_token())
@@ -290,6 +302,20 @@ impl Lab {
         }
         // after the role filter: the tone is of what the caller sees
         crate::status::apply(kind, &mut env);
+        // RFC 0025: a storage due to fill raises the card, never lowers it
+        let forecast = match kind {
+            "pve" => "forecast-pve",
+            "k8s" => "forecast-k8s",
+            _ => "",
+        };
+        if self.forecast.enabled
+            && !forecast.is_empty()
+            && let Some(d) = Box::pin(self.query(cache, forecast, name, caller))
+                .await
+                .and_then(|e| e.data)
+        {
+            crate::status::forecast(&mut env, &d);
+        }
         Some(env)
     }
 
@@ -344,6 +370,22 @@ impl Lab {
                     .as_ref()
                     .ok_or("no metrics configured")?;
                 serde_json::to_value(sparks::kubernetes(self.grafana(&m.grafana)?, m).await?)?
+            }
+            // roles see no storage (RFC 0016): nothing to read for them
+            "forecast-pve" if caller.role.is_some() => {
+                serde_json::to_value(forecast::Storages::default())?
+            }
+            "forecast-pve" => {
+                serde_json::to_value(forecast::proxmox(&self.proxmox[name], &self.forecast).await?)?
+            }
+            "forecast-k8s" => {
+                let m = self
+                    .kube(name)?
+                    .volumes()
+                    .ok_or("no volume queries configured")?;
+                serde_json::to_value(
+                    forecast::kubernetes(self.grafana(&m.grafana)?, m, &self.forecast).await?,
+                )?
             }
             "k8s" => {
                 let k = self.kube(name)?;

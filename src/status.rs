@@ -43,6 +43,28 @@ fn apply_at(kind: &str, env: &mut Envelope, now: jiff::Timestamp) {
     env.reasons = reasons;
 }
 
+/// Raises a card to its worst disk-full forecast (RFC 0025), with a reason
+/// per storage due to fill; never lowers it.
+pub fn forecast(env: &mut Envelope, d: &Value) {
+    let Some(mut tone) = env.tone.filter(|t| *t != Tone::Quiet) else {
+        return;
+    };
+    for r in arr(&d["storages"]).iter().chain(arr(&d["volumes"])) {
+        let t = match text(&r["tone"]) {
+            "bad" => Tone::Bad,
+            "warn" => Tone::Warn,
+            _ => continue,
+        };
+        tone = tone.max(t);
+        env.reasons.push(format!(
+            "{} {}",
+            crate::integrations::forecast::label(r),
+            crate::integrations::forecast::words(num(&r["full_in"]))
+        ));
+    }
+    env.tone = Some(tone);
+}
+
 fn has_card(kind: &str) -> bool {
     summarize(kind, &Value::Null, jiff::Timestamp::UNIX_EPOCH).is_some()
 }
@@ -600,6 +622,34 @@ mod tests {
             tone("certs", d),
             (Tone::Warn, vec!["lab: discovery: forbidden".into()])
         );
+    }
+
+    #[test]
+    fn forecasts_raise_and_never_lower() {
+        let d = json!({"storages": [
+            {"storage": "local", "node": "n1", "tone": "ok", "full_in": null},
+            {"storage": "nfs", "shared": true, "tone": "warn", "full_in": 864000.0},
+        ], "volumes": [{"namespace": "db", "claim": "data", "tone": "bad", "full_in": 3600.0}]});
+        let mut e = env(Some(json!({})), false, false, None);
+        e.tone = Some(Tone::Ok);
+        forecast(&mut e, &d);
+        assert_eq!(e.tone, Some(Tone::Bad));
+        assert_eq!(
+            e.reasons,
+            ["nfs full in 10 days", "db/data full within a day"]
+        );
+        // a bad card stays bad, quiet hours and cards without a tone stay
+        let warn_only = json!({"storages": [{"storage": "nfs", "shared": true, "tone": "warn", "full_in": 864000.0}]});
+        for (before, after) in [
+            (Some(Tone::Bad), Some(Tone::Bad)),
+            (Some(Tone::Quiet), Some(Tone::Quiet)),
+            (None, None),
+        ] {
+            let mut e = env(Some(json!({})), false, false, None);
+            e.tone = before;
+            forecast(&mut e, &warn_only);
+            assert_eq!(e.tone, after);
+        }
     }
 
     #[test]

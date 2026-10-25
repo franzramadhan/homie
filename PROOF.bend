@@ -346,9 +346,13 @@ def Laws.no_pages_no_queries(k):
       {==}
     case Q.SparkPve{}:
       {==}
+    case Q.ForecastPve{}:
+      {==}
     case Q.K8s{}:
       {==}
     case Q.SparkK8s{}:
+      {==}
+    case Q.ForecastK8s{}:
       {==}
     case Q.Flux{}:
       {==}
