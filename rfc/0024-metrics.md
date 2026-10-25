@@ -155,6 +155,10 @@ fields sit at the top level next to `timestamp` and `level`.
 - `homie_cert_probe_success` is 0 when the last handshake failed or no
   chain was ever read; a chain that does not verify still counts as a
   successful probe and shows in `homie_card_status` instead.
+- `homie_updates_available` leaves out a kind whose source could not be
+  read (no Proxmox node or no cluster listed, and an error): a cluster under
+  `forward_token` without `metrics.kubernetes_service_account` has no
+  Kubernetes counts rather than a false 0.
 - `homie_actions_total{action}` also counts `github.watch` (the workflow
   picker saving its list).
 - Logging starts after the config is read, since `log_format` is in it;

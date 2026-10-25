@@ -271,14 +271,23 @@ fn updates(g: &mut Families, d: &Value) {
         .iter()
         .filter_map(|n| n["updates"].as_u64())
         .sum();
-    for (kind, n) in [
-        ("packages", packages as usize),
-        ("charts", count("charts", "latest")),
-        ("images", count("images", "latest")),
-        ("distribution", count("kubernetes", "distro_latest")),
-        ("flux", count("kubernetes", "flux_latest")),
+    // a source that could not be read (nothing listed, an error) is left
+    // out: 0 would claim "up to date"
+    let unread = |src: &str| arr(&d[src]).is_empty() && !arr(&d["errors"]).is_empty();
+    for (kind, src, n) in [
+        ("packages", "proxmox", packages as usize),
+        ("charts", "kubernetes", count("charts", "latest")),
+        ("images", "kubernetes", count("images", "latest")),
+        (
+            "distribution",
+            "kubernetes",
+            count("kubernetes", "distro_latest"),
+        ),
+        ("flux", "kubernetes", count("kubernetes", "flux_latest")),
     ] {
-        gauge(g, "homie_updates_available", &[("kind", kind)], n as f64);
+        if !unread(src) {
+            gauge(g, "homie_updates_available", &[("kind", kind)], n as f64);
+        }
     }
     for n in arr(&d["proxmox"]) {
         let l = [
@@ -376,5 +385,22 @@ mod tests {
         for leak in ["6.8.12", "v1.33", "2.0.0"] {
             assert!(!out.contains(leak), "{leak} leaked in\n{out}");
         }
+
+        // a forward_token cluster without a user: no Kubernetes counts at all
+        let mut g = Families::new();
+        updates(
+            &mut g,
+            &json!({"proxmox": [{"cluster": "pve", "node": "a", "updates": 0}], "kubernetes": [],
+                    "charts": [], "images": [], "errors": ["homelab: no user session"]}),
+        );
+        let out = render(g);
+        assert!(
+            out.contains(r#"homie_updates_available{kind="packages"} 0"#),
+            "{out}"
+        );
+        assert!(
+            !out.contains(r#"kind="charts""#) && !out.contains(r#"kind="flux""#),
+            "{out}"
+        );
     }
 }
