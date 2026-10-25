@@ -34,9 +34,14 @@ is then a string guessed from text.
   (`metrics.token`, a secret reference like any other) is checked when set.
   The guidance in the docs: bind to loopback on a laptop; in a cluster, a
   separate Service port reachable only from the scraper (NetworkPolicy).
-- **No new dependency.** The text format is written by hand (counters,
-  gauges, `_sum`/`_count` pairs). No histograms: average latency per query
-  is enough for a homelab, and buckets can come later.
+- **No new dependency.** The text format is written by hand: counters,
+  gauges and one histogram (an array of bucket counters per query, bumped
+  on each backend call).
+- **Latency percentiles.** Backend latency is a histogram with fixed
+  buckets 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5 and 10 s, so
+  `histogram_quantile(0.95, ...)` works per query. An average hides a node
+  that times out on one call in twenty; a p95 shows it. About 10 series per
+  query (8 buckets, `+Inf`, `_sum`, `_count`), around 200 for a 20-query lab.
 - **Card status is evaluated at scrape time** through the shared cache, like
   the notify evaluator (RFC 0019): a scrape costs at most one backend call
   per card per TTL, and nothing if the page or the evaluator already warmed
@@ -56,7 +61,7 @@ is then a string guessed from text.
 | `homie_build_info` | gauge (1) | `version` | Homie's own version (public anyway) |
 | `homie_card_status` | gauge (0/1) | `card`, `name`, `status` (`ok`, `warn`, `bad`, `quiet`) | One series per status, the current one is 1. The same tone the page shows |
 | `homie_query_total` | counter | `kind`, `name`, `result` (`ok`, `stale`, `error`, `quiet`) | Backend calls and how they ended (cache hits not counted) |
-| `homie_query_duration_seconds_sum` / `_count` | counter | `kind`, `name` | Average backend latency per query |
+| `homie_query_duration_seconds` | histogram | `kind`, `name` | Backend latency per query: percentiles from `_bucket`, average from `_sum` / `_count` |
 | `homie_query_last_success_timestamp_seconds` | gauge | `kind`, `name` | Age of the data the page shows; alert on `time() - x > ...` |
 | `homie_cert_expiry_timestamp_seconds` | gauge | `target` | Leaf `notAfter` of each probed endpoint (RFC 0018), a blackbox exporter for free |
 | `homie_cert_probe_success` | gauge (0/1) | `target` | The handshake worked and the chain verified |
@@ -80,7 +85,11 @@ node exporters already do that better), log lines, alert contents.
 
 - `log_format = "json"` switches `tracing` to one JSON object per line with
   the same fields as today (`msg`, `source`, `ms`, `result`, `user`, ...)
-  plus `timestamp` and `level`. Default `text`, unchanged.
+  plus `timestamp` and `level`. Default `text`, unchanged, because it reads
+  better in a terminal. The Helm chart and `deploy/kubernetes` set `json`,
+  since there logs always go into a pipeline. No switching on whether stdout
+  is a terminal: that would change the format under existing deployments
+  and break pipelines that parse today's text.
 - Turns on the `json` feature of `tracing-subscriber` (already a
   dependency; the feature adds `tracing-serde`).
 - The events Homie logs today get a table in the docs, so a pipeline knows
@@ -114,7 +123,8 @@ Helm chart: `metrics.enabled` adds the port to the Service and, with
 |---|---|
 | `/metrics` on the main listener behind the session | Scrapers have no session; an exception in the guard for one path is the kind of special case that leaks |
 | `/metrics` on the main listener, unauthenticated | Exposes certificate targets and lab shape to anyone who can reach the UI, including through a public demo |
-| The `prometheus` or `metrics` crates | A dependency for writing a few dozen lines of text; histograms are the only thing they would add |
+| The `prometheus` or `metrics` crates | A dependency for writing about a hundred lines of text, histogram included |
+| An average only (`_sum` / `_count`) | Hides tail latency: 5 calls in 100 at 10 s average out to about 600 ms |
 | OpenTelemetry (OTLP push) | Needs a collector, which few homelabs run; Prometheus scraping is what Grafana, VictoriaMetrics and Prometheus all read. Can come later |
 | Versions as labels (`homie_chart_info{chart, version, latest}`) | Tells a reader exactly what runs and what is unpatched; counts answer "am I behind" without that |
 | Per-guest and per-pod metrics | Duplicates the exporters every lab already has, with worse data |
@@ -122,12 +132,14 @@ Helm chart: `metrics.enabled` adds the port to the Service and, with
 ## Testing and rollout
 
 - **Tests:** the exposition format (names, label escaping, one series per
-  status), the token check, `metrics.cards = false` making no backend call,
+  status, cumulative buckets with `+Inf` equal to `_count`), the token check, `metrics.cards = false` making no backend call,
   no email, IP or version string in the output with a fixture lab, the
   listener absent when `metrics.listen` is unset. `config::tests::examples_load`
   covers a metrics example.
 - **Rollout:** a minor release; no change for anyone who does not set
   `metrics.listen` or `log_format`. Reference profile: a VMServiceScrape in
   the lab and a few alert rules (card `bad` for 10 minutes, a certificate
-  under 14 days, no successful query for 15 minutes) in `examples/`.
+  under 14 days, no successful query for 15 minutes, p95 query latency over
+  5 s) in `examples/`. Existing in-cluster users get JSON logs after
+  upgrading the chart; the release notes say so.
 - **Off switch:** unset `metrics.listen`; `log_format = "text"`.
