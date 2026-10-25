@@ -128,8 +128,8 @@ URI at your provider. The Helm view needs `deploy/kubernetes/rbac-helm.yaml` (ch
 
 Start from an example in `examples/`: `local.toml` (laptop),
 `server-oidc.toml` (any OIDC provider), `reference-lab.toml` (the author's
-lab, Cloudflare Access + Tailscale + k0s) or `docker-compose.yaml`. The full
-key reference is in [RFC 0001](rfc/0001-homie-foundation.md#configuration).
+lab, Cloudflare Access + Tailscale + k0s) or `docker-compose.yaml`. Every key,
+with its default, is in [CONFIG.md](CONFIG.md).
 
 - Any key can be set by environment: `HOMIE__PROXMOX__LAB__TOKEN=...`
   overrides `[proxmox.lab] token`. Lists use `[a, b]`.
