@@ -1,7 +1,7 @@
 # homie
 
 [![tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ffranzramadhan%2Fhomie%2Fbadges%2Ftests.json)](https://github.com/franzramadhan/homie/actions/workflows/coverage.yml)
-[![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ffranzramadhan%2Fhomie%2Fbadges%2Fcoverage.json)](https://github.com/franzramadhan/homie/actions/workflows/coverage.yml)
+[![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ffranzramadhan%2Fhomie%2Fbadges%2Fcoverage.json&cacheSeconds=300)](https://github.com/franzramadhan/homie/actions/workflows/coverage.yml)
 [![coverage workflow](https://github.com/franzramadhan/homie/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/franzramadhan/homie/actions/workflows/coverage.yml)
 [![release](https://img.shields.io/github/v/release/franzramadhan/homie)](https://github.com/franzramadhan/homie/releases/latest)
 
