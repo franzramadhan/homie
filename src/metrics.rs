@@ -13,7 +13,7 @@ use std::{
 
 use serde_json::Value;
 
-use crate::{integrations::Caller, server::AppState, status::Tone};
+use crate::{integrations::Caller, server::Shared, status::Tone};
 
 const BUCKETS: [f64; 8] = [0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0];
 
@@ -174,7 +174,7 @@ pub fn render(now: Families) -> String {
 
 /// Gauges read for one scrape; with `metrics.cards` the cards go through the
 /// shared cache, like the notifier (RFC 0019).
-pub async fn scrape(state: &AppState) -> String {
+pub async fn scrape(state: &Shared) -> String {
     let mut g = Families::new();
     gauge(
         &mut g,
@@ -206,11 +206,17 @@ pub async fn scrape(state: &AppState) -> String {
         }
         c
     });
-    let envs = futures::future::join_all(
-        cards
-            .iter()
-            .map(|(k, n)| lab.query(&state.cache, k, n, &caller)),
-    )
+    // a cold query (every image's upstream lookup) can outlast the scraper's
+    // timeout: it runs on in its own task and fills the cache for a later
+    // scrape, this one leaves the card out
+    // ponytail: fixed 8 s, under Prometheus' default 10 s scrape_timeout
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(8);
+    let envs = futures::future::join_all(cards.iter().map(|(k, n)| {
+        let (state, caller, k, n) = (state.clone(), caller.clone(), k.clone(), n.clone());
+        let task =
+            tokio::spawn(async move { state.lab.query(&state.cache, &k, &n, &caller).await });
+        async move { tokio::time::timeout_at(deadline, task).await.ok()?.ok()? }
+    }))
     .await;
     for ((kind, name), env) in cards.iter().zip(envs) {
         let Some(env) = env else { continue };

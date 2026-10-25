@@ -48,6 +48,9 @@ is then a string guessed from text.
   the cache. Kubernetes cards under `forward_token` have no user at scrape
   time: they use `metrics.kubernetes_service_account` (impersonated, as in
   notify) or are left out with a log line, like notify does today.
+  A scrape waits at most 8 s for the cards: a slower query (a cold updates
+  card looks up every image upstream) goes on filling the cache, and that
+  card is missing from this scrape only.
 - **Low cardinality, no secrets in labels.** Labels are config names
   (`card`, `name`), query kinds, action kinds and certificate targets.
   Never user emails, guest names, IPs or version strings: versions can tell
