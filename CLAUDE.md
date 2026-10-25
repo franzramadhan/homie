@@ -47,7 +47,9 @@ Every change that adds, renames or removes a config key, or changes a
 default, updates `CONFIG.md` in the same PR (and an example in `examples/`
 when the feature is new). `config::tests::config_md_has_no_drift` fails
 when a key in `src/config.rs` is missing from `CONFIG.md` or a TOML snippet
-there no longer parses; it runs with `cargo test`. Defaults and wording it
+there no longer parses; it runs with `cargo test`. `LAWS.bend`
+`config_documented` proves the check passes exactly when every key is
+named (model `spec/drift.bend`, kept in step by `drift_matches_spec`). Defaults and wording it
 cannot check: compare them by hand when touching a section.
 
 ## UI

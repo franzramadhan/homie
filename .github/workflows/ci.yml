@@ -40,7 +40,7 @@ jobs:
           if grep -qE '^(web/|\.github/workflows/ci\.yml$)' <<<"$files"; then web=true; fi
           if grep -qE '^(charts/|\.github/workflows/ci\.yml$)' <<<"$files"; then chart=true; fi
           # the laws, their proofs and the model, and the Rust code the model mirrors
-          if grep -qE '(\.bend$|^spec/|^src/server/(guard|console)\.rs$|^src/integrations/proxmox\.rs$|^src/roles\.rs$|^src/auth/(mod|local)\.rs$|^\.github/workflows/ci\.yml$)' <<<"$files"; then bend=true; fi
+          if grep -qE '(\.bend$|^spec/|^src/server/(guard|console)\.rs$|^src/integrations/proxmox\.rs$|^src/roles\.rs$|^src/config\.rs$|^src/auth/(mod|local)\.rs$|^\.github/workflows/ci\.yml$)' <<<"$files"; then bend=true; fi
           printf 'rust=%s\nweb=%s\nchart=%s\nbend=%s\n' "$rust" "$web" "$chart" "$bend" >> "$GITHUB_OUTPUT"
 
   test:
