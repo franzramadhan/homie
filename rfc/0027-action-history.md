@@ -90,6 +90,18 @@ No new metric: the counters of RFC 0024 already count actions.
   characters (a failed login's user name is whatever was typed).
 - `msg="history"` is also logged at start when unreadable lines were
   dropped.
+- Export, to move the history to a new node: `GET /api/history?format=json`
+  or `?format=csv` answers a download
+  (`homie-history-<UTC date>.json|csv`); the page links both. Roles get
+  the rows they see, as the page shows them ("another user", redacted
+  addresses, no session digests). CSV columns are
+  `time,user,action,target,result,error` (RFC 4180), and a cell starting
+  with `=`, `+`, `-`, `@`, a tab or CR gets a leading `'` so a spreadsheet
+  does not run it. A full user's JSON is the stored entries, newest first,
+  in the shape of `history.jsonl` lines. Restore by writing them back,
+  oldest first, before the new instance starts (no import endpoint):
+  `jq -c 'reverse[]' homie-history-<date>.json > <state_dir>/history.jsonl`
+  The start keeps the last `history.size` and rewrites the file 0600.
 
 ## Alternatives
 
