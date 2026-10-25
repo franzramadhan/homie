@@ -111,7 +111,7 @@ fn label(kind: &str, name: &str) -> String {
         "argocd" => "Argo CD",
         "alerts" => "Alerts",
         "security" => "Security",
-        "openbao" => "OpenBao",
+        "openbao" => "OpenBao / Vault",
         "cnpg" => "PostgreSQL",
         "tailscale" => return "Tailscale".into(),
         "github" => return "Workflows".into(),
@@ -630,7 +630,7 @@ mod tests {
             "https://homie.example/",
             false,
         );
-        assert_eq!(m.title, "OpenBao lab: failing (was ok)");
+        assert_eq!(m.title, "OpenBao / Vault lab: failing (was ok)");
         assert_eq!(m.url, "https://homie.example/");
         assert_eq!(
             message("certs", "_", (Tone::Ok, Tone::Warn), &reasons, "", false).card,
@@ -673,7 +673,7 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(
             v["text"],
-            "*Homie*: OpenBao lab: failing (was ok)\n• sealed\n<https://homie.example/|open Homie>"
+            "*Homie*: OpenBao / Vault lab: failing (was ok)\n• sealed\n<https://homie.example/|open Homie>"
         );
 
         let (_, body, _) = shape(NotifyKind::Webhook, &m);
