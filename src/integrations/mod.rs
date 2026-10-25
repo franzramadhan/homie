@@ -525,6 +525,10 @@ impl Lab {
                         updates::chart_latest(&mut r.charts, &creds, &mut r.errors).await;
                     }
                     updates::image_latest(&mut r.images, &creds, &mut r.errors).await;
+                    if u.upstream.notes {
+                        let api = crate::upstream::GITHUB_API;
+                        updates::notes(&mut r, u, &creds, gh.as_deref(), api).await;
+                    }
                 }
                 serde_json::to_value(r)?
             }
