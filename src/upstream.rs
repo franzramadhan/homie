@@ -447,8 +447,11 @@ pub async fn oci_source(
             return Ok(Vec::new());
         };
         let c = fetch("blobs", digest).await?;
+        // labels are inherited from the base image: only one that names
+        // this image counts
         let urls = c["config"]["Labels"][SOURCE]
             .as_str()
+            .filter(|u| names_image(name, u))
             .into_iter()
             .chain(
                 c["sources"]
@@ -462,6 +465,37 @@ pub async fn oci_source(
     })
     .await?;
     Ok(found.into_iter().next())
+}
+
+/// Whether the GitHub repository at `url` plausibly is the one of the image
+/// `name`: a path part (but `library`) and the owner or the repository
+/// contain one another (letters and digits only, at least 3), or share a
+/// word of 3 or more. A label from a base image (`distroless` on
+/// `external-dns`) does not.
+fn names_image(name: &str, url: &str) -> bool {
+    let Some(repo) = github_repo(url) else {
+        return false;
+    };
+    let squash = |s: &str| -> String {
+        s.chars()
+            .filter(char::is_ascii_alphanumeric)
+            .map(|c| c.to_ascii_lowercase())
+            .collect()
+    };
+    let words = |s: &str| -> Vec<String> {
+        s.split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|w| w.len() >= 3)
+            .map(str::to_ascii_lowercase)
+            .collect()
+    };
+    let close = |a: &str, b: &str| {
+        let (x, y) = (squash(a), squash(b));
+        let (short, long) = if x.len() <= y.len() { (x, y) } else { (y, x) };
+        (short.len() >= 3 && long.contains(&short)) || words(a).iter().any(|w| words(b).contains(w))
+    };
+    name.split('/')
+        .filter(|p| *p != "library")
+        .any(|p| repo.split('/').any(|r| close(p, r)))
 }
 
 /// The first GitHub repository among `urls`, else the first https URL.
@@ -1230,6 +1264,41 @@ mod tests {
     }
 
     #[test]
+    fn image_labels_must_name_the_image() {
+        for (name, repo, ok) in [
+            ("library/node", "nodejs/docker-node", true),
+            ("pihole/pihole", "pi-hole/docker-pi-hole", true),
+            (
+                "victoriametrics/victoria-metrics",
+                "VictoriaMetrics/VictoriaMetrics",
+                true,
+            ),
+            (
+                "otel/opentelemetry-collector-k8s",
+                "open-telemetry/opentelemetry-collector-releases",
+                true,
+            ),
+            ("berriai/litellm-non_root", "BerriAI/litellm", true),
+            ("k0sproject/envoy-distroless", "envoyproxy/envoy", true),
+            (
+                "k0sproject/apiserver-network-proxy-agent",
+                "k0sproject/image-builder",
+                true,
+            ),
+            (
+                "external-dns/external-dns",
+                "GoogleContainerTools/distroless",
+                false,
+            ),
+            ("library/node", "acme/no", false),
+        ] {
+            let url = format!("https://github.com/{repo}");
+            assert_eq!(names_image(name, &url), ok, "{name} {repo}");
+        }
+        assert!(!names_image("acme/app", "https://acme.example/app"));
+    }
+
+    #[test]
     fn excerpts_are_plain_text() {
         let body = "<!-- a comment with > inside -->\r\n## What's <b>new</b>\n\n\
                     <details><summary>x</summary><script>alert(1)</script></details>\n\
@@ -1508,6 +1577,17 @@ mod tests {
                                       "sources": ["https://github.com/acme/chart"]}))),
             )
             .route("/v2/none/app/manifests/1.0.0", route(manifest(json!({}))))
+            // a label inherited from the base image
+            .route(
+                "/v2/external-dns/external-dns/manifests/1.0.0",
+                route(manifest(json!({"config": {"digest": "sha256:d"}}))),
+            )
+            .route(
+                "/v2/external-dns/external-dns/blobs/sha256:d",
+                route(manifest(
+                    json!({"config": {"Labels": {SOURCE: "https://github.com/GoogleContainerTools/distroless"}}}),
+                )),
+            )
             .route(
                 "/v2/bad/app/manifests/1.0.0",
                 route(manifest(json!({"manifests": [{"digest": "../../x"}]}))),
@@ -1528,6 +1608,7 @@ mod tests {
                 Some("https://github.com/acme/listed"),
             ),
             ("none/app", "1.0.0", None),
+            ("external-dns/external-dns", "1.0.0", None),
         ] {
             assert_eq!(src(name, tag).await.unwrap().as_deref(), want, "{name}");
         }
