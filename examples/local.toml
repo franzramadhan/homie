@@ -27,3 +27,7 @@ token = { cmd = "security find-generic-password -s homie-grafana-cloud -w" }
 
 [healthchecks]
 api_key = { cmd = "security find-generic-password -s homie-healthchecks -w" }
+
+# OpenBao or HashiCorp Vault, unauthenticated health only; [openbao.*] works too
+# [vault.main]
+# url = "https://vault.example:8200"
