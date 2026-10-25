@@ -95,10 +95,12 @@ pub(super) fn log_action(
     let user = caller.email.as_deref().unwrap_or("local");
     match result {
         Ok(detail) => {
-            tracing::info!(msg = "action", action, user, target, detail = %detail, result = "ok")
+            tracing::info!(msg = "action", action, user, target, detail = %detail, result = "ok");
+            crate::metrics::action(action, "ok");
         }
         Err(e) => {
-            tracing::warn!(msg = "action", action, user, target, error = %e, result = "error")
+            tracing::warn!(msg = "action", action, user, target, error = %e, result = "error");
+            crate::metrics::action(action, "error");
         }
     }
 }

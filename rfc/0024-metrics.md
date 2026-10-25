@@ -117,6 +117,55 @@ Helm chart: `metrics.enabled` adds the port to the Service and, with
 | `msg=listening` | gains `metrics=<addr>` when the listener is on |
 | `msg=metrics, result=denied` | a scrape with a missing or wrong token (`warn`) |
 
+### Log events
+
+Every line has `msg`; most have `result`. With `log_format = "json"` the
+fields sit at the top level next to `timestamp` and `level`.
+
+| `msg` | Level | Fields |
+|---|---|---|
+| `config` | info | `file` |
+| `listening` | info | `addr`, `metrics`, `login`, `version` |
+| `insecure` | warn | `integration`, `reason` (TLS verification off, plain HTTP, no login) |
+| `login` | info, warn | `method`, `user`, `role`, `result` (`ok`, `denied`) |
+| `local login locked` | warn | `failures`, `minutes` |
+| `local login password generated` | warn | `file`, `note` |
+| `session ended` | info | `user`, `reason` |
+| `denied` | info | `role`, `route`: a role asked for a route it may not use |
+| `action` | info, warn | `action`, `user`, `target`, `detail` or `error`, `result` |
+| `console` | info, warn | `user`, `pve`, `guest`, `mode`, `result` (`open`, `closed`, `denied`, `error`), `reason`, `seconds`, `bytes` |
+| `query` | debug, warn | `source`, `ms`, `status` (`ok`, `stale`, `error`, `quiet`), `error` |
+| `logs` | debug (live tail), info, warn | `user`, `source`, `minutes`, `query`, `ms`, `result`, `error` |
+| `upstream` | info, warn | `source`, `versions`, `ms`, `result`, `error`: release lookups for the updates page |
+| `cert probe` | debug, warn | `target`, `result` (`ok`, `unreachable`), `error` |
+| `watch` | debug | Kubernetes watch errors behind live updates |
+| `notify`, `notify skipped`, `notify disabled`, `notify state not saved` | info, warn | `card`, `name`, `target`, `from`, `to`, `result` |
+| `metrics` | warn | `result = "denied"`: a scrape with a missing or wrong token |
+| `snapshot write failed`, `snapshot unreadable, starting empty` | warn | `error` |
+
+### Built as
+
+- `src/metrics.rs`: families in a map behind one lock, the histogram next
+  to it, gauges read per scrape. `Cache::get` records every backend call
+  (only the `kind` and `name` parts of the cache key become labels, never
+  the user part).
+- `homie_cert_expiry_timestamp_seconds` is the earliest expiry that counts
+  for the row (leaf, intermediates, a private root), the same date the
+  Certificates card shows, not only the leaf's.
+- `homie_cert_probe_success` is 0 when the last handshake failed or no
+  chain was ever read; a chain that does not verify still counts as a
+  successful probe and shows in `homie_card_status` instead.
+- `homie_actions_total{action}` also counts `github.watch` (the workflow
+  picker saving its list).
+- Logging starts after the config is read, since `log_format` is in it;
+  config errors go to stderr as before.
+- The card list for scrapes is built once at the first scrape, so a
+  `forward_token` cluster without `metrics.kubernetes_service_account` logs
+  `notify skipped` once, not on every scrape.
+- Helm: `logFormat` (default `json`), `metrics.enabled`, `metrics.port`
+  (9477), `metrics.serviceMonitor.{enabled, kind, interval, bearerTokenSecret}`.
+  Example rules: `examples/metrics-alerts.yaml`.
+
 ## Alternatives
 
 | Option | Why not |

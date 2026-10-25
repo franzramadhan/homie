@@ -90,6 +90,7 @@ async fn run(
     keys: Vec<(String, String)>,
     tx: mpsc::Sender<Event>,
 ) {
+    let _open = crate::metrics::Open::new(&crate::metrics::STREAMS);
     let mut changed = state.cache.subscribe();
     let mut sent: HashMap<&(String, String), u64> = HashMap::new();
     let mut _watches = JoinSet::new();

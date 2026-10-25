@@ -1326,3 +1326,58 @@ async fn consoles_open_once_and_relay() {
         .unwrap();
     assert_eq!(refused(e), 403);
 }
+
+#[tokio::test]
+async fn metrics_listener_token_and_cards() {
+    let backend = backend().await;
+    let h = Homie::start(|_| {
+        format!(
+            "allow_unauthenticated = true\n[metrics]\nlisten = \"127.0.0.1:0\"\ntoken = \"s3cret\"\n{}",
+            lab_sections(&backend)
+        )
+    })
+    .await;
+    // the main listener has no /metrics
+    assert!(!h.get("/metrics").await.text.contains("homie_build_info"));
+
+    let serve = |state: super::Shared, token: Option<&str>| {
+        let token = token.map(String::from);
+        async move {
+            let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}/metrics", l.local_addr().unwrap());
+            let app = super::metrics_router(state, token);
+            tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+            url
+        }
+    };
+    let url = serve(h.state.clone(), Some("s3cret")).await;
+    let http = reqwest::Client::new();
+    assert_eq!(http.get(&url).send().await.unwrap().status(), 401);
+    let wrong = http.get(&url).bearer_auth("s3cre").send().await.unwrap();
+    assert_eq!(wrong.status(), 401);
+    let r = http.get(&url).bearer_auth("s3cret").send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["content-type"], "text/plain; version=0.0.4");
+    let page = r.text().await.unwrap();
+    assert!(page.contains("homie_build_info{version=\""), "{page}");
+    for status in ["ok", "warn", "bad", "quiet"] {
+        let s = format!("homie_card_status{{card=\"pve\",name=\"lab\",status=\"{status}\"}}");
+        assert!(page.contains(&s), "{s} missing in\n{page}");
+    }
+    assert!(page.contains("homie_query_total{kind=\"pve\",name=\"lab\",result=\"ok\"}"));
+    // no addresses or emails, whatever the backends answered
+    assert!(!page.contains("127.0.0.1") && !page.contains('@'), "{page}");
+
+    // cards = false: only what already happened, no backend call
+    let h = Homie::start(|_| {
+        format!(
+            "allow_unauthenticated = true\n[metrics]\nlisten = \"127.0.0.1:0\"\ncards = false\n{}",
+            lab_sections(&backend)
+        )
+    })
+    .await;
+    let url = serve(h.state.clone(), None).await;
+    let page = http.get(&url).send().await.unwrap().text().await.unwrap();
+    assert!(page.contains("homie_sessions_active 0"), "{page}");
+    assert!(!page.contains("homie_card_status"), "{page}");
+}

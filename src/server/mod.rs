@@ -83,7 +83,21 @@ pub async fn run(cfg: Config) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&cfg.listen)
         .await
         .map_err(|e| format!("listen {}: {e}", cfg.listen))?;
-    tracing::info!(msg = "listening", addr = %cfg.listen, login = auth.is_some(), version = crate::VERSION);
+    let metrics = match &cfg.metrics {
+        Some(m) => {
+            let token = match &m.token {
+                Some(t) => Some(t.resolve().await?),
+                None => None,
+            };
+            let l = tokio::net::TcpListener::bind(&m.listen)
+                .await
+                .map_err(|e| format!("metrics.listen {}: {e}", m.listen))?;
+            Some((l, token))
+        }
+        None => None,
+    };
+    let metrics_addr = cfg.metrics.as_ref().map(|m| m.listen.as_str());
+    tracing::info!(msg = "listening", addr = %cfg.listen, metrics = metrics_addr, login = auth.is_some(), version = crate::VERSION);
 
     let state = Arc::new(AppState {
         cfg,
@@ -98,11 +112,51 @@ pub async fn run(cfg: Config) -> Result<()> {
     if state.cfg.notify.is_some() {
         tokio::spawn(crate::notify::run(state.clone()));
     }
+    if let Some((l, token)) = metrics {
+        let app = metrics_router(state.clone(), token);
+        tokio::spawn(async move { axum::serve(l, app).with_graceful_shutdown(shutdown()).await });
+    }
 
     axum::serve(listener, router(state))
         .with_graceful_shutdown(shutdown())
         .await?;
     Ok(())
+}
+
+/// Only `GET /metrics` (RFC 0024): no session, no Host check, an optional
+/// bearer token.
+fn metrics_router(state: Shared, token: Option<String>) -> Router {
+    Router::new()
+        .route("/metrics", get(metrics))
+        .with_state((state, token.map(Arc::new)))
+}
+
+async fn metrics(
+    axum::extract::State((state, token)): axum::extract::State<(Shared, Option<Arc<String>>)>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    use axum::{http::StatusCode, response::IntoResponse};
+    if let Some(t) = &token {
+        let given = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .unwrap_or("");
+        // equal digests: the comparison time says nothing about the token
+        let digest = |s: &str| ring::digest::digest(&ring::digest::SHA256, s.as_bytes());
+        if digest(given).as_ref() != digest(t).as_ref() {
+            tracing::warn!(msg = "metrics", result = "denied");
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+    }
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
+        crate::metrics::scrape(&state).await,
+    )
+        .into_response()
 }
 
 async fn shutdown() {

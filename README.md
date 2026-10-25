@@ -58,6 +58,10 @@ Behavior that suits a homelab:
   message goes to ntfy, a Slack-compatible webhook (Slack, Mattermost,
   Discord) or any JSON webhook. Quiet hours stay quiet, and the lab
   waking up in the morning is not news.
+- **Metrics and JSON logs.** An opt-in Prometheus `/metrics` on its own
+  port: card status, query latency and failures, certificate expiry, how
+  many updates are pending. No versions, IPs or emails in labels. Logs can
+  be one JSON object per line.
 - **Watched workflows without a restart.** Pick GitHub workflows in the UI;
   the list is saved in a ConfigMap (in a cluster) or a file.
 - **TLS options per integration.** Verify against a custom CA, verify
@@ -139,6 +143,9 @@ key reference is in [RFC 0001](rfc/0001-homie-foundation.md#configuration).
   first start), `[auth]` for any OIDC provider, or both on one login page.
   Without either, Homie only listens on loopback unless you set
   `allow_unauthenticated = true`.
+- Metrics: `[metrics] listen = "127.0.0.1:9477"`, optionally `token`; logs:
+  `log_format = "json"`. Metric names, log events and alert rules are in
+  [RFC 0024](rfc/0024-metrics.md) and `examples/metrics-alerts.yaml`.
 - Roles and a public demo: `[roles.<name>]` and `[demo]`, see
   [RFC 0016](rfc/0016-roles-demo.md). Run a public demo as its own instance
   with read-only credentials only.

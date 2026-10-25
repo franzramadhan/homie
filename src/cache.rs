@@ -89,11 +89,13 @@ impl Cache {
         }
         let started = Instant::now();
         let result = fetch().await;
-        let ms = started.elapsed().as_millis() as u64;
+        let secs = started.elapsed().as_secs_f64();
+        let ms = (secs * 1000.0) as u64;
         let mut entries = self.entries.lock().unwrap();
         match result {
             Ok(data) => {
                 tracing::debug!(msg = "query", source = key, ms, status = "ok");
+                crate::metrics::query(key, "ok", secs);
                 let entry = Entry {
                     data,
                     fetched_at: jiff::Timestamp::now().to_string(),
@@ -112,6 +114,7 @@ impl Cache {
                 } else {
                     "error"
                 };
+                crate::metrics::query(key, status, secs);
                 if quiet {
                     tracing::debug!(msg = "query", source = key, ms, status, error = %e);
                 } else {

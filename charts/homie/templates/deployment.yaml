@@ -35,6 +35,12 @@ spec:
           env:
             - name: HOMIE_CONFIG
               value: /etc/homie/config.toml
+            - name: HOMIE__LOG_FORMAT
+              value: {{ .Values.logFormat | quote }}
+            {{- if .Values.metrics.enabled }}
+            - name: HOMIE__METRICS__LISTEN
+              value: "0.0.0.0:{{ .Values.metrics.port }}"
+            {{- end }}
           {{- with .Values.existingSecret }}
           envFrom:
             - secretRef:
@@ -43,6 +49,10 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+            {{- if .Values.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+            {{- end }}
           readinessProbe:
             httpGet: {path: /healthz, port: http}
           livenessProbe:

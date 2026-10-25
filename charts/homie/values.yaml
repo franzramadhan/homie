@@ -28,6 +28,23 @@ rbac:
   # save the workflow picker's watch list in a ConfigMap (RFC 0015)
   githubWatch: true
 
+# text or json (RFC 0024); in a cluster logs go into a pipeline
+logFormat: json
+
+# GET /metrics on its own port (RFC 0024). Keep the port reachable from the
+# scraper only (NetworkPolicy); set HOMIE__METRICS__TOKEN in existingSecret
+# to require a bearer token.
+metrics:
+  enabled: false
+  port: 9477
+  serviceMonitor:
+    enabled: false
+    # ServiceMonitor (Prometheus Operator) or VMServiceScrape (VictoriaMetrics)
+    kind: ServiceMonitor
+    interval: 30s
+    # Secret key holding the token, e.g. {name: homie, key: HOMIE__METRICS__TOKEN}
+    bearerTokenSecret: {}
+
 serviceAccount:
   create: true
   name: ""
