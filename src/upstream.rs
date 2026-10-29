@@ -5,7 +5,7 @@
 
 use std::{
     collections::HashMap,
-    sync::{LazyLock, Mutex},
+    sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
 };
 
@@ -139,17 +139,46 @@ pub fn latest(installed: &str, candidates: &[String]) -> Latest {
 type Cached = (Instant, std::result::Result<Vec<String>, String>);
 static CACHE: LazyLock<Mutex<HashMap<String, Cached>>> = LazyLock::new(Default::default);
 
+/// One lock per cache key, so queries that miss together share one fetch
+/// (one entry per configured source, never removed).
+static FLIGHTS: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    LazyLock::new(Default::default);
+/// At most this many upstream fetches at once across every query: a cold
+/// cache otherwise opens dozens of connections and big tag lists together.
+static FETCHES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(6);
+
+/// Waits until no other caller is fetching `key`. The caller checks its
+/// cache again with the guard held, then fetches with a [`FETCHES`] permit.
+async fn flight(key: &str) -> tokio::sync::OwnedMutexGuard<()> {
+    let lock = FLIGHTS
+        .lock()
+        .unwrap()
+        .entry(key.to_string())
+        .or_default()
+        .clone();
+    lock.lock_owned().await
+}
+
+fn fresh(key: &str) -> Option<Result<Vec<String>>> {
+    let cache = CACHE.lock().unwrap();
+    let (at, r) = cache.get(key)?;
+    (at.elapsed() < if r.is_ok() { TTL } else { FAILED_TTL }).then(|| r.clone().map_err(Into::into))
+}
+
 /// `key`'s list from the cache, else `fetch` (failures cached shorter).
 async fn cached<F, Fut>(key: &str, fetch: F) -> Result<Vec<String>>
 where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<Vec<String>>>,
 {
-    if let Some((at, r)) = CACHE.lock().unwrap().get(key)
-        && at.elapsed() < if r.is_ok() { TTL } else { FAILED_TTL }
-    {
-        return r.clone().map_err(Into::into);
+    if let Some(r) = fresh(key) {
+        return r;
     }
+    let _flight = flight(key).await;
+    if let Some(r) = fresh(key) {
+        return r;
+    }
+    let _permit = FETCHES.acquire().await.expect("never closed");
     let started = Instant::now();
     let r = fetch().await.map_err(|e| e.to_string());
     let ms = started.elapsed().as_millis() as u64;
@@ -814,11 +843,19 @@ pub async fn release_notes(
     repo: &str,
     token: Option<&str>,
 ) -> (Vec<Note>, Option<String>) {
-    if let Some(e) = NOTES.lock().unwrap().get(repo)
-        && Instant::now() < e.until
-    {
-        return (e.notes.clone(), e.error.clone());
+    let fresh = || {
+        let cache = NOTES.lock().unwrap();
+        let e = cache.get(repo).filter(|e| Instant::now() < e.until)?;
+        Some((e.notes.clone(), e.error.clone()))
+    };
+    if let Some(r) = fresh() {
+        return r;
     }
+    let _flight = flight(&format!("notes:{repo}")).await;
+    if let Some(r) = fresh() {
+        return r;
+    }
+    let _permit = FETCHES.acquire().await.expect("never closed");
     let started = Instant::now();
     let r: Result<Vec<Note>> = async {
         let mut headers = vec![("Accept", "application/vnd.github+json".to_string())];
@@ -1398,6 +1435,25 @@ mod tests {
             ("helm-chart-4.11.3", 1, None)
         );
         assert!(between(&plain, "x", "latest", "1.0.0").0.is_empty());
+    }
+
+    /// Queries that miss together share one fetch.
+    #[tokio::test]
+    async fn concurrent_misses_fetch_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let lookups = (0..8).map(|_| {
+            let hits = hits.clone();
+            cached("test:single-flight", move || async move {
+                hits.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                Ok(vec!["1.0.0".to_string()])
+            })
+        });
+        for r in futures::future::join_all(lookups).await {
+            assert_eq!(r.unwrap(), ["1.0.0"]);
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
 
     /// A fake GitHub API: releases of `acme-test/notes`, then a rate limit.
