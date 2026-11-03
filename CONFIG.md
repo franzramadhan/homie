@@ -369,6 +369,7 @@ datasource = "vlogs"
 | Key | Default | |
 |---|---|---|
 | `max_rows` | `1000` | rows per search |
+| `max_export_rows` | `50000` | lines per logs export (the whole range of a search, CSV or NDJSON); `0` turns the logs export off |
 | `tail_seconds` | `5` | live tail poll interval, 2 to 60 |
 | `tail_max_minutes` | `30` | a tail stops after this long; `0` turns tail off |
 

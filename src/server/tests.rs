@@ -367,6 +367,23 @@ async fn actions_against_fake_backends() {
         )
         .await;
     assert_eq!(r.status, 400);
+
+    // RFC 0029: an export is a file, one per session at a time
+    let export =
+        json!({"source": "Loki", "query": "{app=\"web\"}", "minutes": 15, "format": "csv"});
+    let r = h.post("/api/logs/export", export.clone()).await;
+    assert_eq!((r.status, r.text.as_str()), (200, "time,stream,message\n"));
+    let r = h
+        .post(
+            "/api/logs/export",
+            json!({"source": "Loki", "query": "x", "minutes": 0, "format": "csv"}),
+        )
+        .await;
+    assert_eq!(r.status, 400);
+    h.state.exports.lock().unwrap().insert("local".into());
+    assert_eq!(h.post("/api/logs/export", export.clone()).await.status, 429);
+    h.state.exports.lock().unwrap().clear();
+    assert_eq!(h.post("/api/logs/export", export).await.status, 200);
 }
 
 #[tokio::test]
@@ -596,6 +613,13 @@ async fn roles_see_their_pages_only() {
         .post(
             "/api/logs",
             json!({"source": "Loki", "query": "x", "minutes": 5}),
+        )
+        .await;
+    assert_eq!(r.status, 403);
+    let r = h
+        .post(
+            "/api/logs/export",
+            json!({"source": "Loki", "query": "x", "minutes": 5, "format": "csv"}),
         )
         .await;
     assert_eq!(r.status, 403);
@@ -1571,6 +1595,7 @@ async fn history_for_roles_and_the_demo() {
         assert_eq!(h.post(path, body).await.status, 403, "{path}");
     }
     assert_eq!(h.post("/api/logs", json!({})).await.status, 403);
+    assert_eq!(h.post("/api/logs/export", json!({})).await.status, 403);
     assert_eq!(
         history(&h).await,
         [

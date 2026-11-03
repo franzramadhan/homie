@@ -23,7 +23,7 @@ sorted view the user built on the page.
 
 - Every `DataTable` gets an Export button next to the filter, with two
   entries: CSV and JSON. If the table has no rows, the button is hidden.
-  All 37 tables on 11 pages get it from the one shared component:
+  All 23 tables on 10 pages get it from the one shared component:
   Infrastructure (guests, storages, certificates), Workloads, Helm
   releases, GitOps (Flux, Argo CD), Updates, History, Security, Logs,
   Tailscale, Workflows, Observability.
@@ -108,6 +108,18 @@ see them.
   to `logs.max_export_rows` (user, 2026-11-03).
 - Map page: no export. The Infrastructure page has the same guests in
   a table (user, 2026-11-03).
+
+## Changes during implementation
+
+- The count is 23 tables on 10 pages, not 37 on 11: the first count
+  included imports and other uses of the name.
+- On the Logs page, the range export replaces the table export, so the
+  page has one Export control. If `logs.max_export_rows` is `0`, the
+  table export comes back.
+- The browser names the logs file (`homie-logs-<UTC time>.csv`). The
+  server also sends a `Content-Disposition` with the same pattern.
+- CSV and JSON for the other tables use the column title as the CSV
+  header. A column without a text title uses its id.
 
 ## Testing and rollout
 

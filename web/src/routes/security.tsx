@@ -40,7 +40,7 @@ function Preset({ preset }: { preset: string }) {
             return typeof v === "string" && v.length > 80 ? <span className="block min-w-64 text-xs whitespace-normal">{v}</span> : String(v ?? "");
           },
         }));
-        return <DataTable columns={columns} data={d.rows} empty="Nothing found" />;
+        return <DataTable name={`security-${preset}`} columns={columns} data={d.rows} empty="Nothing found" />;
       }}
     </Source>
   );

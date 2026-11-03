@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "check:contrast": "node scripts/contrast.mjs"
+    "check:contrast": "node scripts/contrast.mjs",
+    "check:csv": "bun scripts/csv.test.ts"
   },
   "dependencies": {
     "@novnc/novnc": "1.7.0",

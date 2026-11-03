@@ -556,14 +556,22 @@ impl Lab {
 impl Lab {
     /// Runs a log search against a configured source (RFC 0008).
     pub async fn search_logs(&self, req: &logs::SearchRequest) -> Result<impl serde::Serialize> {
+        let (g, src) = self.log_source(&req.source)?;
+        let (limit, start) = logs::validate(req, self.logs.max_rows)?;
+        logs::search(g, src, req, limit, start, jiff::Timestamp::now()).await
+    }
+
+    pub fn log_source(
+        &self,
+        label: &str,
+    ) -> Result<(&grafana::Grafana, &crate::config::LogSource)> {
         let src = self
             .logs
             .datasources
             .iter()
-            .find(|s| s.label == req.source)
-            .ok_or_else(|| format!("no log source {:?}", req.source))?;
-        let (limit, start) = logs::validate(req, self.logs.max_rows)?;
-        logs::search(self.grafana(&src.grafana)?, src, req, limit, start).await
+            .find(|s| s.label == label)
+            .ok_or_else(|| format!("no log source {label:?}"))?;
+        Ok((self.grafana(&src.grafana)?, src))
     }
 }
 

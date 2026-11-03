@@ -277,12 +277,12 @@ function Cluster({ name }: { name: string }) {
             )}
             <div>
               <h3 className="mb-1 text-xs font-semibold text-ink-subtle uppercase">Guests</h3>
-              <DataTable columns={guestCols} data={d.guests.filter((g) => !g.template)} />
+              <DataTable name="guests" columns={guestCols} data={d.guests.filter((g) => !g.template)} />
             </div>
             <div className="grid gap-5 lg:grid-cols-2">
               <div>
                 <h3 className="mb-1 text-xs font-semibold text-ink-subtle uppercase">Storage</h3>
-                <DataTable
+                <DataTable name="storage"
                   filter={false}
                   data={d.storage.map((s): StorageRow => ({ ...s, forecast: forecast?.storages.find((f) => f.storage === s.storage && (f.shared || f.node === s.node)) }))}
                   columns={[
@@ -298,12 +298,12 @@ function Cluster({ name }: { name: string }) {
                 {d.ha.length > 0 && (
                   <div>
                     <h3 className="mb-1 text-xs font-semibold text-ink-subtle uppercase">HA</h3>
-                    <DataTable filter={false} data={d.ha} columns={[{ accessorKey: "sid", header: "Resource" }, { accessorKey: "node", header: "Node" }, { accessorKey: "state", header: "State" }]} />
+                    <DataTable name="ha" filter={false} data={d.ha} columns={[{ accessorKey: "sid", header: "Resource" }, { accessorKey: "node", header: "Node" }, { accessorKey: "state", header: "State" }]} />
                   </div>
                 )}
                 <div>
                   <h3 className="mb-1 text-xs font-semibold text-ink-subtle uppercase">Recent failed tasks</h3>
-                  <DataTable
+                  <DataTable name="failed-tasks"
                     filter={false}
                     data={d.failed_tasks}
                     empty="No failed tasks"
@@ -396,7 +396,7 @@ function Certificates() {
               {e}
             </p>
           ))}
-          <DataTable columns={certColumns} data={d.rows} empty="No TLS endpoints seen yet" />
+          <DataTable name="certificates" columns={certColumns} data={d.rows} empty="No TLS endpoints seen yet" />
         </>
       )}
     </Source>

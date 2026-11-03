@@ -52,7 +52,7 @@ function Cluster({ name }: { name: string }) {
       {(d) => (
         <div className="space-y-2">
           {status && <p className="rounded-control bg-surface-2 px-2 py-1 text-sm" role="status">{status}</p>}
-          <DataTable
+          <DataTable name={`flux-${name}`}
             data={onlyProblems ? d.filter((i) => i.ready !== "True" || i.suspended) : d}
             columns={[
               ...(readOnly
@@ -138,7 +138,7 @@ function ArgoCd({ name, url }: { name: string; url: string | null }) {
               {status}
             </p>
           )}
-          <DataTable
+          <DataTable name={`argocd-${name}`}
             data={d}
             columns={[
               ...(readOnly

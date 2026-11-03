@@ -36,6 +36,8 @@ pub struct AppState {
     pub consoles: console::Consoles,
     /// who did what and when (RFC 0027)
     pub history: history::History,
+    /// sessions with a logs export running (RFC 0029)
+    pub exports: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl AppState {
@@ -62,6 +64,7 @@ pub fn router(state: Shared) -> Router {
         .route("/api/act/flux/{name}/reconcile", post(api::flux_reconcile))
         .route("/api/act/argocd/{name}/refresh", post(api::argocd_refresh))
         .route("/api/logs", post(api::search_logs))
+        .route("/api/logs/export", post(api::export_logs))
         .route("/api/history", get(history::list))
         .route("/api/github/repos", get(github::repos))
         .route("/api/github/workflows", get(github::workflows))
@@ -122,6 +125,7 @@ pub async fn run(cfg: Config) -> Result<()> {
         github_states: Default::default(),
         consoles: Default::default(),
         history,
+        exports: Default::default(),
     });
     let persist = state.clone();
     tokio::spawn(async move { persist.cache.persist_loop().await });

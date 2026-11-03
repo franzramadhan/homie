@@ -17,7 +17,7 @@ function Instance({ name, url }: { name: string; url: string }) {
       }
     >
       {(d) => (
-        <DataTable
+        <DataTable name={`alerts-${name}`}
           data={d.alerts}
           empty="No firing or pending alerts"
           columns={[

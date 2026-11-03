@@ -31,7 +31,7 @@ export type Meta = {
   openbao: { name: string; quiet: boolean; url: string; insecure: string | null }[];
   logs: { label: string; type: "victorialogs" | "loki"; pod_query: string | null; node_query: string | null }[];
   /** live tail (RFC 0022); max_minutes 0 hides Follow */
-  log_tail: { seconds: number; max_minutes: number; max_rows: number };
+  log_tail: { seconds: number; max_minutes: number; max_rows: number; max_export_rows: number };
   security: string[];
   tailscale: boolean;
   github: { watch: number; helper: boolean; store: "configmap" | "file" | "session" | null; install_url: string | null } | null;
@@ -401,6 +401,22 @@ export function useQ<T>(kind: string, name: string, enabled = true): UseQueryRes
     refetchInterval: isLive ? false : (meta.data?.refresh_seconds ?? 15) * 1000,
     enabled,
   });
+}
+
+/** POST for a file (the logs export, RFC 0029), with the same checks as `act`. */
+export async function actFile(path: string, body: unknown): Promise<Blob> {
+  const r = await fetch(path, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-Homie": "1" },
+    body: JSON.stringify(body),
+  });
+  if (r.status === 401) {
+    if (window.location.pathname !== "/login") window.location.href = "/login";
+    throw new ApiError("login required");
+  }
+  if (!r.ok) throw new ApiError((await r.json().catch(() => null))?.error ?? `${r.status} ${r.statusText}`);
+  return r.blob();
 }
 
 /** POST an action. The X-Homie header is what the server's CSRF check expects. */

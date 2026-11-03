@@ -1,5 +1,8 @@
 //! Log search (RFC 0008) over the configured log datasources, through
-//! Grafana: VictoriaLogs (LogsQL) and Loki (LogQL).
+//! Grafana: VictoriaLogs (LogsQL) and Loki (LogQL). Export (RFC 0029) pages
+//! a search through its whole range.
+
+use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -125,31 +128,45 @@ fn loki_rows(body: &Value) -> Vec<Row> {
     rows
 }
 
+/// Lines from `start` to `end` (inclusive), newest first, at most `limit`.
 pub async fn search(
     g: &Grafana,
     src: &LogSource,
     req: &SearchRequest,
     limit: usize,
     start: jiff::Timestamp,
+    end: jiff::Timestamp,
 ) -> Result<SearchResult> {
     let query = req.query.trim();
     let mut rows = match src.kind {
         LogKind::Victorialogs => {
             // RFC 3339 keeps the nanoseconds a tail's `since` carries
-            let start = start.to_string();
+            let (start, end) = (start.to_string(), end.to_string());
             // one extra row tells whether the result was cut
             let lim = (limit + 1).to_string();
             victorialogs_rows(
                 g.logsql_params(
                     &src.datasource,
-                    &[("query", query), ("start", &start), ("limit", &lim)],
+                    &[
+                        ("query", query),
+                        ("start", &start),
+                        ("end", &end),
+                        ("limit", &lim),
+                    ],
                 )
                 .await?,
             )
         }
         LogKind::Loki => {
             let body = g
-                .loki_range(&src.datasource, query, start.as_nanosecond(), limit + 1)
+                // Loki's end is exclusive
+                .loki_range(
+                    &src.datasource,
+                    query,
+                    start.as_nanosecond(),
+                    end.as_nanosecond() + 1,
+                    limit + 1,
+                )
                 .await?;
             if body["status"] != "success" {
                 return Err(format!(
@@ -165,6 +182,147 @@ pub async fn search(
     let truncated = rows.len() > limit;
     rows.truncate(limit);
     Ok(SearchResult { rows, truncated })
+}
+
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Format {
+    Csv,
+    Ndjson,
+}
+
+#[derive(Deserialize)]
+pub struct ExportRequest {
+    #[serde(flatten)]
+    pub search: SearchRequest,
+    pub format: Format,
+}
+
+impl Row {
+    fn key(&self) -> String {
+        format!("{}|{}|{}", self.time, self.labels, self.message)
+    }
+}
+
+/// A CSV cell, quoted when needed. A leading `=`, `+`, `-`, `@`, tab or
+/// carriage return gets a `'` so a spreadsheet does not run it as a formula.
+fn csv_cell(s: &str) -> String {
+    let s = if s.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+        format!("'{s}")
+    } else {
+        s.to_string()
+    };
+    if s.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s
+    }
+}
+
+impl Format {
+    pub fn extension(self) -> &'static str {
+        match self {
+            Format::Csv => "csv",
+            Format::Ndjson => "ndjson",
+        }
+    }
+
+    pub fn content_type(self) -> &'static str {
+        match self {
+            Format::Csv => "text/csv; charset=utf-8",
+            Format::Ndjson => "application/x-ndjson",
+        }
+    }
+
+    pub fn head(self) -> &'static str {
+        match self {
+            Format::Csv => "time,stream,message\n",
+            Format::Ndjson => "",
+        }
+    }
+
+    pub fn line(self, r: &Row) -> String {
+        match self {
+            Format::Csv => format!(
+                "{},{},{}\n",
+                csv_cell(&r.time),
+                csv_cell(&r.labels),
+                csv_cell(&r.message)
+            ),
+            Format::Ndjson => serde_json::to_string(r).unwrap_or_default() + "\n",
+        }
+    }
+
+    /// The last line when an export stops early: the cap or an error.
+    pub fn note(self, msg: &str) -> String {
+        match self {
+            Format::Csv => format!(",,{}\n", csv_cell(msg)),
+            Format::Ndjson => {
+                serde_json::json!({ "truncated": true, "message": msg }).to_string() + "\n"
+            }
+        }
+    }
+}
+
+/// Where an export stands between pages (RFC 0029): the end of the next
+/// page, inclusive, and the lines on that end already written.
+pub struct Cursor {
+    end: Option<jiff::Timestamp>,
+    seen: HashSet<String>,
+}
+
+impl Cursor {
+    pub fn new(end: jiff::Timestamp) -> Self {
+        Self {
+            end: Some(end),
+            seen: HashSet::new(),
+        }
+    }
+
+    /// The next page, newest first, without lines already written. `None`
+    /// once the range is done.
+    pub async fn next(
+        &mut self,
+        g: &Grafana,
+        src: &LogSource,
+        req: &SearchRequest,
+        size: usize,
+        start: jiff::Timestamp,
+    ) -> Result<Option<Vec<Row>>> {
+        let Some(end) = self.end else {
+            return Ok(None);
+        };
+        let r = search(g, src, req, size, start, end).await?;
+        let oldest = r
+            .rows
+            .last()
+            .and_then(|row| row.time.parse::<jiff::Timestamp>().ok());
+        let rows: Vec<Row> = r
+            .rows
+            .into_iter()
+            .filter(|row| !self.seen.contains(&row.key()))
+            .collect();
+        self.end = match oldest {
+            // a whole page on one timestamp: step past it.
+            // ponytail: lines beyond `size` on one nanosecond are skipped
+            Some(o) if r.truncated && o == end => {
+                self.seen.clear();
+                Some(o - jiff::SignedDuration::from_nanos(1))
+            }
+            // the next page ends at this page's oldest line, which comes
+            // back again with any others on the same timestamp
+            Some(o) if r.truncated => {
+                self.seen = rows
+                    .iter()
+                    .filter(|row| row.time.parse::<jiff::Timestamp>().ok() == Some(o))
+                    .map(Row::key)
+                    .collect();
+                Some(o)
+            }
+            _ => None,
+        };
+        Ok(Some(rows))
+    }
 }
 
 #[cfg(test)]
@@ -308,7 +466,7 @@ mod tests {
         limit: usize,
     ) -> Result<SearchResult> {
         let (_, start) = validate(req, 1000)?;
-        search(g, src, req, limit, start).await
+        search(g, src, req, limit, start, jiff::Timestamp::now()).await
     }
 
     #[tokio::test]
@@ -319,6 +477,91 @@ mod tests {
         assert!(r.truncated);
         let msgs: Vec<_> = r.rows.iter().map(|r| r.message.as_str()).collect();
         assert_eq!(msgs, ["c", "a"]);
+    }
+
+    #[test]
+    fn export_lines() {
+        assert_eq!(csv_cell("plain"), "plain");
+        assert_eq!(csv_cell("a,b"), "\"a,b\"");
+        assert_eq!(csv_cell("say \"hi\"\nbye"), "\"say \"\"hi\"\"\nbye\"");
+        assert_eq!(csv_cell("=1+1"), "'=1+1");
+        assert_eq!(csv_cell("-x,y"), "\"'-x,y\"");
+        let row = Row {
+            time: "2026-10-22T08:00:00Z".into(),
+            message: "@a".into(),
+            labels: "unit=x".into(),
+        };
+        assert_eq!(Format::Csv.line(&row), "2026-10-22T08:00:00Z,unit=x,'@a\n");
+        let v: Value = serde_json::from_str(&Format::Ndjson.line(&row)).unwrap();
+        assert_eq!(v["message"], "@a");
+        assert_eq!(Format::Csv.note("stopped, at 5"), ",,\"stopped, at 5\"\n");
+    }
+
+    /// A VictoriaLogs that answers from a fixed list: lines up to `end`,
+    /// newest first, at most `limit`.
+    async fn paged() -> Grafana {
+        use axum::{Router, extract::Query, routing::get};
+        use std::collections::HashMap;
+
+        let vl = |Query(q): Query<HashMap<String, String>>| async move {
+            let end: jiff::Timestamp = q["end"].parse().unwrap();
+            let limit: usize = q["limit"].parse().unwrap();
+            [
+                ("05", "e"),
+                ("04", "d"),
+                ("03", "c1"),
+                ("03", "c2"),
+                ("03", "c3"),
+                ("02", "b"),
+                ("01", "a"),
+            ]
+            .iter()
+            .map(|(s, m)| (format!("2026-10-22T08:00:{s}Z"), m))
+            .filter(|(t, _)| t.parse::<jiff::Timestamp>().unwrap() <= end)
+            .take(limit)
+            .map(|(t, m)| json!({"_time": t, "_msg": m}).to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+        };
+        let url = crate::testkit::serve(
+            Router::new().route("/api/datasources/proxy/uid/vl/select/logsql/query", get(vl)),
+        )
+        .await;
+        let cfg = crate::config::Grafana {
+            url,
+            ui_url: None,
+            token: crate::secret::Secret::Plain("t".into()),
+            tls_verify: true,
+            ca_file: None,
+            tls_server_name: None,
+            quiet: false,
+            ignore_alerts: Vec::new(),
+        };
+        Grafana::new("lab", &cfg).await.unwrap()
+    }
+
+    async fn export(g: &Grafana, size: usize) -> Vec<String> {
+        let src = source(LogKind::Victorialogs, "vl");
+        let req = request("*");
+        let start: jiff::Timestamp = "2026-10-22T07:00:00Z".parse().unwrap();
+        let mut cursor = Cursor::new("2026-10-22T09:00:00Z".parse().unwrap());
+        let mut out = Vec::new();
+        while let Some(rows) = cursor.next(g, &src, &req, size, start).await.unwrap() {
+            out.extend(rows.into_iter().map(|r| r.message));
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn export_pages_through_the_range() {
+        let g = paged().await;
+        let all = ["e", "d", "c1", "c2", "c3", "b", "a"];
+        // pages end on a shared timestamp: no line twice, none lost
+        assert_eq!(export(&g, 3).await, all);
+        assert_eq!(export(&g, 100).await, all);
+        // more lines on one timestamp than a page holds: the rest is
+        // skipped, and the export still ends
+        assert_eq!(export(&g, 2).await, ["e", "d", "c1", "c2", "b", "a"]);
     }
 
     #[tokio::test]

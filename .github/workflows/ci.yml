@@ -74,6 +74,7 @@ jobs:
           bun-version: 1.4.4
       - run: bun install --frozen-lockfile
       - run: bun run check:contrast
+      - run: bun run check:csv
       - run: bun run build
 
   chart:

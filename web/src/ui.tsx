@@ -18,6 +18,7 @@ import {
 } from "@tanstack/react-table";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Envelope } from "./api";
+import { csv, download, fileName } from "./csv";
 
 export type Tone = "ok" | "warn" | "bad" | "quiet" | "muted";
 
@@ -172,8 +173,9 @@ const features = tableFeatures({
 
 export type Col<T extends RowData> = ColumnDef<typeof features, T>;
 
-/** A table with click-to-sort headers and an optional text filter. */
-export function DataTable<T extends RowData>({ columns, data, filter = true, empty = "Nothing to show" }: { columns: Col<T>[]; data: T[]; filter?: boolean; empty?: string }) {
+/** A table with click-to-sort headers, an optional text filter, and an
+ * export of the rows it shows (RFC 0029). `name` goes into the file name. */
+export function DataTable<T extends RowData>({ columns, data, filter = true, empty = "Nothing to show", name = "table", exportable = true }: { columns: Col<T>[]; data: T[]; filter?: boolean; empty?: string; name?: string; exportable?: boolean }) {
   const [globalFilter, setGlobalFilter] = useState("");
   const table = useTable(
     {
@@ -187,17 +189,33 @@ export function DataTable<T extends RowData>({ columns, data, filter = true, emp
     (s) => ({ sorting: s.sorting, globalFilter: s.globalFilter }),
   );
   const rows = table.getRowModel().rows;
+  // columns with a value; display-only ones (buttons) stay out of the export
+  const exportCsv = () => {
+    const cols = table.getAllLeafColumns().filter((c) => c.accessorFn);
+    const header = cols.map((c) => (typeof c.columnDef.header === "string" ? c.columnDef.header : c.id));
+    download(fileName(name, "csv"), "text/csv", csv(header, rows.map((r) => cols.map((c) => r.getValue(c.id)))));
+  };
+  const exportJson = () => download(fileName(name, "json"), "application/json", JSON.stringify(rows.map((r) => r.original), null, 2));
   return (
     <div>
-      {filter && data.length > 8 && (
-        <input
-          className="mb-2 w-full max-w-xs rounded-control border border-hairline-strong bg-surface-2 px-2 py-1 text-sm placeholder:text-ink-faint"
-          placeholder="Filter"
-          aria-label="Filter rows"
-          value={globalFilter}
-          onChange={(e) => setGlobalFilter(e.target.value)}
-        />
-      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {filter && data.length > 8 && (
+          <input
+            className="mb-2 w-full max-w-xs rounded-control border border-hairline-strong bg-surface-2 px-2 py-1 text-sm placeholder:text-ink-faint"
+            placeholder="Filter"
+            aria-label="Filter rows"
+            value={globalFilter}
+            onChange={(e) => setGlobalFilter(e.target.value)}
+          />
+        )}
+        {exportable && rows.length > 0 && (
+          <div className="mb-2 ml-auto flex items-center gap-1 text-xs text-ink-subtle" role="group" aria-label="Export rows">
+            Export
+            <Button onClick={exportCsv}>CSV</Button>
+            <Button onClick={exportJson}>JSON</Button>
+          </div>
+        )}
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full text-left text-[13px] tabular-nums">
           <thead>

@@ -55,7 +55,7 @@ pub async fn meta(State(state): State<Shared>, Extension(caller): Extension<Call
         "logs": some(page("logs"))(lab.logs.datasources.iter().map(|s| json!({
             "label": s.label, "type": s.kind, "pod_query": s.pod_query, "node_query": s.node_query,
         })).collect()),
-        "log_tail": { "seconds": lab.logs.tail_seconds, "max_minutes": lab.logs.tail_max_minutes, "max_rows": lab.logs.max_rows },
+        "log_tail": { "seconds": lab.logs.tail_seconds, "max_minutes": lab.logs.tail_max_minutes, "max_rows": lab.logs.max_rows, "max_export_rows": lab.logs.max_export_rows },
         "security": if page("security") { lab.presets() } else { Vec::new() },
         "tailscale": page("tailscale") && lab.tailscale.is_some(),
         "github": lab.github.as_ref().filter(|_| page("workflows")).map(|g| json!({
@@ -256,4 +256,175 @@ pub async fn search_logs(
             error(StatusCode::BAD_REQUEST, e)
         }
     }
+}
+
+/// One logs export (RFC 0029). Dropping it, at the end of the file or when
+/// the browser goes away, frees the session for the next export and logs
+/// the result.
+struct Export {
+    state: Shared,
+    who: String,
+    user: String,
+    source: String,
+    minutes: i64,
+    lines: usize,
+    started: std::time::Instant,
+    result: &'static str,
+    error: Option<String>,
+}
+
+impl Drop for Export {
+    fn drop(&mut self) {
+        self.state.exports.lock().unwrap().remove(&self.who);
+        let ms = self.started.elapsed().as_millis() as u64;
+        let (user, source, lines, result) = (&self.user, &self.source, self.lines, self.result);
+        match &self.error {
+            None => tracing::info!(
+                msg = "logs export",
+                user,
+                source,
+                minutes = self.minutes,
+                lines,
+                ms,
+                result
+            ),
+            Some(e) => {
+                tracing::warn!(msg = "logs export", user, source, minutes = self.minutes, lines, ms, error = %e, result)
+            }
+        }
+        crate::metrics::inc("homie_logs_exports_total", &[("result", result)]);
+    }
+}
+
+struct ExportJob {
+    export: Export,
+    cursor: logs::Cursor,
+    req: logs::SearchRequest,
+    format: logs::Format,
+    size: usize,
+    max: usize,
+    start: jiff::Timestamp,
+    first: Option<Vec<logs::Row>>,
+}
+
+impl ExportJob {
+    async fn page(&mut self) -> crate::Result<Option<Vec<logs::Row>>> {
+        if let Some(rows) = self.first.take() {
+            return Ok(Some(rows));
+        }
+        let (g, src) = self.export.state.lab.log_source(&self.req.source)?;
+        self.cursor
+            .next(g, src, &self.req, self.size, self.start)
+            .await
+    }
+}
+
+/// Streams every line of a search's time range as a file, page by page,
+/// up to `logs.max_export_rows`.
+pub async fn export_logs(
+    State(state): State<Shared>,
+    Extension(caller): Extension<Caller>,
+    Json(req): Json<logs::ExportRequest>,
+) -> Response {
+    let max = state.lab.logs.max_export_rows;
+    if max == 0 {
+        return error(StatusCode::NOT_FOUND, "logs export is off");
+    }
+    let logs::ExportRequest {
+        search: mut req,
+        format,
+    } = req;
+    req.since = None;
+    let size = state.lab.logs.max_rows;
+    let start = match logs::validate(&req, size) {
+        Ok((_, start)) => start,
+        Err(e) => return error(StatusCode::BAD_REQUEST, e),
+    };
+    let who = caller
+        .sid
+        .clone()
+        .or_else(|| caller.email.clone())
+        .unwrap_or_else(|| "local".into());
+    if !state.exports.lock().unwrap().insert(who.clone()) {
+        return error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "an export is already running in this session",
+        );
+    }
+    let mut job = ExportJob {
+        export: Export {
+            state: state.clone(),
+            who,
+            user: caller.email.clone().unwrap_or_else(|| "local".into()),
+            source: req.source.clone(),
+            minutes: req.minutes,
+            lines: 0,
+            started: std::time::Instant::now(),
+            result: "error",
+            error: None,
+        },
+        cursor: logs::Cursor::new(jiff::Timestamp::now()),
+        req,
+        format,
+        size,
+        max,
+        start,
+        first: None,
+    };
+    // the first page before the answer: a bad query is a 400, not a broken file
+    match job.page().await {
+        Ok(rows) => job.first = rows,
+        Err(e) => {
+            job.export.error = Some(e.to_string());
+            return error(StatusCode::BAD_REQUEST, e);
+        }
+    }
+    let head = futures::stream::once(std::future::ready(Ok::<_, std::convert::Infallible>(
+        axum::body::Bytes::from_static(format.head().as_bytes()),
+    )));
+    let pages = futures::stream::unfold(Some(job), |job| async move {
+        let mut job = job?;
+        let note = match job.page().await {
+            Ok(None) => {
+                job.export.result = "ok";
+                return None;
+            }
+            Ok(Some(rows)) => {
+                let left = job.max - job.export.lines;
+                let mut out: String = rows.iter().take(left).map(|r| job.format.line(r)).collect();
+                job.export.lines += rows.len().min(left);
+                if rows.len() <= left {
+                    return Some((Ok(out.into()), Some(job)));
+                }
+                job.export.result = "capped";
+                out += &job.format.note(&format!(
+                    "export stopped at {} lines: narrow the range",
+                    job.max
+                ));
+                out
+            }
+            Err(e) => {
+                job.export.error = Some(e.to_string());
+                job.format.note(&format!("export failed: {e}"))
+            }
+        };
+        Some((Ok(note.into()), None))
+    });
+    let file = format!(
+        "attachment; filename=\"homie-logs-{}.{}\"",
+        jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ"),
+        format.extension()
+    );
+    (
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                format.content_type().to_string(),
+            ),
+            (axum::http::header::CONTENT_DISPOSITION, file),
+            (axum::http::header::CACHE_CONTROL, "no-store".to_string()),
+        ],
+        axum::body::Body::from_stream(futures::StreamExt::chain(head, pages)),
+    )
+        .into_response()
 }

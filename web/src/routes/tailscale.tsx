@@ -39,7 +39,7 @@ export function Tailscale() {
       {(all) => {
         const data = all.filter((d) => (filter === "watched" ? d.watched : filter === "offline" ? !d.online : true));
         return (
-          <DataTable
+          <DataTable name="tailscale-devices"
             data={data}
             empty="No devices match"
             columns={[
