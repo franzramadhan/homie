@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| draft | 2026-11-03 | #N | - |
+| draft | 2026-11-03 | #145 | - |
 
 > Every table gets an Export button. It downloads the rows that you
 > see as CSV or JSON. It runs in the browser only: no new endpoint, no
