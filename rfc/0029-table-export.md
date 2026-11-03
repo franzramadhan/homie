@@ -2,7 +2,7 @@
 
 | Status | Date | PR | Release |
 |---|---|---|---|
-| accepted | 2026-11-03 | #145 | - |
+| implemented | 2026-11-03 | #145, #146 | v0.14.0 |
 
 > Every table gets an Export button. It downloads the rows that you
 > see as CSV or JSON. The Logs page exports the whole time range of
