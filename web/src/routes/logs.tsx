@@ -3,8 +3,9 @@
 // Follow (RFC 0022) polls for lines newer than the newest one shown.
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { act, useMeta, type LogRow } from "../api";
-import { DataTable, Section } from "../ui";
+import { act, actFile, useMeta, type LogRow } from "../api";
+import { download, fileName } from "../csv";
+import { Button, DataTable, Section } from "../ui";
 
 const RANGES: [number, string][] = [
   [15, "15 minutes"],
@@ -34,6 +35,7 @@ export function Logs() {
   const [pending, setPending] = useState<LogRow[]>([]);
   const [skipped, setSkipped] = useState(false);
   const [stopped, setStopped] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const autorun = useRef(Boolean(params.get("q")));
   const autofollow = useRef(params.get("follow") === "1");
   // the search a tail continues, and the newest line it holds
@@ -89,6 +91,7 @@ export function Logs() {
   const current = source || sources[0].label;
   const kind = sources.find((s) => s.label === current)?.type;
   const canFollow = m.log_tail.max_minutes > 0;
+  const rangeExport = m.log_tail.max_export_rows > 0;
 
   async function run(e?: FormEvent, following = follow) {
     e?.preventDefault();
@@ -128,6 +131,20 @@ export function Logs() {
       url.delete("follow");
       window.history.replaceState(null, "", `/logs?${url}`);
     } else void run(undefined, true);
+  }
+
+  // the whole range of the last search, not only the lines on screen (RFC 0029)
+  async function exportRange(format: "csv" | "ndjson") {
+    if (!tail.current) return;
+    setExporting(true);
+    setError("");
+    try {
+      download(fileName("logs", format), format === "csv" ? "text/csv" : "application/x-ndjson", await actFile("/api/logs/export", { ...tail.current, format }));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setExporting(false);
+    }
   }
 
   function resume() {
@@ -186,7 +203,16 @@ export function Logs() {
             {truncated ? " (more matched: narrow the query or the range)" : ""}
             {skipped ? " (lines arrived faster than one poll returns: some were skipped)" : ""}
           </p>
+          {rangeExport && rows.length > 0 && (
+            <div className="mb-2 flex items-center gap-1 text-xs text-ink-subtle" role="group" aria-label="Export the time range">
+              {exporting ? "Exporting" : `Export the whole range (up to ${m.log_tail.max_export_rows} lines)`}
+              <Button onClick={() => void exportRange("csv")} disabled={exporting}>CSV</Button>
+              <Button onClick={() => void exportRange("ndjson")} disabled={exporting}>NDJSON</Button>
+            </div>
+          )}
           <DataTable
+            name="logs"
+            exportable={!rangeExport}
             data={rows}
             empty="No lines matched"
             columns={[

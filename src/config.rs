@@ -768,6 +768,8 @@ fn default_ignore_alerts() -> Vec<String> {
 pub struct Logs {
     pub datasources: Vec<LogSource>,
     pub max_rows: usize,
+    /// lines per export (RFC 0029); 0 turns the logs export off
+    pub max_export_rows: usize,
     /// live tail (RFC 0022): poll interval and how long a tail runs; 0 turns it off
     pub tail_seconds: u64,
     pub tail_max_minutes: u64,
@@ -778,6 +780,7 @@ impl Default for Logs {
         Self {
             datasources: Vec::new(),
             max_rows: 1000,
+            max_export_rows: 50000,
             tail_seconds: 5,
             tail_max_minutes: 30,
         }

@@ -361,6 +361,7 @@ impl Homie {
             cfg,
             github_states: Default::default(),
             consoles: Default::default(),
+            exports: Default::default(),
         };
         tweak(&mut state);
         let state = Arc::new(state);

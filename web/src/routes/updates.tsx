@@ -150,25 +150,25 @@ export function Updates() {
           {d.proxmox.length > 0 && (
             <div>
               <h3 className="mb-1 text-sm font-semibold">Proxmox nodes</h3>
-              <DataTable columns={pveColumns} data={d.proxmox} />
+              <DataTable name="updates-proxmox" columns={pveColumns} data={d.proxmox} />
             </div>
           )}
           {d.kubernetes.length > 0 && (
             <div>
               <h3 className="mb-1 text-sm font-semibold">Kubernetes</h3>
-              <DataTable columns={clusterColumns} data={d.kubernetes} filter={false} />
+              <DataTable name="updates-kubernetes" columns={clusterColumns} data={d.kubernetes} filter={false} />
             </div>
           )}
           {d.charts.length > 0 && (
             <div>
               <h3 className="mb-1 text-sm font-semibold">Charts</h3>
-              <DataTable columns={chartColumns} data={securityFirst(d.charts)} />
+              <DataTable name="updates-charts" columns={chartColumns} data={securityFirst(d.charts)} />
             </div>
           )}
           {d.images.length > 0 && (
             <div>
               <h3 className="mb-1 text-sm font-semibold">Images</h3>
-              <DataTable columns={imageColumns} data={securityFirst(d.images)} empty="No images" />
+              <DataTable name="updates-images" columns={imageColumns} data={securityFirst(d.images)} empty="No images" />
             </div>
           )}
           <p className="text-xs text-ink-subtle">"Available" needs [updates.upstream] lookups turned on; package lists are what each node's daily pveupdate found. Release notes are GitHub releases; the security mark is a hint from their text.</p>

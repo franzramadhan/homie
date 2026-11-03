@@ -34,7 +34,7 @@ function Cluster({ name, metrics, volumes }: { name: string; metrics: boolean; v
       <Source title={`Kubernetes ${name}`} query={q}>
         {(d) => (
           <div className="space-y-5">
-            <DataTable
+            <DataTable name={`nodes-${name}`}
               filter={false}
               data={d.nodes}
               columns={[
@@ -79,7 +79,7 @@ function Cluster({ name, metrics, volumes }: { name: string; metrics: boolean; v
             />
             <div>
               <h3 className="mb-1 text-xs font-semibold text-ink-subtle uppercase">Unhealthy pods</h3>
-              <DataTable
+              <DataTable name={`unhealthy-pods-${name}`}
                 data={d.unhealthy_pods}
                 empty="Every pod is running and ready"
                 columns={[
@@ -103,7 +103,7 @@ function Cluster({ name, metrics, volumes }: { name: string; metrics: boolean; v
             </div>
             <div>
               <h3 className="mb-1 text-xs font-semibold text-ink-subtle uppercase">Workloads ({d.namespaces} namespaces)</h3>
-              <DataTable
+              <DataTable name={`workloads-${name}`}
                 data={d.workloads}
                 columns={[
                   { accessorKey: "namespace", header: "Namespace" },
@@ -124,7 +124,7 @@ function Cluster({ name, metrics, volumes }: { name: string; metrics: boolean; v
             </div>
             <div>
               <h3 className="mb-1 text-xs font-semibold text-ink-subtle uppercase">Warning events, last hour</h3>
-              <DataTable
+              <DataTable name={`events-${name}`}
                 data={d.events}
                 empty="No warnings"
                 columns={[
@@ -142,13 +142,13 @@ function Cluster({ name, metrics, volumes }: { name: string; metrics: boolean; v
       </Source>
       {volumes && (
         <Source title={`Volumes ${name}`} query={vols}>
-          {(d) => <DataTable data={d.volumes} columns={volumeCols} empty="No volumes in the query result" />}
+          {(d) => <DataTable name={`volumes-${name}`} data={d.volumes} columns={volumeCols} empty="No volumes in the query result" />}
         </Source>
       )}
       {!meta?.role && (
         <Source title={`Helm releases ${name}`} query={helm}>
           {(d) => (
-            <DataTable
+            <DataTable name={`helm-releases-${name}`}
               data={d}
               columns={[
                 { accessorKey: "namespace", header: "Namespace" },

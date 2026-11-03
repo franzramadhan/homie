@@ -261,20 +261,20 @@ impl Grafana {
             .collect()
     }
 
-    /// LogQL range query through a Loki datasource from `start` (Unix
-    /// nanoseconds) to now, newest first.
+    /// LogQL range query through a Loki datasource from `start` to `end`
+    /// (Unix nanoseconds, end exclusive), newest first.
     pub async fn loki_range(
         &self,
         datasource: &str,
         query: &str,
         start: i128,
+        end: i128,
         limit: usize,
     ) -> Result<Value> {
         let path = format!(
             "/api/datasources/proxy/uid/{}/loki/api/v1/query_range",
             enc(datasource)
         );
-        let end = jiff::Timestamp::now().as_nanosecond();
         let (start, end, limit) = (start.to_string(), end.to_string(), limit.to_string());
         let params = [
             ("query", query),
@@ -546,7 +546,10 @@ mod tests {
         assert!(rows[1].is_empty(), "a non-object row is an empty row");
         assert!(g.logsql("garbage", "*").await.is_err());
 
-        let body = g.loki_range("lk", "{unit=\"x\"}", 42, 10).await.unwrap();
+        let body = g
+            .loki_range("lk", "{unit=\"x\"}", 42, 43, 10)
+            .await
+            .unwrap();
         assert_eq!(body["query"], "{unit=\"x\"}");
     }
 

@@ -25,7 +25,7 @@ export function History() {
       }
     >
       {(rows) => (
-        <DataTable
+        <DataTable name="history"
           data={rows}
           empty="Nothing done yet"
           columns={[

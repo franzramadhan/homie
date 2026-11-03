@@ -40,7 +40,7 @@ fn role_route(role: &Role, method: &Method, path: &str, github_session: bool) ->
         }
         Method::POST => {
             path == "/auth/logout"
-                || (path == "/api/logs" && page("logs"))
+                || (matches!(path, "/api/logs" | "/api/logs/export") && page("logs"))
                 || (picker && path == "/api/github/watch")
         }
         _ => false,
@@ -228,6 +228,7 @@ mod tests {
             (Method::POST, "/api/act/pve/lab/power"),
             (Method::GET, "/api/act/pve/lab/task"),
             (Method::POST, "/api/logs"),
+            (Method::POST, "/api/logs/export"),
             (Method::POST, "/api/github/watch"),
             (Method::GET, "/api/github/repos"),
             (Method::GET, "/github/login"),
@@ -278,6 +279,7 @@ mod tests {
             ("/api/history", "Query"),
             ("/auth/logout", "Logout"),
             ("/api/logs", "Logs"),
+            ("/api/logs/export", "Logs"),
             ("/github/login", "GhLogin"),
             ("/github/callback", "GhCallback"),
             ("/api/github/repos", "GhRepos"),

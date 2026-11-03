@@ -245,7 +245,7 @@ export function Workflows() {
                       </Badge>
                     </h3>
                     {w.error && <p className="mb-1 text-sm text-bad">{w.error}</p>}
-                    <DataTable
+                    <DataTable name="workflow-runs"
                       filter={false}
                       data={w.runs}
                       empty="No runs yet"
