@@ -33,5 +33,5 @@ the RFCs it implements. Versions stay 0.x (alpha) until a 1.0 is decided.
 | [0026](rfc/0026-release-notes.md) | Release notes and security marks on the Updates page | implemented | v0.13.0 |
 | [0027](rfc/0027-action-history.md) | Action history page | implemented | v0.13.0 |
 | [0028](rfc/0028-map.md) | Map: the lab as a pixel village | implemented | v0.13.0 |
-| [0029](rfc/0029-table-export.md) | Table export (CSV, JSON) | accepted | - |
+| [0029](rfc/0029-table-export.md) | Table export (CSV, JSON) | implemented | v0.14.0 |
 | - | Per-user Proxmox tickets | not written | later |
